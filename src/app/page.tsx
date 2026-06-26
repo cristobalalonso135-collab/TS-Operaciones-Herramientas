@@ -27,8 +27,8 @@ const ALL_MONTHS = 'ALL';
 const STEPS = [
   { id: 0, name: 'Distribucion diaria', description: 'Mensual a dias laborables' },
   { id: 1, name: 'Aleatorio +/-20%', description: 'Variacion diaria con total fijo' },
-  { id: 2, name: 'Negativos', description: 'Ajustes por zona y primeros laborables' },
-  { id: 3, name: 'Ponderacion semanal', description: 'Peso por semana para Equipaciones' },
+  { id: 2, name: 'Ponderacion semanal', description: 'Curva semanal antes de negativos' },
+  { id: 3, name: 'Negativos', description: 'Ajustes finales por zona y primeros laborables' },
   { id: 4, name: 'Definitiva', description: 'Export final' },
 ];
 
@@ -232,19 +232,18 @@ export default function Home() {
   }, [closedMonths, step0Data, step1Data]);
 
   const handleApplyNegativos = useCallback(() => {
-    if (!step1Data) return;
+    if (!step2Data) return;
 
-    const applied = step2_negativos(step1Data, negativosConfig);
+    const applied = step2_negativos(step2Data, negativosConfig);
     const result = applied.map((month) => {
       if (!closedMonths.includes(month.mes_fiscal)) return month;
-      return step2Data?.find((locked) => locked.mes_fiscal === month.mes_fiscal) || month;
+      return step3Data?.find((locked) => locked.mes_fiscal === month.mes_fiscal) || month;
     });
 
-    setStep2Data(result);
-    setStep3Data(null);
-    setCurrentStep(2);
+    setStep3Data(result);
+    setCurrentStep(3);
 
-    const beforeMonth = step1Data.find((month) => month.mes_fiscal === selectedMonth);
+    const beforeMonth = step2Data.find((month) => month.mes_fiscal === selectedMonth);
     const afterMonth = result.find((month) => month.mes_fiscal === selectedMonth);
     const changedLines = beforeMonth && afterMonth
       ? afterMonth.lines.filter((line, lineIndex) =>
@@ -258,7 +257,7 @@ export default function Home() {
         : `No se han encontrado lineas Futbol Emotion + Equipaciones para las zonas de negativos en ${selectedMonth}.`
     );
     window.setTimeout(() => setApplyMessage(null), 4500);
-  }, [closedMonths, negativosConfig, selectedMonth, step1Data, step2Data]);
+  }, [closedMonths, negativosConfig, selectedMonth, step2Data, step3Data]);
 
   const handleUpdateNegConfig = useCallback((month: string, config: NegativosConfig) => {
     setNegativosConfig((prev) => ({ ...prev, [month]: config }));
@@ -269,19 +268,20 @@ export default function Home() {
   }, []);
 
   const handleApplyWeeklyWeights = useCallback(() => {
-    if (!step2Data) return;
+    if (!step1Data) return;
 
-    const applied = step3_ponderacionSemanal(step2Data, weeklyConfig);
+    const applied = step3_ponderacionSemanal(step1Data, weeklyConfig);
     const result = applied.map((month) => {
       if (!closedMonths.includes(month.mes_fiscal)) return month;
-      return step3Data?.find((locked) => locked.mes_fiscal === month.mes_fiscal) || month;
+      return step2Data?.find((locked) => locked.mes_fiscal === month.mes_fiscal) || month;
     });
 
-    setStep3Data(result);
-    setCurrentStep(3);
+    setStep2Data(result);
+    setStep3Data(null);
+    setCurrentStep(2);
     setWeeklyMessage(`Ponderacion semanal aplicada en ${selectedMonth}.`);
     window.setTimeout(() => setWeeklyMessage(null), 4500);
-  }, [closedMonths, selectedMonth, step2Data, step3Data, weeklyConfig]);
+  }, [closedMonths, selectedMonth, step1Data, step2Data, weeklyConfig]);
 
   const toggleClosedMonth = useCallback((month: string) => {
     if (month === ALL_MONTHS) return;
@@ -293,8 +293,8 @@ export default function Home() {
   const activeData = currentStep >= 3 && step3Data
     ? step3Data
     : currentStep >= 2 && step2Data
-    ? step2Data
-    : currentStep === 1 && step1Data
+      ? step2Data
+      : currentStep >= 1 && step1Data
       ? step1Data
       : step0Data;
 
@@ -308,7 +308,7 @@ export default function Home() {
   const stepAvailable = (id: number) => {
     if (id === 0) return !!step0Data;
     if (id === 1) return !!step1Data;
-    if (id === 2) return !!step2Data;
+    if (id === 2) return !!step2Data || !!step1Data;
     if (id === 3) return !!step3Data || !!step2Data;
     if (id === 4) return !!step3Data;
     return false;
@@ -504,7 +504,7 @@ export default function Home() {
             )}
           </div>
 
-          {step1Data && selectedMonth !== ALL_MONTHS && (currentStep === 1 || currentStep === 2) && negativosConfig[selectedMonth] && (
+          {step2Data && selectedMonth !== ALL_MONTHS && currentStep === 3 && negativosConfig[selectedMonth] && (
             <div className="space-y-3">
               {applyMessage && (
                 <div className={`rounded-lg border px-4 py-3 text-sm ${
@@ -524,7 +524,7 @@ export default function Home() {
             </div>
           )}
 
-          {step2Data && selectedMonth !== ALL_MONTHS && currentStep === 3 && weeklyConfig[selectedMonth] && currentMonthData && (
+          {step1Data && selectedMonth !== ALL_MONTHS && currentStep === 2 && weeklyConfig[selectedMonth] && currentMonthData && (
             <div className="space-y-3">
               {weeklyMessage && (
                 <div className="rounded-lg border border-green-200 bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
