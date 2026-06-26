@@ -205,6 +205,142 @@ export function step1_aleatorioRestringido(step0Data: MonthData[]): MonthData[] 
 }
 
 // ==========================================
+// STEP 2: NEGATIVOS
+// ==========================================
+
+/** Datos de negativos por zona para un mes */
+export interface NegativosZona {
+  zona: string;
+  web_b2c_anterior: number;  // Facturación Equip. Web B2C del mes anterior
+  pct_gen_web: number;       // % Gen Web (ej: 0.12)
+  grassroots: number;        // Budget Grassroots equipaciones
+  pct_frees: number;         // % Frees (ej: 0.03)
+}
+
+export interface NegativosConfig {
+  zonas: NegativosZona[];
+  ponderacion: number[];     // [0.6, 0.25, 0.15] por defecto
+}
+
+/** Calcula el total negativo de una zona */
+export function calcularNegativoZona(z: NegativosZona): { gen_web: number; frees: number; total: number } {
+  const gen_web = z.web_b2c_anterior * z.pct_gen_web;
+  const frees = z.grassroots * z.pct_frees;
+  return { gen_web, frees, total: gen_web + frees };
+}
+
+/**
+ * STEP 2: Aplica negativos sobre Step 1.
+ *
+ * Para cada línea con vertical="Fútbol Emotion" y medio_venta="Equipaciones":
+ * 1. Busca el negativo correspondiente a su zona
+ * 2. Reparte el negativo en los N primeros laborables según ponderación
+ * 3. Lo restado se redistribuye proporcionalmente en el resto de laborables
+ * 4. El total de la línea se mantiene igual
+ */
+export function step2_negativos(
+  step1Data: MonthData[],
+  negativosPorMes: Record<string, NegativosConfig>
+): MonthData[] {
+  return step1Data.map((md) => {
+    const config = negativosPorMes[md.mes_fiscal];
+    if (!config || config.zonas.length === 0) {
+      return md; // Sin negativos para este mes, mantener datos
+    }
+
+    // Precalcular negativos por zona
+    const negativosMap = new Map<string, number>();
+    for (const z of config.zonas) {
+      const { total } = calcularNegativoZona(z);
+      negativosMap.set(z.zona, total);
+    }
+
+    const ponderacion = config.ponderacion;
+    const numDiasNeg = ponderacion.length;
+
+    const newLines = md.lines.map((line) => {
+      // Solo aplica a Fútbol Emotion + Equipaciones
+      if (line.vertical !== 'Fútbol Emotion' || line.medio_venta !== 'Equipaciones') {
+        return line;
+      }
+
+      const negativo = negativosMap.get(line.zona);
+      if (!negativo || negativo === 0) return line;
+
+      // Encontrar índices de días laborables
+      const workingIndices = line.dias
+        .map((d, i) => (d.is_working ? i : -1))
+        .filter((i) => i >= 0);
+
+      if (workingIndices.length <= numDiasNeg) return line;
+
+      // Calcular cuánto se resta en cada uno de los primeros N días
+      const restoPorDia = ponderacion.map((p) => negativo * p);
+      const totalRestado = restoPorDia.reduce((s, v) => s + v, 0);
+
+      // Días restantes donde redistribuir
+      const restantesIndices = workingIndices.slice(numDiasNeg);
+      const sumaRestantes = restantesIndices.reduce((s, i) => s + line.dias[i].importe, 0);
+
+      const newDias = line.dias.map((d, i) => {
+        const wIdx = workingIndices.indexOf(i);
+
+        if (wIdx >= 0 && wIdx < numDiasNeg) {
+          // Primeros N laborables: restar negativo ponderado
+          return {
+            ...d,
+            importe: d.importe - restoPorDia[wIdx],
+            margen: d.margen, // margen no se toca
+          };
+        }
+
+        if (wIdx >= numDiasNeg && sumaRestantes > 0) {
+          // Resto de laborables: sumar proporcionalmente
+          const proporcion = d.importe / sumaRestantes;
+          return {
+            ...d,
+            importe: d.importe + totalRestado * proporcion,
+            margen: d.margen,
+          };
+        }
+
+        return d;
+      });
+
+      const totalCheck = newDias.reduce((s, d) => s + d.importe, 0);
+
+      return {
+        ...line,
+        dias: newDias,
+        total_check: totalCheck,
+      };
+    });
+
+    return { ...md, lines: newLines };
+  });
+}
+
+/** Zonas por defecto (las del Excel) */
+export const ZONAS_DEFAULT = [
+  'Centro-Sur', 'Francia', 'Italia Centro-Sur',
+  'Italia Norte', 'Levante', 'Norte', 'Portugal',
+];
+
+/** Config por defecto para un mes nuevo */
+export function defaultNegativosConfig(): NegativosConfig {
+  return {
+    zonas: ZONAS_DEFAULT.map((zona) => ({
+      zona,
+      web_b2c_anterior: 0,
+      pct_gen_web: 0,
+      grassroots: 0,
+      pct_frees: 0.03,
+    })),
+    ponderacion: [0.6, 0.25, 0.15],
+  };
+}
+
+// ==========================================
 // PARSER DEL EXCEL
 // ==========================================
 
