@@ -53,6 +53,21 @@ function formatDateHeader(dateValue: string): string {
   return `${day}/${month}/${year}`;
 }
 
+function formatZonaForMatch(zona: string): string {
+  const cleanZona = String(zona || '').trim();
+  if (!cleanZona) return '\u00a0';
+  return cleanZona.toLowerCase().startsWith('zona ') ? cleanZona : `Zona ${cleanZona}`;
+}
+
+function getExportIndexKey(line: BudgetLineDaily): string {
+  return [
+    line.id_vertical || line.vertical,
+    line.medio_venta,
+    formatZonaForMatch(line.zona),
+    line.cod_mercado || line.pais,
+  ].join('|');
+}
+
 function createAllMonthsData(data: MonthData[] | null): MonthData | null {
   if (!data || data.length === 0) return null;
 
@@ -64,7 +79,7 @@ function createAllMonthsData(data: MonthData[] | null): MonthData | null {
     month.lines[0]?.dias.forEach((day) => dayMeta.set(day.fecha, day.is_working));
 
     month.lines.forEach((line) => {
-      const key = [line.area, line.vertical, line.medio_venta, line.pais, line.zona].join('|');
+      const key = [line.area, line.id_vertical, line.vertical, line.medio_venta, line.pais, line.cod_mercado, line.zona].join('|');
       const existing = grouped.get(key);
 
       if (!existing) {
@@ -94,9 +109,11 @@ function createAllMonthsData(data: MonthData[] | null): MonthData | null {
       month.lines
         .filter((candidate) =>
           candidate.area === line.area &&
+          candidate.id_vertical === line.id_vertical &&
           candidate.vertical === line.vertical &&
           candidate.medio_venta === line.medio_venta &&
           candidate.pais === line.pais &&
+          candidate.cod_mercado === line.cod_mercado &&
           candidate.zona === line.zona
         )
         .forEach((candidate) => {
@@ -143,36 +160,46 @@ function createAllMonthsData(data: MonthData[] | null): MonthData | null {
 
 function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
   const allDates = getAllDates(data);
-  const rows: any[][] = [];
-  rows.push(['Mes Fiscal', 'Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', 'FY', 'Margen', '% Margen', ...allDates.map(formatDateHeader), 'Total Check']);
+  const rowsByKey = new Map<string, {
+    idVertical: string;
+    nombre: string;
+    zona: string;
+    codMercado: string;
+    valuesByDate: Map<string, number>;
+  }>();
 
   data.forEach((month) => {
     month.lines.forEach((line) => {
       const isCogs = kind === 'cogs';
-      const mensual = isCogs ? line.importe - line.margen_bruto : line.importe;
-      const valuesByDate = new Map(
-        line.dias.map((day) => [day.fecha, isCogs ? day.importe - day.margen : day.importe])
-      );
-      const dailyValues = allDates.map((date) => valuesByDate.get(date) || 0);
-      const totalCheck = dailyValues.reduce((sum, value) => sum + value, 0);
+      const key = getExportIndexKey(line);
+      const existing = rowsByKey.get(key);
+      const row = existing || {
+        idVertical: line.id_vertical || line.vertical,
+        nombre: line.medio_venta,
+        zona: formatZonaForMatch(line.zona),
+        codMercado: line.cod_mercado || line.pais,
+        valuesByDate: new Map<string, number>(),
+      };
 
-      rows.push([
-        month.mes_fiscal,
-        line.area,
-        line.vertical,
-        line.medio_venta,
-        line.pais,
-        line.zona,
-        mensual,
-        line.margen_bruto,
-        line.pct_margen,
-        ...dailyValues,
-        totalCheck,
-      ]);
+      line.dias.forEach((day) => {
+        const value = isCogs ? day.importe - day.margen : day.importe;
+        row.valuesByDate.set(day.fecha, (row.valuesByDate.get(day.fecha) || 0) + value);
+      });
+
+      if (!existing) rowsByKey.set(key, row);
     });
   });
 
-  return rows;
+  return [
+    ['id_vertical', 'nombre', 'zona_equipaciones', 'cod_mercado', ...allDates.map(formatDateHeader)],
+    ...Array.from(rowsByKey.values()).map((row) => [
+      row.idVertical,
+      row.nombre,
+      row.zona,
+      row.codMercado,
+      ...allDates.map((date) => row.valuesByDate.get(date) || null),
+    ]),
+  ];
 }
 
 export default function Home() {
@@ -320,10 +347,10 @@ export default function Home() {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     if (!kind || kind === 'facturacion') {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'facturacion')), 'Budget Facturacion');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'facturacion')), 'Hoja1');
     }
     if (!kind || kind === 'cogs') {
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'cogs')), 'Budget COGS');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'cogs')), 'COGS');
     }
     XLSX.writeFile(wb, kind === 'cogs' ? 'budget_COGS_FY_26_27.xlsx' : kind === 'facturacion' ? 'budget_facturacion_FY_26_27.xlsx' : 'budget_FY_26_27.xlsx');
   };

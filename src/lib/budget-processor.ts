@@ -3,9 +3,11 @@ import { getWorkingDays, getAllDaysOfMonth } from './working-days';
 export interface BudgetLineInput {
   mes_fiscal: string;
   area: string;
+  id_vertical: string;
   vertical: string;
   medio_venta: string;
   pais: string;
+  cod_mercado: string;
   zona: string;
   importe: number;
   margen_bruto: number;
@@ -574,9 +576,11 @@ export function parseExcelData(rows: any[][]): BudgetLineInput[] {
   const colMap = {
     mes: headers.findIndex((h) => h.includes('mes')),
     area: headers.findIndex((h) => h.includes('area')),
-    vertical: headers.findIndex((h) => h.includes('vertical')),
+    idVertical: headers.findIndex((h) => h.includes('id') && h.includes('vertical')),
+    vertical: headers.findIndex((h) => h.includes('vertical') && !h.includes('id')),
     medio: headers.findIndex((h) => h.includes('medio') || h.includes('venta')),
     pais: headers.findIndex((h) => h.includes('pais')),
+    codMercado: headers.findIndex((h) => h.includes('cod') && h.includes('mercado')),
     zona: headers.findIndex((h) => h.includes('zona')),
     importe: headers.findIndex((h) => h.includes('importe')),
     margen: headers.findIndex((h) => h.includes('margen') && !h.includes('%')),
@@ -615,9 +619,11 @@ export function parseExcelData(rows: any[][]): BudgetLineInput[] {
       return {
         mes_fiscal: mesFiscal,
         area: String(row[colMap.area] || ''),
+        id_vertical: colMap.idVertical >= 0 ? String(row[colMap.idVertical] || '') : '',
         vertical: String(row[colMap.vertical] || ''),
         medio_venta: String(row[colMap.medio] || ''),
         pais: String(row[colMap.pais] || ''),
+        cod_mercado: colMap.codMercado >= 0 ? String(row[colMap.codMercado] || '') : String(row[colMap.pais] || '').slice(0, 2).toUpperCase(),
         zona: String(row[colMap.zona] || ''),
         importe,
         margen_bruto: parseExcelNumber(row[colMap.margen]),

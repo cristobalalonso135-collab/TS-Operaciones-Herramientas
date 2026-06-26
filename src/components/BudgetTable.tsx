@@ -38,6 +38,21 @@ function getNoBudgetReason(dateValue: string): string {
   return 'Sin budget: dia no laborable';
 }
 
+function formatZonaForMatch(zona: string): string {
+  const cleanZona = String(zona || '').trim();
+  if (!cleanZona) return '\u00a0';
+  return cleanZona.toLowerCase().startsWith('zona ') ? cleanZona : `Zona ${cleanZona}`;
+}
+
+function getExportIndexKey(line: BudgetLineDaily): string {
+  return [
+    line.id_vertical || line.vertical,
+    line.medio_venta,
+    formatZonaForMatch(line.zona),
+    line.cod_mercado || line.pais,
+  ].join('|');
+}
+
 interface FilterSelectProps {
   label: string;
   value: string;
@@ -103,43 +118,50 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   const isAllFy = mesFiscal === 'Todo FY';
 
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
-    const wsData: any[][] = [];
-    const header = ['Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', isAllFy ? 'FY' : 'Mensual', 'Margen', '% Margen', 'Diario', 'Dias Lab.'];
-    days.forEach((d) => header.push(formatDateHeader(d.fecha)));
-    header.push('Total Check');
-    wsData.push(header);
+    const rowsByKey = new Map<string, {
+      idVertical: string;
+      nombre: string;
+      zona: string;
+      codMercado: string;
+      valuesByDate: Map<string, number>;
+    }>();
 
     filteredData.forEach((line) => {
       const isCogs = kind === 'cogs';
-      const mensual = isCogs ? line.importe - line.margen_bruto : line.importe;
-      const diario = line.dias_laborables > 0 ? mensual / line.dias_laborables : 0;
-      const dailyValues = line.dias.map((d) => (isCogs ? d.importe - d.margen : d.importe));
-      const totalDaily = dailyValues.reduce((sum, value) => sum + value, 0);
-      const row: any[] = [
-        line.area,
-        line.vertical,
-        line.medio_venta,
-        line.pais,
-        line.zona,
-        mensual,
-        line.margen_bruto,
-        line.pct_margen,
-        diario,
-        line.dias_laborables,
-      ];
+      const key = getExportIndexKey(line);
+      const existing = rowsByKey.get(key);
+      const row = existing || {
+        idVertical: line.id_vertical || line.vertical,
+        nombre: line.medio_venta,
+        zona: formatZonaForMatch(line.zona),
+        codMercado: line.cod_mercado || line.pais,
+        valuesByDate: new Map<string, number>(),
+      };
 
-      dailyValues.forEach((value) => row.push(value));
-      row.push(totalDaily);
-      wsData.push(row);
+      line.dias.forEach((day) => {
+        const value = isCogs ? day.importe - day.margen : day.importe;
+        row.valuesByDate.set(day.fecha, (row.valuesByDate.get(day.fecha) || 0) + value);
+      });
+
+      if (!existing) rowsByKey.set(key, row);
     });
 
-    return wsData;
+    return [
+      ['id_vertical', 'nombre', 'zona_equipaciones', 'cod_mercado', ...days.map((day) => formatDateHeader(day.fecha))],
+      ...Array.from(rowsByKey.values()).map((row) => [
+        row.idVertical,
+        row.nombre,
+        row.zona,
+        row.codMercado,
+        ...days.map((day) => row.valuesByDate.get(day.fecha) || null),
+      ]),
+    ];
   };
 
   const handleExport = async () => {
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildSheetData('facturacion')), 'Facturacion');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildSheetData('facturacion')), 'Hoja1');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildSheetData('cogs')), 'COGS');
     XLSX.writeFile(wb, `budget_${mesFiscal.replace(/\s/g, '_')}.xlsx`);
   };
