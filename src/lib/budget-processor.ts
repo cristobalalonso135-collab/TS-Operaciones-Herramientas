@@ -90,10 +90,16 @@ function parseExcelNumber(value: any): number {
   return Number(cleaned) || 0;
 }
 
-export function isNegativosTargetLine(line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'>): boolean {
-  const vertical = normalizeText(line.vertical);
+export function isNegativosTargetLine(
+  line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'> & Partial<Pick<BudgetLineInput, 'area'>>
+): boolean {
+  const vertical = normalizeText(`${line.vertical} ${line.area || ''}`);
   const medioVenta = normalizeText(line.medio_venta);
-  const isFullVolumen = vertical.includes('full volumen') || vertical.includes('full volume');
+  const isFullVolumen =
+    vertical.includes('full volumen') ||
+    vertical.includes('full volume') ||
+    vertical.includes('fullvolumen') ||
+    (vertical.includes('full') && (vertical.includes('volumen') || vertical.includes('volume')));
   const isEquipaciones = medioVenta.includes('equipacion') || medioVenta.includes('equipaciones');
 
   return isFullVolumen && isEquipaciones;
@@ -330,10 +336,10 @@ export function defaultNegativosConfig(zonas = ZONAS_DEFAULT): NegativosConfig {
   return {
     zonas: zonas.map((zona) => ({
       zona,
-      web_b2c_anterior: 0,
-      pct_gen_web: 0,
-      grassroots: 0,
-      pct_frees: 3,
+      web_b2c_anterior: 10000,
+      pct_gen_web: 10,
+      grassroots: 10000,
+      pct_frees: 10,
     })),
     ponderacion: [0.6, 0.25, 0.15],
   };

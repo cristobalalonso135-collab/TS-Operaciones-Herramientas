@@ -171,6 +171,7 @@ export default function Home() {
   const [totalLines, setTotalLines] = useState(0);
   const [closedMonths, setClosedMonths] = useState<string[]>([]);
   const [negativosConfig, setNegativosConfig] = useState<Record<string, NegativosConfig>>({});
+  const [applyMessage, setApplyMessage] = useState<string | null>(null);
 
   const handleFileLoaded = useCallback((data: any[][], _fileName: string) => {
     const parsed = parseExcelData(data);
@@ -188,6 +189,7 @@ export default function Home() {
     setStep2Data(null);
     setClosedMonths([]);
     setNegativosConfig(negConfig);
+    setApplyMessage(null);
     setCurrentStep(0);
     setSelectedMonth(processed.length > 0 ? processed[0].mes_fiscal : FISCAL_MONTHS_ORDER[0]);
   }, []);
@@ -217,7 +219,22 @@ export default function Home() {
 
     setStep2Data(result);
     setCurrentStep(2);
-  }, [closedMonths, negativosConfig, step1Data, step2Data]);
+
+    const beforeMonth = step1Data.find((month) => month.mes_fiscal === selectedMonth);
+    const afterMonth = result.find((month) => month.mes_fiscal === selectedMonth);
+    const changedLines = beforeMonth && afterMonth
+      ? afterMonth.lines.filter((line, lineIndex) =>
+          line.dias.some((day, dayIndex) => Math.abs(day.importe - (beforeMonth.lines[lineIndex]?.dias[dayIndex]?.importe || 0)) > 0.01)
+        ).length
+      : 0;
+
+    setApplyMessage(
+      changedLines > 0
+        ? `Negativos aplicados en ${selectedMonth}: ${changedLines} lineas actualizadas.`
+        : `No se han encontrado lineas Full Volumen + Equipaciones en ${selectedMonth}.`
+    );
+    window.setTimeout(() => setApplyMessage(null), 4500);
+  }, [closedMonths, negativosConfig, selectedMonth, step1Data, step2Data]);
 
   const handleUpdateNegConfig = useCallback((month: string, config: NegativosConfig) => {
     setNegativosConfig((prev) => ({ ...prev, [month]: config }));
@@ -442,12 +459,23 @@ export default function Home() {
           </div>
 
           {step1Data && selectedMonth !== ALL_MONTHS && (currentStep === 1 || currentStep === 2) && negativosConfig[selectedMonth] && (
-            <NegativosForm
-              selectedMonth={selectedMonth}
-              config={negativosConfig[selectedMonth]}
-              onChange={handleUpdateNegConfig}
-              onApply={handleApplyNegativos}
-            />
+            <div className="space-y-3">
+              {applyMessage && (
+                <div className={`rounded-lg border px-4 py-3 text-sm ${
+                  applyMessage.startsWith('Negativos aplicados')
+                    ? 'border-green-200 bg-[var(--success-soft)] text-[var(--success)]'
+                    : 'border-amber-200 bg-amber-50 text-[var(--warning)]'
+                }`}>
+                  {applyMessage}
+                </div>
+              )}
+              <NegativosForm
+                selectedMonth={selectedMonth}
+                config={negativosConfig[selectedMonth]}
+                onChange={handleUpdateNegConfig}
+                onApply={handleApplyNegativos}
+              />
+            </div>
           )}
 
           {currentMonthData && (
