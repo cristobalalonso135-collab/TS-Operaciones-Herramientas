@@ -39,6 +39,22 @@ export const HOLIDAYS_ZARAGOZA: Record<number, string[]> = {
     '2026-12-08', // Inmaculada
     '2026-12-25', // Navidad
   ],
+  2027: [
+    '2027-01-01', // Año Nuevo
+    '2027-01-06', // Epifanía
+    '2027-01-29', // San Valero (local)
+    '2027-03-05', // Cincomarzada (local)
+    '2027-03-25', // Jueves Santo
+    '2027-03-26', // Viernes Santo
+    '2027-04-23', // San Jorge / Día de Aragón
+    '2027-05-01', // Día del Trabajo
+    '2027-08-16', // Asunción (trasladado al lunes)
+    '2027-10-12', // Fiesta Nacional
+    '2027-11-01', // Todos los Santos
+    '2027-12-06', // Constitución
+    '2027-12-08', // Inmaculada
+    '2027-12-25', // Navidad
+  ],
 };
 
 /**

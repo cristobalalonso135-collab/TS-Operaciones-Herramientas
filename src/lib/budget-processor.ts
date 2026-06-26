@@ -1,41 +1,80 @@
 import { getWorkingDays, getAllDaysOfMonth } from './working-days';
 
-/**
- * Estructura de una línea de budget tal como viene del Excel.
- * El Excel tiene columnas: Índice, id_vertical, nombre, zona_equipaciones, cod_mercado, importe_mensual
- */
+// ==========================================
+// TIPOS
+// ==========================================
+
+/** Línea de budget tal como viene del Excel */
 export interface BudgetLineInput {
-  indice: number;
-  id_vertical: number;
-  nombre: string;
-  zona_equipaciones: string;
-  cod_mercado: string;
-  importe_mensual: number;
+  mes_fiscal: string;       // "01 · Abril"
+  area: string;             // "B2B", "Grassroots", "Pro Clubs"
+  vertical: string;         // "Fútbol Emotion", "The Pitch", etc.
+  medio_venta: string;      // "Equipaciones", "B2B", "Internet", etc.
+  pais: string;             // "España", "Francia", etc.
+  zona: string;             // "Italia Norte", "Francia", etc.
+  importe: number;
+  margen_bruto: number;
+  pct_margen: number;
 }
 
-/**
- * Resultado del Step 0: cada línea con su importe diario distribuido.
- */
+/** Resultado del Step 0: línea con distribución diaria */
 export interface BudgetLineDaily {
-  indice: number;
-  id_vertical: number;
-  nombre: string;
-  zona_equipaciones: string;
-  cod_mercado: string;
-  importe_mensual: number;
+  mes_fiscal: string;
+  area: string;
+  vertical: string;
+  medio_venta: string;
+  pais: string;
+  zona: string;
+  importe: number;
+  margen_bruto: number;
+  pct_margen: number;
   importe_diario: number;
   dias_laborables: number;
-  dias: { fecha: string; importe: number; is_working: boolean }[];
-  total_check: number; // debería ser === importe_mensual
+  dias: { fecha: string; importe: number; margen: number; is_working: boolean }[];
+  total_check: number;
 }
 
-/**
- * STEP 0: Distribuir importe mensual homogéneamente entre días laborables.
- *
- * - Toma el importe mensual de cada línea
- * - Lo divide entre el número de días laborables del mes
- * - Asigna ese importe a cada día laborable; 0 a los no laborables
- */
+/** Datos agrupados por mes fiscal */
+export interface MonthData {
+  mes_fiscal: string;
+  year: number;
+  month: number;
+  lines: BudgetLineDaily[];
+  total_importe: number;
+  total_margen: number;
+  dias_laborables: number;
+}
+
+// ==========================================
+// MAPEO MES FISCAL → CALENDARIO
+// ==========================================
+
+export const FISCAL_TO_CALENDAR: Record<string, { year: number; month: number }> = {
+  '01 · Abril':      { year: 2026, month: 4 },
+  '02 · Mayo':       { year: 2026, month: 5 },
+  '03 · Junio':      { year: 2026, month: 6 },
+  '04 · Julio':      { year: 2026, month: 7 },
+  '05 · Agosto':     { year: 2026, month: 8 },
+  '06 · Septiembre': { year: 2026, month: 9 },
+  '07 · Octubre':    { year: 2026, month: 10 },
+  '08 · Noviembre':  { year: 2026, month: 11 },
+  '09 · Diciembre':  { year: 2026, month: 12 },
+  '10 · Enero':      { year: 2027, month: 1 },
+  '11 · Febrero':    { year: 2027, month: 2 },
+  '12 · Marzo':      { year: 2027, month: 3 },
+};
+
+export const FISCAL_MONTHS_ORDER = [
+  '01 · Abril', '02 · Mayo', '03 · Junio',
+  '04 · Julio', '05 · Agosto', '06 · Septiembre',
+  '07 · Octubre', '08 · Noviembre', '09 · Diciembre',
+  '10 · Enero', '11 · Febrero', '12 · Marzo',
+];
+
+// ==========================================
+// STEP 0: DISTRIBUCIÓN POR LABORABLES
+// ==========================================
+
 export function step0_distribuirPorLaborables(
   lines: BudgetLineInput[],
   year: number,
@@ -44,15 +83,15 @@ export function step0_distribuirPorLaborables(
   const workingDays = getWorkingDays(year, month);
   const allDays = getAllDaysOfMonth(year, month);
   const numWorkingDays = workingDays.length;
-  const workingSet = new Set(workingDays);
 
   return lines.map((line) => {
-    const importeDiario =
-      numWorkingDays > 0 ? line.importe_mensual / numWorkingDays : 0;
+    const importeDiario = numWorkingDays > 0 ? line.importe / numWorkingDays : 0;
+    const margenDiario = numWorkingDays > 0 ? line.margen_bruto / numWorkingDays : 0;
 
     const dias = allDays.map((day) => ({
       fecha: day.date,
       importe: day.isWorking ? importeDiario : 0,
+      margen: day.isWorking ? margenDiario : 0,
       is_working: day.isWorking,
     }));
 
@@ -69,19 +108,60 @@ export function step0_distribuirPorLaborables(
 }
 
 /**
- * Parsear el Excel subido (Step 0 input).
- * Espera columnas: indice | id_vertical | nombre | zona_equipaciones | cod_mercado | importe_mensual
- * (o similar, se mapean por posición)
+ * Procesa todas las líneas del Excel y devuelve datos agrupados por mes fiscal.
+ */
+export function processFullBudget(allLines: BudgetLineInput[]): MonthData[] {
+  const grouped = new Map<string, BudgetLineInput[]>();
+
+  for (const line of allLines) {
+    const existing = grouped.get(line.mes_fiscal) || [];
+    existing.push(line);
+    grouped.set(line.mes_fiscal, existing);
+  }
+
+  return FISCAL_MONTHS_ORDER
+    .filter((m) => grouped.has(m))
+    .map((mesFiscal) => {
+      const cal = FISCAL_TO_CALENDAR[mesFiscal];
+      if (!cal) return null;
+
+      const monthLines = grouped.get(mesFiscal)!;
+      const processed = step0_distribuirPorLaborables(monthLines, cal.year, cal.month);
+      const workingDays = getWorkingDays(cal.year, cal.month);
+
+      return {
+        mes_fiscal: mesFiscal,
+        year: cal.year,
+        month: cal.month,
+        lines: processed,
+        total_importe: monthLines.reduce((s, l) => s + l.importe, 0),
+        total_margen: monthLines.reduce((s, l) => s + l.margen_bruto, 0),
+        dias_laborables: workingDays.length,
+      };
+    })
+    .filter((d): d is MonthData => d !== null);
+}
+
+// ==========================================
+// PARSER DEL EXCEL
+// ==========================================
+
+/**
+ * Parsea el Excel "Budget TS FY 26.27".
+ * Columnas: # Mes | Área | Vertical | Medio de Venta | País | Zona | Importe | Margen Bruto | % Margen
  */
 export function parseExcelData(rows: any[][]): BudgetLineInput[] {
-  // Detectar fila de encabezados
+  // Buscar fila de encabezados
   let headerIdx = 0;
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const row = rows[i];
-    if (row && row.some((cell: any) => typeof cell === 'string' &&
-      (cell.toLowerCase().includes('indice') ||
-       cell.toLowerCase().includes('índice') ||
-       cell.toLowerCase().includes('nombre')))) {
+    if (row && row.some((cell: any) =>
+      typeof cell === 'string' && (
+        cell.toLowerCase().includes('mes') ||
+        cell.toLowerCase().includes('área') ||
+        cell.toLowerCase().includes('importe')
+      )
+    )) {
       headerIdx = i;
       break;
     }
@@ -91,48 +171,41 @@ export function parseExcelData(rows: any[][]): BudgetLineInput[] {
     String(h || '').toLowerCase().trim()
   );
 
-  // Mapear columnas por nombre
+  // Mapear columnas
   const colMap = {
-    indice: headers.findIndex((h) => h.includes('indice') || h.includes('índice')),
-    id_vertical: headers.findIndex((h) => h.includes('id_vertical') || h.includes('vertical')),
-    nombre: headers.findIndex((h) => h.includes('nombre') || h.includes('name')),
+    mes: headers.findIndex((h) => h.includes('mes')),
+    area: headers.findIndex((h) => h.includes('área') || h.includes('area')),
+    vertical: headers.findIndex((h) => h.includes('vertical')),
+    medio: headers.findIndex((h) => h.includes('medio') || h.includes('venta')),
+    pais: headers.findIndex((h) => h.includes('país') || h.includes('pais')),
     zona: headers.findIndex((h) => h.includes('zona')),
-    mercado: headers.findIndex((h) => h.includes('mercado') || h.includes('cod_mercado')),
-    importe: headers.findIndex((h) =>
-      h.includes('importe') || h.includes('budget') || h.includes('total') || h.includes('mensual')
-    ),
+    importe: headers.findIndex((h) => h.includes('importe')),
+    margen: headers.findIndex((h) => h.includes('margen') && !h.includes('%')),
+    pct: headers.findIndex((h) => h.includes('%')),
   };
 
-  // Si no se encuentra importe por nombre, usar la última columna numérica
   const dataRows = rows.slice(headerIdx + 1).filter((row) =>
     row && row.length > 0 && row.some((cell: any) => cell !== null && cell !== undefined && cell !== '')
   );
-
-  if (colMap.importe === -1) {
-    // Buscar la última columna que tenga números en la primera fila de datos
-    const firstDataRow = dataRows[0];
-    if (firstDataRow) {
-      for (let i = firstDataRow.length - 1; i >= 0; i--) {
-        if (typeof firstDataRow[i] === 'number') {
-          colMap.importe = i;
-          break;
-        }
-      }
-    }
-  }
 
   return dataRows
     .map((row) => {
       const importe = colMap.importe >= 0 ? Number(row[colMap.importe]) : 0;
       if (!importe || isNaN(importe)) return null;
 
+      const mesFiscal = colMap.mes >= 0 ? String(row[colMap.mes] || '') : '';
+      if (!mesFiscal || !FISCAL_TO_CALENDAR[mesFiscal]) return null;
+
       return {
-        indice: colMap.indice >= 0 ? Number(row[colMap.indice]) || 0 : 0,
-        id_vertical: colMap.id_vertical >= 0 ? Number(row[colMap.id_vertical]) || 0 : 0,
-        nombre: colMap.nombre >= 0 ? String(row[colMap.nombre] || '') : '',
-        zona_equipaciones: colMap.zona >= 0 ? String(row[colMap.zona] || '') : '',
-        cod_mercado: colMap.mercado >= 0 ? String(row[colMap.mercado] || '') : '',
-        importe_mensual: importe,
+        mes_fiscal: mesFiscal,
+        area: colMap.area >= 0 ? String(row[colMap.area] || '') : '',
+        vertical: colMap.vertical >= 0 ? String(row[colMap.vertical] || '') : '',
+        medio_venta: colMap.medio >= 0 ? String(row[colMap.medio] || '') : '',
+        pais: colMap.pais >= 0 ? String(row[colMap.pais] || '') : '',
+        zona: colMap.zona >= 0 ? String(row[colMap.zona] || '') : '',
+        importe,
+        margen_bruto: colMap.margen >= 0 ? Number(row[colMap.margen]) || 0 : 0,
+        pct_margen: colMap.pct >= 0 ? Number(row[colMap.pct]) || 0 : 0,
       };
     })
     .filter((line): line is BudgetLineInput => line !== null);
