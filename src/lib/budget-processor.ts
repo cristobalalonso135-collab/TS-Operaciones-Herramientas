@@ -97,7 +97,7 @@ export function isNegativosTargetLine(line: Pick<BudgetLineInput, 'vertical' | '
     vertical.includes('futbol emotion') ||
     vertical.includes('fútbol emotion') ||
     vertical.includes('football emotion');
-  const isEquipaciones = medioVenta.includes('equipacion') || medioVenta.includes('equipaciones');
+  const isEquipaciones = medioVenta === 'equipaciones';
 
   return isFutbolEmotion && isEquipaciones;
 }
