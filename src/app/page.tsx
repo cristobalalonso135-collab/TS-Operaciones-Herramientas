@@ -20,7 +20,7 @@ import {
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
-import { ArrowLeft, Calculator, Download, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
+import { ArrowLeft, Calculator, Download, FileSpreadsheet, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
 
 const ALL_MONTHS = 'ALL';
 
@@ -314,31 +314,32 @@ export default function Home() {
     return false;
   };
 
-  const handleExportFy = async () => {
+  const handleExportFy = async (kind?: 'facturacion' | 'cogs') => {
     if (!activeData) return;
 
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'facturacion')), 'Facturacion Todo');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'cogs')), 'COGS Todo');
-    XLSX.writeFile(wb, 'budget_FY_26_27.xlsx');
+    if (!kind || kind === 'facturacion') {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'facturacion')), 'Budget Facturacion');
+    }
+    if (!kind || kind === 'cogs') {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'cogs')), 'Budget COGS');
+    }
+    XLSX.writeFile(wb, kind === 'cogs' ? 'budget_COGS_FY_26_27.xlsx' : kind === 'facturacion' ? 'budget_facturacion_FY_26_27.xlsx' : 'budget_FY_26_27.xlsx');
   };
 
   if (view === 'tools') {
     return (
-      <div className="mx-auto max-w-5xl space-y-8">
-        <section className="space-y-3">
+      <div className="mx-auto max-w-5xl space-y-7">
+        <section className="space-y-2">
           <p className="text-sm font-medium text-[var(--text-secondary)]">Workspace</p>
-          <h2 className="text-3xl font-semibold tracking-tight">Herramientas de operaciones</h2>
-          <p className="max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-            Selecciona una herramienta para trabajar. De momento Budget es la principal y las siguientes iran entrando aqui.
-          </p>
+          <h2 className="text-3xl font-semibold tracking-tight">Herramientas</h2>
         </section>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <button
             onClick={() => setView('budget')}
-            className="group rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
+            className="group min-h-[152px] rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
           >
             <div className="mb-5 flex items-center justify-between">
               <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
@@ -347,18 +348,14 @@ export default function Home() {
               <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
             </div>
             <h3 className="text-base font-semibold">Budget</h3>
-            <p className="mt-2 text-sm leading-5 text-[var(--text-secondary)]">
-              Excel anual, distribucion diaria, aleatorio, negativos, Facturacion y COGS.
-            </p>
           </button>
 
           {['Forecast', 'Pedidos', 'Stock'].map((tool) => (
-            <div key={tool} className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--bg-secondary)]/60 p-5 text-left">
+            <div key={tool} className="min-h-[152px] rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-5 text-left">
               <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-md bg-[var(--bg-soft)] text-[var(--text-muted)]">
                 <Table2 className="h-5 w-5" />
               </div>
               <h3 className="text-base font-semibold text-[var(--text-secondary)]">{tool}</h3>
-              <p className="mt-2 text-sm text-[var(--text-muted)]">Pendiente</p>
             </div>
           ))}
         </section>
@@ -413,7 +410,7 @@ export default function Home() {
                 {step1Data ? 'Regenerar +/-20%' : 'Generar +/-20%'}
               </button>
               <button
-                onClick={handleExportFy}
+                onClick={() => handleExportFy()}
                 className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-xs font-medium transition hover:bg-[var(--bg-soft)]"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -537,6 +534,41 @@ export default function Home() {
                 onChange={handleUpdateWeeklyConfig}
                 onApply={handleApplyWeeklyWeights}
               />
+            </div>
+          )}
+
+          {activeData && currentStep === 4 && (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+              <div className="mb-4">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Definitiva</p>
+                <h3 className="mt-1 text-lg font-semibold">Export final</h3>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <button
+                  onClick={() => handleExportFy('facturacion')}
+                  className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--bg-soft)]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </div>
+                    <span className="text-sm font-semibold">Budget Facturacion</span>
+                  </div>
+                  <Download className="h-4 w-4 text-[var(--text-secondary)]" />
+                </button>
+                <button
+                  onClick={() => handleExportFy('cogs')}
+                  className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--bg-soft)]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </div>
+                    <span className="text-sm font-semibold">Budget COGS</span>
+                  </div>
+                  <Download className="h-4 w-4 text-[var(--text-secondary)]" />
+                </button>
+              </div>
             </div>
           )}
 

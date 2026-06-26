@@ -3,12 +3,12 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #f7f7f5;
+  --bg-primary: #fbfbfa;
   --bg-secondary: #ffffff;
   --bg-card: #ffffff;
-  --bg-soft: #f1f1ef;
-  --border: #deded9;
-  --border-strong: #c9c9c2;
+  --bg-soft: #f6f6f4;
+  --border: #e8e7e3;
+  --border-strong: #d6d4ce;
   --text-primary: #20201d;
   --text-secondary: #6f6f68;
   --text-muted: #9b9b93;
