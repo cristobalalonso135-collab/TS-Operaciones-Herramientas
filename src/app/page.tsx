@@ -231,7 +231,7 @@ export default function Home() {
     setApplyMessage(
       changedLines > 0
         ? `Negativos aplicados en ${selectedMonth}: ${changedLines} lineas actualizadas.`
-        : `No se han encontrado lineas Full Volumen + Equipaciones en ${selectedMonth}.`
+        : `No se han encontrado lineas Futbol Emotion + Equipaciones para las zonas de negativos en ${selectedMonth}.`
     );
     window.setTimeout(() => setApplyMessage(null), 4500);
   }, [closedMonths, negativosConfig, selectedMonth, step1Data, step2Data]);

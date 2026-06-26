@@ -90,19 +90,16 @@ function parseExcelNumber(value: any): number {
   return Number(cleaned) || 0;
 }
 
-export function isNegativosTargetLine(
-  line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'> & Partial<Pick<BudgetLineInput, 'area'>>
-): boolean {
-  const vertical = normalizeText(`${line.vertical} ${line.area || ''}`);
+export function isNegativosTargetLine(line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'>): boolean {
+  const vertical = normalizeText(line.vertical);
   const medioVenta = normalizeText(line.medio_venta);
-  const isFullVolumen =
-    vertical.includes('full volumen') ||
-    vertical.includes('full volume') ||
-    vertical.includes('fullvolumen') ||
-    (vertical.includes('full') && (vertical.includes('volumen') || vertical.includes('volume')));
+  const isFutbolEmotion =
+    vertical.includes('futbol emotion') ||
+    vertical.includes('fútbol emotion') ||
+    vertical.includes('football emotion');
   const isEquipaciones = medioVenta.includes('equipacion') || medioVenta.includes('equipaciones');
 
-  return isFullVolumen && isEquipaciones;
+  return isFutbolEmotion && isEquipaciones;
 }
 
 export function getNegativosZonasForMonth(monthData: MonthData): string[] {
