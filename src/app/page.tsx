@@ -427,6 +427,12 @@ export default function Home() {
 
     const beforeMonth = step2Data.find((month) => month.mes_fiscal === selectedMonth);
     const afterMonth = result.find((month) => month.mes_fiscal === selectedMonth);
+    const selectedConfig = negativosConfig[selectedMonth];
+    const totalNegativo = selectedConfig
+      ? selectedConfig.zonas.reduce((sum, zona) => (
+          sum + zona.web_b2c_anterior * (zona.pct_gen_web / 100) + zona.grassroots * (zona.pct_frees / 100)
+        ), 0)
+      : 0;
     const changedLines = beforeMonth && afterMonth
       ? afterMonth.lines.filter((line, lineIndex) =>
           line.dias.some((day, dayIndex) => Math.abs(day.importe - (beforeMonth.lines[lineIndex]?.dias[dayIndex]?.importe || 0)) > 0.01)
@@ -436,6 +442,8 @@ export default function Home() {
     setApplyMessage(
       changedLines > 0
         ? `Negativos aplicados en ${selectedMonth}: ${changedLines} lineas actualizadas.`
+        : Math.abs(totalNegativo) < 0.01
+          ? `Negativos aplicados en ${selectedMonth}: total 0, sin cambios en importes.`
         : `No se han encontrado lineas Futbol Emotion + Equipaciones para las zonas de negativos en ${selectedMonth}.`
     );
     window.setTimeout(() => setApplyMessage(null), 4500);

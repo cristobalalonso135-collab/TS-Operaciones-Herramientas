@@ -150,8 +150,7 @@ export default function NegativosForm({ selectedMonth, config, onChange, onApply
           <div className="flex justify-end">
             <button
               onClick={onApply}
-              disabled={totalNegativo === 0}
-              className="flex items-center gap-2 rounded-md bg-[var(--danger)] px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-35"
+              className="flex items-center gap-2 rounded-md bg-[var(--danger)] px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
             >
               <Minus className="h-4 w-4" />
               Aplicar negativos
