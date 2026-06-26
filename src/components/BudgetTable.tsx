@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import { BudgetLineDaily } from '@/lib/budget-processor';
 import { Download } from 'lucide-react';
 
@@ -25,13 +26,68 @@ function formatDateHeader(dateValue: string): string {
   return `${day}/${month}/${year}`;
 }
 
+interface FilterSelectProps {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}
+
+function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
+  return (
+    <label className="space-y-1">
+      <span className="text-xs font-medium text-[var(--text-secondary)]">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2 text-xs outline-none transition focus:border-[var(--accent)]"
+      >
+        <option value="">Todos</option>
+        {options.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   if (data.length === 0) return null;
 
+  const [filters, setFilters] = useState({
+    vertical: '',
+    medio: '',
+    pais: '',
+    zona: '',
+  });
+
+  const filterOptions = useMemo(() => ({
+    vertical: Array.from(new Set(data.map((line) => line.vertical).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    medio: Array.from(new Set(data.map((line) => line.medio_venta).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    pais: Array.from(new Set(data.map((line) => line.pais).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+    zona: Array.from(new Set(data.map((line) => line.zona).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
+  }), [data]);
+
+  const filteredData = useMemo(() => data.filter((line) => (
+    (!filters.vertical || line.vertical === filters.vertical) &&
+    (!filters.medio || line.medio_venta === filters.medio) &&
+    (!filters.pais || line.pais === filters.pais) &&
+    (!filters.zona || line.zona === filters.zona)
+  )), [data, filters]);
+
+  const updateFilter = (key: keyof typeof filters, value: string) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const clearFilters = () => {
+    setFilters({ vertical: '', medio: '', pais: '', zona: '' });
+  };
+
+  const hasFilters = Object.values(filters).some(Boolean);
   const days = data[0].dias;
-  const totalMensual = data.reduce((sum, l) => sum + l.importe, 0);
-  const totalMargen = data.reduce((sum, l) => sum + l.margen_bruto, 0);
-  const totalCheck = data.reduce((sum, l) => sum + l.total_check, 0);
+  const totalMensual = filteredData.reduce((sum, l) => sum + l.importe, 0);
+  const totalMargen = filteredData.reduce((sum, l) => sum + l.margen_bruto, 0);
+  const totalCheck = filteredData.reduce((sum, l) => sum + l.total_check, 0);
   const isAllFy = mesFiscal === 'Todo FY';
 
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
@@ -41,7 +97,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
     header.push('Total Check');
     wsData.push(header);
 
-    data.forEach((line) => {
+    filteredData.forEach((line) => {
       const isCogs = kind === 'cogs';
       const mensual = isCogs ? line.importe - line.margen_bruto : line.importe;
       const diario = line.dias_laborables > 0 ? mensual / line.dias_laborables : 0;
@@ -82,7 +138,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
         <div className="flex gap-8 flex-wrap">
           <div>
             <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
-            <p className="mt-1 text-sm font-semibold">{data.length}</p>
+            <p className="mt-1 text-sm font-semibold">{filteredData.length}</p>
           </div>
           <div>
             <p className="text-xs text-[var(--text-secondary)]">Laborables</p>
@@ -114,6 +170,42 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
         </button>
       </div>
 
+      <div className="grid gap-3 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 md:grid-cols-5">
+        <FilterSelect
+          label="Vertical"
+          value={filters.vertical}
+          options={filterOptions.vertical}
+          onChange={(value) => updateFilter('vertical', value)}
+        />
+        <FilterSelect
+          label="Medio"
+          value={filters.medio}
+          options={filterOptions.medio}
+          onChange={(value) => updateFilter('medio', value)}
+        />
+        <FilterSelect
+          label="Pais"
+          value={filters.pais}
+          options={filterOptions.pais}
+          onChange={(value) => updateFilter('pais', value)}
+        />
+        <FilterSelect
+          label="Zona"
+          value={filters.zona}
+          options={filterOptions.zona}
+          onChange={(value) => updateFilter('zona', value)}
+        />
+        <div className="flex items-end">
+          <button
+            onClick={clearFilters}
+            disabled={!hasFilters}
+            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-3 text-xs font-medium transition hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Limpiar filtros
+          </button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)]" style={{ maxHeight: '68vh' }}>
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead className="sticky top-0 z-20">
@@ -143,7 +235,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
             </tr>
           </thead>
           <tbody>
-            {data.map((line, i) => (
+            {filteredData.map((line, i) => (
               <tr key={i} className="hover:bg-[var(--bg-primary)]">
                 <td className="sticky left-0 z-10 max-w-[180px] truncate border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 font-medium" title={line.vertical}>
                   {line.vertical}
@@ -191,7 +283,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                 {formatCurrency(totalMensual / data[0].dias_laborables)}
               </td>
               {days.map((d, di) => {
-                const dayTotal = data.reduce((sum, l) => sum + l.dias[di].importe, 0);
+                const dayTotal = filteredData.reduce((sum, l) => sum + l.dias[di].importe, 0);
                 return (
                   <td
                     key={d.fecha}
