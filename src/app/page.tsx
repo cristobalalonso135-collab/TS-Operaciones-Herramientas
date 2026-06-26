@@ -476,6 +476,10 @@ export default function Home() {
   const totalMargen = activeData?.reduce((s, m) => s + m.total_margen, 0) || 0;
   const totalCogs = totalBudget - totalMargen;
   const totalMargenPct = totalBudget !== 0 ? (totalMargen / totalBudget) * 100 : 0;
+  const uniqueDays = new Map<string, boolean>();
+  activeData?.forEach((month) => month.lines[0]?.dias.forEach((day) => uniqueDays.set(day.fecha, day.is_working)));
+  const totalDiasLaborables = Array.from(uniqueDays.values()).filter(Boolean).length;
+  const totalDiasNoLaborables = Array.from(uniqueDays.values()).filter((isWorking) => !isWorking).length;
   const selectedMonthClosed = selectedMonth !== ALL_MONTHS && closedMonths.includes(selectedMonth);
 
   const stepAvailable = (id: number) => {
@@ -621,18 +625,14 @@ export default function Home() {
 
       {activeData && (
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-6">
+          <div className="grid gap-3 md:grid-cols-8">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
-              <p className="mt-1 text-xl font-semibold">{formatNumber(totalLines)}</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Meses</p>
-              <p className="mt-1 text-xl font-semibold">{activeData.length}</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Budget total</p>
+              <p className="text-xs text-[var(--text-secondary)]">Budget</p>
               <p className="mt-1 text-xl font-semibold">{formatCurrency(totalBudget)}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">COGS</p>
+              <p className="mt-1 text-xl font-semibold">{formatCurrency(totalCogs)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Margen bruto</p>
@@ -646,9 +646,21 @@ export default function Home() {
                 {formatPercent(totalMargenPct)}
               </p>
             </div>
+            <div className="rounded-lg border-l-2 border-l-[var(--border-strong)] border-y border-r border-y-[var(--border)] border-r-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
+              <p className="mt-1 text-xl font-semibold">{formatNumber(totalLines)}</p>
+            </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">COGS</p>
-              <p className="mt-1 text-xl font-semibold">{formatCurrency(totalCogs)}</p>
+              <p className="text-xs text-[var(--text-secondary)]">Meses</p>
+              <p className="mt-1 text-xl font-semibold">{activeData.length}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Dias laborables</p>
+              <p className="mt-1 text-xl font-semibold">{totalDiasLaborables}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Dias no laborables</p>
+              <p className="mt-1 text-xl font-semibold">{totalDiasNoLaborables}</p>
             </div>
           </div>
 

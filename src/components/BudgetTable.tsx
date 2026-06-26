@@ -193,6 +193,8 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   const totalMargen = filteredData.reduce((sum, l) => sum + l.margen_bruto, 0);
   const totalCogs = totalMensual - totalMargen;
   const totalMargenPct = totalMensual !== 0 ? (totalMargen / totalMensual) * 100 : 0;
+  const laborableDays = data[0].dias_laborables;
+  const nonWorkingDays = days.length - laborableDays;
   const isAllFy = mesFiscal === 'Todo FY';
 
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
@@ -247,18 +249,14 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   return (
     <div className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex gap-8 flex-wrap">
+        <div className="flex gap-7 flex-wrap">
           <div>
-            <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
-            <p className="mt-1 text-sm font-semibold">{filteredData.length}</p>
-          </div>
-          <div>
-            <p className="text-xs text-[var(--text-secondary)]">Laborables</p>
-            <p className="mt-1 text-sm font-semibold">{data[0].dias_laborables}</p>
-          </div>
-          <div>
-            <p className="text-xs text-[var(--text-secondary)]">{isAllFy ? 'Total FY' : 'Total mensual'}</p>
+            <p className="text-xs text-[var(--text-secondary)]">Budget</p>
             <p className="mt-1 text-sm font-semibold">{formatCurrency(totalMensual)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--text-secondary)]">COGS</p>
+            <p className="mt-1 text-sm font-semibold">{formatCurrency(totalCogs)}</p>
           </div>
           <div>
             <p className="text-xs text-[var(--text-secondary)]">Margen bruto</p>
@@ -272,11 +270,17 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
               {formatPercent(totalMargenPct)}
             </p>
           </div>
+          <div className="min-h-9 border-l border-[var(--border-strong)] pl-7">
+            <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
+            <p className="mt-1 text-sm font-semibold">{filteredData.length}</p>
+          </div>
           <div>
-            <p className="text-xs text-[var(--text-secondary)]">COGS</p>
-            <p className="mt-1 text-sm font-semibold">
-              {formatCurrency(totalCogs)}
-            </p>
+            <p className="text-xs text-[var(--text-secondary)]">Dias laborables</p>
+            <p className="mt-1 text-sm font-semibold">{laborableDays}</p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--text-secondary)]">Dias no laborables</p>
+            <p className="mt-1 text-sm font-semibold">{nonWorkingDays}</p>
           </div>
         </div>
         <button
@@ -328,24 +332,24 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead className="sticky top-0 z-20">
             <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
-              <th className="sticky left-0 z-30 min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
+              <th className="min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Vertical" active={sort.key === 'vertical'} direction={sort.direction} onClick={() => toggleSort('vertical')}>Vertical</SortButton>
               </th>
-              <th className="sticky left-[220px] z-30 min-w-[340px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
+              <th className="min-w-[340px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Medio" active={sort.key === 'medio'} direction={sort.direction} onClick={() => toggleSort('medio')}>Medio</SortButton>
               </th>
-              <th className="sticky left-[560px] z-30 min-w-[74px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
+              <th className="min-w-[74px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Pais" active={sort.key === 'pais'} direction={sort.direction} onClick={() => toggleSort('pais')}>Pais</SortButton>
               </th>
-              <th className="sticky left-[634px] z-30 min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
+              <th className="min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Zona" active={sort.key === 'zona'} direction={sort.direction} onClick={() => toggleSort('zona')}>Zona</SortButton>
               </th>
-              <th className="sticky left-[854px] z-30 min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-right font-medium">
+              <th className="min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-right font-medium">
                 <SortButton label={isAllFy ? 'FY' : 'Mensual'} align="right" active={sort.key === 'mensual'} direction={sort.direction} onClick={() => toggleSort('mensual')}>
                   {isAllFy ? 'FY' : 'Mensual'}
                 </SortButton>
               </th>
-              <th className="sticky left-[982px] z-30 min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-right font-medium">
+              <th className="min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-right font-medium">
                 <SortButton label="Diario" align="right" active={sort.key === 'diario'} direction={sort.direction} onClick={() => toggleSort('diario')}>Diario</SortButton>
               </th>
               {days.map((d) => {
@@ -375,22 +379,22 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
           <tbody>
             {sortedData.map((line, i) => (
               <tr key={i} className="hover:bg-[var(--bg-primary)]">
-                <td className="sticky left-0 z-10 w-[220px] min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 font-medium" title={line.vertical}>
+                <td className="w-[220px] min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 font-medium" title={line.vertical}>
                   {line.vertical}
                 </td>
-                <td className="sticky left-[220px] z-10 w-[340px] min-w-[340px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.medio_venta}>
+                <td className="w-[340px] min-w-[340px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.medio_venta}>
                   {line.medio_venta}
                 </td>
-                <td className="sticky left-[560px] z-10 w-[74px] min-w-[74px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]">
+                <td className="w-[74px] min-w-[74px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]">
                   {line.pais?.slice(0, 3).toUpperCase()}
                 </td>
-                <td className="sticky left-[634px] z-10 w-[220px] min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.zona}>
+                <td className="w-[220px] min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.zona}>
                   {line.zona}
                 </td>
-                <td className="sticky left-[854px] z-10 w-[128px] min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-right font-mono tabular-nums">
+                <td className="w-[128px] min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-right font-mono tabular-nums">
                   {formatCurrency(line.importe)}
                 </td>
-                <td className="sticky left-[982px] z-10 w-[128px] min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-right font-mono tabular-nums text-[var(--accent)]">
+                <td className="w-[128px] min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-right font-mono tabular-nums text-[var(--accent)]">
                   {formatCurrency(line.importe_diario)}
                 </td>
                 {line.dias.map((d) => {
@@ -416,12 +420,12 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
           </tbody>
           <tfoot className="sticky bottom-0 z-20">
             <tr className="bg-[var(--bg-soft)] font-semibold">
-              <td className="sticky left-0 z-30 w-[220px] min-w-[220px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3">TOTAL</td>
-              <td className="sticky left-[220px] z-30 w-[340px] min-w-[340px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
-              <td className="sticky left-[560px] z-30 w-[74px] min-w-[74px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
-              <td className="sticky left-[634px] z-30 w-[220px] min-w-[220px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
-              <td className="sticky left-[854px] z-30 w-[128px] min-w-[128px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(totalMensual)}</td>
-              <td className="sticky left-[982px] z-30 w-[128px] min-w-[128px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3 text-right font-mono tabular-nums text-[var(--accent)]">
+              <td className="w-[220px] min-w-[220px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3">TOTAL</td>
+              <td className="w-[340px] min-w-[340px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
+              <td className="w-[74px] min-w-[74px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
+              <td className="w-[220px] min-w-[220px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
+              <td className="w-[128px] min-w-[128px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(totalMensual)}</td>
+              <td className="w-[128px] min-w-[128px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3 text-right font-mono tabular-nums text-[var(--accent)]">
                 {formatCurrency(totalMensual / data[0].dias_laborables)}
               </td>
               {days.map((d, di) => {
