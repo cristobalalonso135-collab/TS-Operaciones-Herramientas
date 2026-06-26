@@ -23,6 +23,15 @@ function formatShortCurrency(n: number): string {
   return formatCurrency(n);
 }
 
+function formatDateHeader(dateValue: string): string {
+  const date = new Date(dateValue);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = date.getUTCFullYear();
+
+  return `${day}/${month}/${year}`;
+}
+
 export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   if (data.length === 0) return null;
 
@@ -126,7 +135,6 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                 const date = new Date(d.fecha);
                 const dayNum = date.getUTCDate();
                 const dow = date.getUTCDay();
-                const monthNum = date.getUTCMonth() + 1;
                 return (
                   <th
                     key={d.fecha}
@@ -135,7 +143,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                     }`}
                   >
                     <div className="text-[10px]">{DAY_NAMES[dow]}</div>
-                    <div>{isAllFy ? `${dayNum}/${monthNum}` : dayNum}</div>
+                    <div>{formatDateHeader(d.fecha)}</div>
                   </th>
                 );
               })}
