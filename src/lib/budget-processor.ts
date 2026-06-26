@@ -550,10 +550,10 @@ export function defaultNegativosConfig(zonas = ZONAS_DEFAULT): NegativosConfig {
   return {
     zonas: zonas.map((zona) => ({
       zona,
-      web_b2c_anterior: 10000,
-      pct_gen_web: 10,
-      grassroots: 10000,
-      pct_frees: 10,
+      web_b2c_anterior: 0,
+      pct_gen_web: 0,
+      grassroots: 0,
+      pct_frees: 0,
     })),
     ponderacion: [0.6, 0.25, 0.15],
   };
