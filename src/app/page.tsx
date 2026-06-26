@@ -45,6 +45,10 @@ function formatCurrency(n: number): string {
   return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
+function formatPercent(n: number): string {
+  return `${n.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
 function getAllDates(data: MonthData[]): string[] {
   return data.flatMap((month) => month.lines[0]?.dias.map((day) => day.fecha) || []);
 }
@@ -471,6 +475,7 @@ export default function Home() {
   const totalBudget = activeData?.reduce((s, m) => s + m.total_importe, 0) || 0;
   const totalMargen = activeData?.reduce((s, m) => s + m.total_margen, 0) || 0;
   const totalCogs = totalBudget - totalMargen;
+  const totalMargenPct = totalBudget !== 0 ? (totalMargen / totalBudget) * 100 : 0;
   const selectedMonthClosed = selectedMonth !== ALL_MONTHS && closedMonths.includes(selectedMonth);
 
   const stepAvailable = (id: number) => {
@@ -616,7 +621,7 @@ export default function Home() {
 
       {activeData && (
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-6">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
               <p className="mt-1 text-xl font-semibold">{formatNumber(totalLines)}</p>
@@ -633,6 +638,12 @@ export default function Home() {
               <p className="text-xs text-[var(--text-secondary)]">Margen bruto</p>
               <p className={`mt-1 text-xl font-semibold ${totalMargen >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
                 {formatCurrency(totalMargen)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Margen %</p>
+              <p className={`mt-1 text-xl font-semibold ${totalMargenPct >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                {formatPercent(totalMargenPct)}
               </p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">

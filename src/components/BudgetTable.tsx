@@ -27,6 +27,10 @@ function formatCurrency(n: number): string {
   return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
+function formatPercent(n: number): string {
+  return `${n.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
 function formatDateHeader(dateValue: string): string {
   const date = new Date(dateValue);
   const day = String(date.getUTCDate()).padStart(2, '0');
@@ -188,6 +192,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   const totalMensual = filteredData.reduce((sum, l) => sum + l.importe, 0);
   const totalMargen = filteredData.reduce((sum, l) => sum + l.margen_bruto, 0);
   const totalCogs = totalMensual - totalMargen;
+  const totalMargenPct = totalMensual !== 0 ? (totalMargen / totalMensual) * 100 : 0;
   const isAllFy = mesFiscal === 'Todo FY';
 
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
@@ -262,6 +267,12 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
             </p>
           </div>
           <div>
+            <p className="text-xs text-[var(--text-secondary)]">Margen %</p>
+            <p className={`mt-1 text-sm font-semibold ${totalMargenPct >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+              {formatPercent(totalMargenPct)}
+            </p>
+          </div>
+          <div>
             <p className="text-xs text-[var(--text-secondary)]">COGS</p>
             <p className="mt-1 text-sm font-semibold">
               {formatCurrency(totalCogs)}
@@ -317,24 +328,24 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead className="sticky top-0 z-20">
             <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
-              <th className="sticky left-0 z-30 min-w-[150px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
+              <th className="sticky left-0 z-30 min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Vertical" active={sort.key === 'vertical'} direction={sort.direction} onClick={() => toggleSort('vertical')}>Vertical</SortButton>
               </th>
-              <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">
+              <th className="sticky left-[220px] z-30 min-w-[340px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Medio" active={sort.key === 'medio'} direction={sort.direction} onClick={() => toggleSort('medio')}>Medio</SortButton>
               </th>
-              <th className="min-w-[80px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">
+              <th className="sticky left-[560px] z-30 min-w-[74px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Pais" active={sort.key === 'pais'} direction={sort.direction} onClick={() => toggleSort('pais')}>Pais</SortButton>
               </th>
-              <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">
+              <th className="sticky left-[634px] z-30 min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
                 <SortButton label="Zona" active={sort.key === 'zona'} direction={sort.direction} onClick={() => toggleSort('zona')}>Zona</SortButton>
               </th>
-              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">
+              <th className="sticky left-[854px] z-30 min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-right font-medium">
                 <SortButton label={isAllFy ? 'FY' : 'Mensual'} align="right" active={sort.key === 'mensual'} direction={sort.direction} onClick={() => toggleSort('mensual')}>
                   {isAllFy ? 'FY' : 'Mensual'}
                 </SortButton>
               </th>
-              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">
+              <th className="sticky left-[982px] z-30 min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-right font-medium">
                 <SortButton label="Diario" align="right" active={sort.key === 'diario'} direction={sort.direction} onClick={() => toggleSort('diario')}>Diario</SortButton>
               </th>
               {days.map((d) => {
@@ -364,22 +375,22 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
           <tbody>
             {sortedData.map((line, i) => (
               <tr key={i} className="hover:bg-[var(--bg-primary)]">
-                <td className="sticky left-0 z-10 max-w-[180px] truncate border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 font-medium" title={line.vertical}>
+                <td className="sticky left-0 z-10 w-[220px] min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 font-medium" title={line.vertical}>
                   {line.vertical}
                 </td>
-                <td className="max-w-[160px] truncate border-b border-[var(--border)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.medio_venta}>
+                <td className="sticky left-[220px] z-10 w-[340px] min-w-[340px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.medio_venta}>
                   {line.medio_venta}
                 </td>
-                <td className="border-b border-[var(--border)] px-3 py-2.5 text-[var(--text-secondary)]">
+                <td className="sticky left-[560px] z-10 w-[74px] min-w-[74px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]">
                   {line.pais?.slice(0, 3).toUpperCase()}
                 </td>
-                <td className="max-w-[160px] truncate border-b border-[var(--border)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.zona}>
+                <td className="sticky left-[634px] z-10 w-[220px] min-w-[220px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-[var(--text-secondary)]" title={line.zona}>
                   {line.zona}
                 </td>
-                <td className="border-b border-[var(--border)] px-3 py-2.5 text-right font-mono tabular-nums">
+                <td className="sticky left-[854px] z-10 w-[128px] min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-right font-mono tabular-nums">
                   {formatCurrency(line.importe)}
                 </td>
-                <td className="border-b border-[var(--border)] px-3 py-2.5 text-right font-mono tabular-nums text-[var(--accent)]">
+                <td className="sticky left-[982px] z-10 w-[128px] min-w-[128px] border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 text-right font-mono tabular-nums text-[var(--accent)]">
                   {formatCurrency(line.importe_diario)}
                 </td>
                 {line.dias.map((d) => {
@@ -405,12 +416,12 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
           </tbody>
           <tfoot className="sticky bottom-0 z-20">
             <tr className="bg-[var(--bg-soft)] font-semibold">
-              <td className="sticky left-0 z-30 border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3">TOTAL</td>
-              <td className="border-t border-[var(--border-strong)]"></td>
-              <td className="border-t border-[var(--border-strong)]"></td>
-              <td className="border-t border-[var(--border-strong)]"></td>
-              <td className="border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(totalMensual)}</td>
-              <td className="border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums text-[var(--accent)]">
+              <td className="sticky left-0 z-30 w-[220px] min-w-[220px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3">TOTAL</td>
+              <td className="sticky left-[220px] z-30 w-[340px] min-w-[340px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
+              <td className="sticky left-[560px] z-30 w-[74px] min-w-[74px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
+              <td className="sticky left-[634px] z-30 w-[220px] min-w-[220px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)]"></td>
+              <td className="sticky left-[854px] z-30 w-[128px] min-w-[128px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(totalMensual)}</td>
+              <td className="sticky left-[982px] z-30 w-[128px] min-w-[128px] border-t border-[var(--border-strong)] bg-[var(--bg-soft)] px-3 py-3 text-right font-mono tabular-nums text-[var(--accent)]">
                 {formatCurrency(totalMensual / data[0].dias_laborables)}
               </td>
               {days.map((d, di) => {
