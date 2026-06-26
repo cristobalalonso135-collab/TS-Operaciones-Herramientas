@@ -35,12 +35,12 @@ function formatDate(dateValue: string): string {
 export default function WeeklyWeightsForm({ monthData, config, onChange, onApply }: WeeklyWeightsFormProps) {
   const weeks = getWeeksForMonthData(monthData);
 
-  const updateGrowth = (medio: string, weekId: string, value: number) => {
+  const updateWeight = (medio: string, weekId: string, value: number) => {
     onChange(monthData.mes_fiscal, {
-      mediaGrowth: {
-        ...config.mediaGrowth,
+      mediaWeights: {
+        ...config.mediaWeights,
         [medio]: {
-          ...(config.mediaGrowth[medio] || {}),
+          ...(config.mediaWeights[medio] || {}),
           [weekId]: value,
         },
       },
@@ -65,6 +65,8 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
         {WEEKLY_TARGET_MEDIOS.map((medio) => {
           const summary = getWeeklySummary(monthData, config, medio);
           const totalTarget = summary.reduce((sum, week) => sum + week.targetBudget, 0);
+          const totalWeight = weeks.reduce((sum, week) => sum + (config.mediaWeights[medio]?.[week.id] || 0), 0);
+          const isValid = Math.abs(totalWeight - 100) < 0.01;
 
           return (
             <section key={medio} className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
@@ -73,10 +75,13 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
                   <h3 className="text-sm font-semibold">{medio}</h3>
                   <p className="text-xs text-[var(--text-secondary)]">Budget total objetivo: {formatCurrency(totalTarget)}</p>
                 </div>
+                <span className={`rounded-md px-2 py-1 text-xs font-mono ${isValid ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
+                  Total peso {formatPct(totalWeight)}
+                </span>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {weeks.map((week, index) => (
+                {weeks.map((week) => (
                   <label key={week.id} className="rounded-md border border-[var(--border)] bg-white p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div>
@@ -86,14 +91,13 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
                         </p>
                       </div>
                       <div className="text-right">
-                        <span className="block text-[10px] text-[var(--text-secondary)]">Crec. diario</span>
+                        <span className="block text-[10px] text-[var(--text-secondary)]">Peso semana</span>
                         <input
                           type="number"
                           step="0.01"
-                          value={index === 0 ? 0 : (config.mediaGrowth[medio]?.[week.id] ?? 0)}
-                          disabled={index === 0}
-                          onChange={(event) => updateGrowth(medio, week.id, parseFloat(event.target.value) || 0)}
-                          className="w-24 rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-right font-mono text-sm disabled:bg-[var(--bg-soft)] disabled:text-[var(--text-muted)]"
+                          value={config.mediaWeights[medio]?.[week.id] ?? 0}
+                          onChange={(event) => updateWeight(medio, week.id, parseFloat(event.target.value) || 0)}
+                          className="w-24 rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-right font-mono text-sm"
                         />
                       </div>
                     </div>
@@ -106,12 +110,13 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
                   <thead>
                     <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                       <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Semana</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Peso</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dias laborables</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget actual</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Promedio diario actual</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. diario vs anterior</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget objetivo semana</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Promedio diario objetivo</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. promedio diario</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget actual</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Promedio diario actual</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
                     </tr>
                   </thead>
@@ -119,12 +124,17 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
                     {summary.map((week, index) => (
                       <tr key={week.weekId}>
                         <td className="border-b border-[var(--border)] px-3 py-2 font-medium">{week.label}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatPct(week.weightPct)}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{week.workingDays}</td>
-                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(week.currentBudget)}</td>
-                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(week.currentDailyAverage)}</td>
-                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{index === 0 ? '-' : formatPct(week.growthPct)}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(week.targetBudget)}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(week.targetDailyAverage)}</td>
+                        <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${
+                          week.targetDailyGrowthPct !== null && week.targetDailyGrowthPct < 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'
+                        }`}>
+                          {index === 0 || week.targetDailyGrowthPct === null ? '-' : formatPct(week.targetDailyGrowthPct)}
+                        </td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(week.currentBudget)}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(week.currentDailyAverage)}</td>
                         <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${week.targetBudget - week.currentBudget < 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
                           {formatCurrency(week.targetBudget - week.currentBudget)}
                         </td>
@@ -140,7 +150,8 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
         <div className="flex justify-end">
           <button
             onClick={onApply}
-            className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-medium text-white transition hover:bg-black"
+            disabled={WEEKLY_TARGET_MEDIOS.some((medio) => Math.abs(weeks.reduce((sum, week) => sum + (config.mediaWeights[medio]?.[week.id] || 0), 0) - 100) > 0.01)}
+            className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-35"
           >
             Aplicar ponderacion semanal
           </button>
