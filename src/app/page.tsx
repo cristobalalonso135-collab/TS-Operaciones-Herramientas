@@ -32,7 +32,7 @@ function formatNumber(n: number): string {
 }
 
 function formatCurrency(n: number): string {
-  return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
 function getAllDates(data: MonthData[]): string[] {

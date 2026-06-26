@@ -13,13 +13,13 @@ interface BudgetTableProps {
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
 
 function formatCurrency(n: number): string {
-  return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
 function formatShortCurrency(n: number): string {
   const abs = Math.abs(n);
-  if (abs >= 1000000) return `${(n / 1000000).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M€`;
-  if (abs >= 1000) return `${(n / 1000).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} K€`;
+  if (abs >= 1000000) return `${(n / 1000000).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M€`;
+  if (abs >= 1000) return `${(n / 1000).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} K€`;
   return formatCurrency(n);
 }
 
@@ -43,7 +43,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
 
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
     const wsData: any[][] = [];
-    const header = ['Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', 'Mensual', 'Margen', '% Margen', 'Diario', 'Dias Lab.'];
+    const header = ['Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', isAllFy ? 'FY' : 'Mensual', 'Margen', '% Margen', 'Diario', 'Dias Lab.'];
     days.forEach((d) => header.push(d.fecha));
     header.push('Total Check');
     wsData.push(header);
@@ -96,7 +96,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
             <p className="mt-1 text-sm font-semibold">{data[0].dias_laborables}</p>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-secondary)]">Total mensual</p>
+            <p className="text-xs text-[var(--text-secondary)]">{isAllFy ? 'Total FY' : 'Total mensual'}</p>
             <p className="mt-1 text-sm font-semibold">{formatCurrency(totalMensual)}</p>
           </div>
           <div>
@@ -129,7 +129,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
               <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">Medio</th>
               <th className="min-w-[80px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">Pais</th>
               <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">Zona</th>
-              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">Mensual</th>
+              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">{isAllFy ? 'FY' : 'Mensual'}</th>
               <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">Diario</th>
               {days.map((d) => {
                 const date = new Date(d.fecha);

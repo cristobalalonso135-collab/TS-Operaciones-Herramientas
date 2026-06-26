@@ -16,7 +16,7 @@ interface NegativosFormProps {
 }
 
 function formatCurrency(n: number): string {
-  return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
 export default function NegativosForm({ selectedMonth, config, onChange, onApply }: NegativosFormProps) {
