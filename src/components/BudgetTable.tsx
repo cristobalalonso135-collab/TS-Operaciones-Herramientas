@@ -31,7 +31,7 @@ export default function BudgetTable({ data, year, month, mesFiscal }: BudgetTabl
   const totalCheck = data.reduce((sum, l) => sum + l.total_check, 0);
 
   const handleExport = async () => {
-    const XLSX = (await import('xlsx')).default;
+    const XLSX = await import('xlsx');
     const wsData: any[][] = [];
 
     const header = ['Área', 'Vertical', 'Medio Venta', 'País', 'Zona', 'Mensual', 'Margen', '% Margen', 'Diario', 'Días Lab.'];

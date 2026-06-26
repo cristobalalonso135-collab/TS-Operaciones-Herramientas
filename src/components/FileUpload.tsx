@@ -22,7 +22,7 @@ export default function FileUpload({
     async (file: File) => {
       setError(null);
       try {
-        const XLSX = (await import('xlsx')).default;
+        const XLSX = await import('xlsx');
         const buffer = await file.arrayBuffer();
         const wb = XLSX.read(buffer, { type: 'array' });
 
