@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { BudgetLineDaily } from '@/lib/budget-processor';
+import { getHolidayName } from '@/lib/holidays';
 import { Download } from 'lucide-react';
 
 interface BudgetTableProps {
@@ -26,6 +27,17 @@ function formatDateHeader(dateValue: string): string {
   return `${day}/${month}/${year}`;
 }
 
+function getNoBudgetReason(dateValue: string): string {
+  const holidayName = getHolidayName(dateValue);
+  if (holidayName) return `Sin budget: festivo Zaragoza - ${holidayName}`;
+
+  const date = new Date(dateValue);
+  const dow = date.getUTCDay();
+  if (dow === 0 || dow === 6) return 'Sin budget: fin de semana';
+
+  return 'Sin budget: dia no laborable';
+}
+
 interface FilterSelectProps {
   label: string;
   value: string;
@@ -40,7 +52,7 @@ function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2 text-xs outline-none transition focus:border-[var(--accent)]"
+        className="h-9 w-full min-w-0 rounded-md border border-[var(--border)] bg-white pl-3 pr-10 text-xs outline-none transition focus:border-[var(--accent)]"
       >
         <option value="">Todos</option>
         {options.map((option) => (
@@ -170,7 +182,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
         </button>
       </div>
 
-      <div className="grid gap-3 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 md:grid-cols-5">
+      <div className="grid gap-3 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 md:grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)_minmax(160px,0.9fr)_minmax(220px,1.2fr)_160px]">
         <FilterSelect
           label="Vertical"
           value={filters.vertical}
@@ -218,13 +230,14 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
               <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">Diario</th>
               {days.map((d) => {
                 const date = new Date(d.fecha);
-                const dayNum = date.getUTCDate();
                 const dow = date.getUTCDay();
+                const noBudgetReason = !d.is_working ? getNoBudgetReason(d.fecha) : undefined;
                 return (
                   <th
                     key={d.fecha}
+                    title={noBudgetReason}
                     className={`min-w-[112px] border-b border-[var(--border)] px-3 py-3 text-right font-medium ${
-                      !d.is_working ? 'bg-[var(--bg-primary)] text-[var(--text-muted)]' : ''
+                      !d.is_working ? 'bg-amber-100 text-amber-900' : ''
                     }`}
                   >
                     <div className="text-[10px]">{DAY_NAMES[dow]}</div>
@@ -255,20 +268,24 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                 <td className="border-b border-[var(--border)] px-3 py-2.5 text-right font-mono tabular-nums text-[var(--accent)]">
                   {formatCurrency(line.importe_diario)}
                 </td>
-                {line.dias.map((d) => (
-                  <td
-                    key={d.fecha}
-                    className={`border-b border-[var(--border)] px-3 py-2.5 text-right font-mono tabular-nums ${
-                      !d.is_working ? 'bg-[var(--bg-primary)] text-[var(--text-muted)]' : ''
-                    }`}
-                  >
-                    {d.importe !== 0 ? (
-                      <span className={d.importe < 0 ? 'text-[var(--danger)]' : ''}>
-                        {formatCurrency(d.importe)}
-                      </span>
-                    ) : ''}
-                  </td>
-                ))}
+                {line.dias.map((d) => {
+                  const noBudgetReason = !d.is_working ? getNoBudgetReason(d.fecha) : undefined;
+                  return (
+                    <td
+                      key={d.fecha}
+                      title={noBudgetReason}
+                      className={`border-b border-[var(--border)] px-3 py-2.5 text-right font-mono tabular-nums ${
+                        !d.is_working ? 'bg-amber-50 text-amber-900' : ''
+                      }`}
+                    >
+                      {d.importe !== 0 ? (
+                        <span className={d.importe < 0 ? 'text-[var(--danger)]' : ''}>
+                          {formatCurrency(d.importe)}
+                        </span>
+                      ) : ''}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -284,11 +301,13 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
               </td>
               {days.map((d, di) => {
                 const dayTotal = filteredData.reduce((sum, l) => sum + l.dias[di].importe, 0);
+                const noBudgetReason = !d.is_working ? getNoBudgetReason(d.fecha) : undefined;
                 return (
                   <td
                     key={d.fecha}
+                    title={noBudgetReason}
                     className={`border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums ${
-                      !d.is_working ? 'bg-[var(--bg-primary)] text-[var(--text-muted)]' : ''
+                      !d.is_working ? 'bg-amber-100 text-amber-900' : ''
                     }`}
                   >
                     {dayTotal !== 0 ? (

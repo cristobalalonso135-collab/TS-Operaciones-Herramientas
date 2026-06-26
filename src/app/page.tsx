@@ -445,17 +445,20 @@ export default function Home() {
           </div>
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3">
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div
+              className="grid gap-2 overflow-x-auto md:overflow-visible"
+              style={{ gridTemplateColumns: `repeat(${activeData.length + 1}, minmax(0, 1fr))` }}
+            >
               <button
                 onClick={() => setSelectedMonth(ALL_MONTHS)}
-                className={`min-w-[120px] rounded-md border px-3 py-2 text-left text-xs transition ${
+                className={`min-w-0 rounded-md border px-2 py-2 text-left text-[11px] transition ${
                   selectedMonth === ALL_MONTHS
                     ? 'border-[var(--text-primary)] bg-[var(--text-primary)] text-white'
                     : 'border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'
                 }`}
               >
-                <div className="font-medium">Todo FY</div>
-                <div className="mt-0.5 opacity-70">{formatCurrency(totalBudget)}</div>
+                <div className="truncate font-medium">Todo FY</div>
+                <div className="mt-0.5 truncate text-[10px] opacity-70">{formatCurrency(totalBudget)}</div>
               </button>
               {activeData.map((md) => {
                 const isClosed = closedMonths.includes(md.mes_fiscal);
@@ -463,7 +466,7 @@ export default function Home() {
                   <button
                     key={md.mes_fiscal}
                     onClick={() => setSelectedMonth(md.mes_fiscal)}
-                    className={`min-w-[132px] rounded-md border px-3 py-2 text-left text-xs transition ${
+                    className={`min-w-0 rounded-md border px-2 py-2 text-left text-[11px] transition ${
                       md.mes_fiscal === selectedMonth
                         ? 'border-[var(--text-primary)] bg-[var(--text-primary)] text-white'
                         : isClosed
@@ -473,9 +476,9 @@ export default function Home() {
                   >
                     <div className="flex items-center gap-1 font-medium">
                       {isClosed && <Lock className="h-3 w-3" />}
-                      {md.mes_fiscal}
+                      <span className="truncate">{md.mes_fiscal}</span>
                     </div>
-                    <div className="mt-0.5 opacity-70">{formatCurrency(md.total_importe)}</div>
+                    <div className="mt-0.5 truncate text-[10px] opacity-70">{formatCurrency(md.total_importe)}</div>
                   </button>
                 );
               })}
