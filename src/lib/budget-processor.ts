@@ -1,24 +1,6 @@
 import { getWorkingDays, getAllDaysOfMonth } from './working-days';
 
-// ==========================================
-// TIPOS
-// ==========================================
-
-/** Línea de budget tal como viene del Excel */
 export interface BudgetLineInput {
-  mes_fiscal: string;       // "01 · Abril"
-  area: string;             // "B2B", "Grassroots", "Pro Clubs"
-  vertical: string;         // "Fútbol Emotion", "The Pitch", etc.
-  medio_venta: string;      // "Equipaciones", "B2B", "Internet", etc.
-  pais: string;             // "España", "Francia", etc.
-  zona: string;             // "Italia Norte", "Francia", etc.
-  importe: number;
-  margen_bruto: number;
-  pct_margen: number;
-}
-
-/** Resultado del Step 0: línea con distribución diaria */
-export interface BudgetLineDaily {
   mes_fiscal: string;
   area: string;
   vertical: string;
@@ -28,13 +10,22 @@ export interface BudgetLineDaily {
   importe: number;
   margen_bruto: number;
   pct_margen: number;
+}
+
+export interface BudgetDayValue {
+  fecha: string;
+  importe: number;
+  margen: number;
+  is_working: boolean;
+}
+
+export interface BudgetLineDaily extends BudgetLineInput {
   importe_diario: number;
   dias_laborables: number;
-  dias: { fecha: string; importe: number; margen: number; is_working: boolean }[];
+  dias: BudgetDayValue[];
   total_check: number;
 }
 
-/** Datos agrupados por mes fiscal */
 export interface MonthData {
   mes_fiscal: string;
   year: number;
@@ -45,23 +36,19 @@ export interface MonthData {
   dias_laborables: number;
 }
 
-// ==========================================
-// MAPEO MES FISCAL → CALENDARIO
-// ==========================================
-
 export const FISCAL_TO_CALENDAR: Record<string, { year: number; month: number }> = {
-  '01 · Abril':      { year: 2026, month: 4 },
-  '02 · Mayo':       { year: 2026, month: 5 },
-  '03 · Junio':      { year: 2026, month: 6 },
-  '04 · Julio':      { year: 2026, month: 7 },
-  '05 · Agosto':     { year: 2026, month: 8 },
+  '01 · Abril': { year: 2026, month: 4 },
+  '02 · Mayo': { year: 2026, month: 5 },
+  '03 · Junio': { year: 2026, month: 6 },
+  '04 · Julio': { year: 2026, month: 7 },
+  '05 · Agosto': { year: 2026, month: 8 },
   '06 · Septiembre': { year: 2026, month: 9 },
-  '07 · Octubre':    { year: 2026, month: 10 },
-  '08 · Noviembre':  { year: 2026, month: 11 },
-  '09 · Diciembre':  { year: 2026, month: 12 },
-  '10 · Enero':      { year: 2027, month: 1 },
-  '11 · Febrero':    { year: 2027, month: 2 },
-  '12 · Marzo':      { year: 2027, month: 3 },
+  '07 · Octubre': { year: 2026, month: 10 },
+  '08 · Noviembre': { year: 2026, month: 11 },
+  '09 · Diciembre': { year: 2026, month: 12 },
+  '10 · Enero': { year: 2027, month: 1 },
+  '11 · Febrero': { year: 2027, month: 2 },
+  '12 · Marzo': { year: 2027, month: 3 },
 };
 
 export const FISCAL_MONTHS_ORDER = [
@@ -71,9 +58,57 @@ export const FISCAL_MONTHS_ORDER = [
   '10 · Enero', '11 · Febrero', '12 · Marzo',
 ];
 
-// ==========================================
-// STEP 0: DISTRIBUCIÓN POR LABORABLES
-// ==========================================
+export function normalizeText(value: string): string {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function normalizeFiscalMonth(value: string): string {
+  const normalized = normalizeText(value).replace(/\s+/g, ' ');
+  const found = FISCAL_MONTHS_ORDER.find((month) => {
+    const candidate = normalizeText(month).replace(/\s+/g, ' ');
+    const monthName = candidate.split(' ').slice(-1)[0];
+    return normalized === candidate || normalized.includes(monthName);
+  });
+
+  return found || value;
+}
+
+function parseExcelNumber(value: any): number {
+  if (typeof value === 'number') return value;
+  if (value === null || value === undefined || value === '') return 0;
+
+  const cleaned = String(value)
+    .replace(/\s/g, '')
+    .replace(/€/g, '')
+    .replace(/\./g, '')
+    .replace(',', '.');
+
+  return Number(cleaned) || 0;
+}
+
+export function isNegativosTargetLine(line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'>): boolean {
+  const vertical = normalizeText(line.vertical);
+  const medioVenta = normalizeText(line.medio_venta);
+  const isFullVolumen = vertical.includes('full volumen') || vertical.includes('full volume');
+  const isEquipaciones = medioVenta.includes('equipacion') || medioVenta.includes('equipaciones');
+
+  return isFullVolumen && isEquipaciones;
+}
+
+export function getNegativosZonasForMonth(monthData: MonthData): string[] {
+  return Array.from(
+    new Set(
+      monthData.lines
+        .filter((line) => isNegativosTargetLine(line) && line.importe !== 0)
+        .map((line) => line.zona)
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b, 'es'));
+}
 
 export function step0_distribuirPorLaborables(
   lines: BudgetLineInput[],
@@ -107,9 +142,6 @@ export function step0_distribuirPorLaborables(
   });
 }
 
-/**
- * Procesa todas las líneas del Excel y devuelve datos agrupados por mes fiscal.
- */
 export function processFullBudget(allLines: BudgetLineInput[]): MonthData[] {
   const grouped = new Map<string, BudgetLineInput[]>();
 
@@ -142,30 +174,13 @@ export function processFullBudget(allLines: BudgetLineInput[]): MonthData[] {
     .filter((d): d is MonthData => d !== null);
 }
 
-// ==========================================
-// STEP 1: ALEATORIO ±20% (total restringido)
-// ==========================================
-
-/**
- * Aplica variación aleatoria ±20% a cada día laborable de cada línea,
- * pero ajusta los valores para que el total mensual de cada línea
- * se mantenga exactamente igual al original.
- *
- * Algoritmo:
- * 1. Genera un factor aleatorio (0.8–1.2) por cada día laborable
- * 2. Multiplica el importe diario base por ese factor
- * 3. Calcula el factor corrector = total_original / total_aleatorio
- * 4. Multiplica cada día por el corrector → total cuadra exacto
- */
 export function step1_aleatorioRestringido(step0Data: MonthData[]): MonthData[] {
   return step0Data.map((md) => {
     const newLines = md.lines.map((line) => {
-      // 1. Generar factores aleatorios para días laborables
       const rawDias = line.dias.map((d) => {
-        if (!d.is_working || d.importe === 0) {
-          return { ...d };
-        }
-        const factor = 0.8 + Math.random() * 0.4; // 0.8 a 1.2
+        if (!d.is_working || d.importe === 0) return { ...d };
+
+        const factor = 0.8 + Math.random() * 0.4;
         return {
           ...d,
           importe: d.importe * factor,
@@ -173,15 +188,11 @@ export function step1_aleatorioRestringido(step0Data: MonthData[]): MonthData[] 
         };
       });
 
-      // 2. Calcular total aleatorio
       const totalAleatorio = rawDias.reduce((s, d) => s + d.importe, 0);
       const totalMargenAleatorio = rawDias.reduce((s, d) => s + d.margen, 0);
-
-      // 3. Factor corrector para que cuadre
       const correctorImporte = totalAleatorio !== 0 ? line.importe / totalAleatorio : 1;
       const correctorMargen = totalMargenAleatorio !== 0 ? line.margen_bruto / totalMargenAleatorio : 1;
 
-      // 4. Aplicar corrector
       const diasCorregidos = rawDias.map((d) => ({
         ...d,
         importe: d.is_working ? d.importe * correctorImporte : 0,
@@ -200,55 +211,38 @@ export function step1_aleatorioRestringido(step0Data: MonthData[]): MonthData[] 
     return {
       ...md,
       lines: newLines,
+      total_importe: newLines.reduce((s, l) => s + l.total_check, 0),
     };
   });
 }
 
-// ==========================================
-// STEP 2: NEGATIVOS
-// ==========================================
-
-/** Datos de negativos por zona para un mes */
 export interface NegativosZona {
   zona: string;
-  web_b2c_anterior: number;  // Facturación Equip. Web B2C del mes anterior
-  pct_gen_web: number;       // % Gen Web (ej: 0.12)
-  grassroots: number;        // Budget Grassroots equipaciones
-  pct_frees: number;         // % Frees (ej: 0.03)
+  web_b2c_anterior: number;
+  pct_gen_web: number;
+  grassroots: number;
+  pct_frees: number;
 }
 
 export interface NegativosConfig {
   zonas: NegativosZona[];
-  ponderacion: number[];     // [0.6, 0.25, 0.15] por defecto
+  ponderacion: number[];
 }
 
-/** Calcula el total negativo de una zona. Los % se introducen como enteros (11 = 11%) */
 export function calcularNegativoZona(z: NegativosZona): { gen_web: number; frees: number; total: number } {
   const gen_web = z.web_b2c_anterior * (z.pct_gen_web / 100);
   const frees = z.grassroots * (z.pct_frees / 100);
   return { gen_web, frees, total: gen_web + frees };
 }
 
-/**
- * STEP 2: Aplica negativos sobre Step 1.
- *
- * Para cada línea con vertical="Fútbol Emotion" y medio_venta="Equipaciones":
- * 1. Busca el negativo correspondiente a su zona
- * 2. Reparte el negativo en los N primeros laborables según ponderación
- * 3. Lo restado se redistribuye proporcionalmente en el resto de laborables
- * 4. El total de la línea se mantiene igual
- */
 export function step2_negativos(
   step1Data: MonthData[],
   negativosPorMes: Record<string, NegativosConfig>
 ): MonthData[] {
   return step1Data.map((md) => {
     const config = negativosPorMes[md.mes_fiscal];
-    if (!config || config.zonas.length === 0) {
-      return md; // Sin negativos para este mes, mantener datos
-    }
+    if (!config || config.zonas.length === 0) return md;
 
-    // Precalcular negativos por zona
     const negativosMap = new Map<string, number>();
     for (const z of config.zonas) {
       const { total } = calcularNegativoZona(z);
@@ -256,46 +250,44 @@ export function step2_negativos(
     }
 
     const ponderacion = config.ponderacion;
-    const numDiasNeg = ponderacion.length;
+    const targetLinesByZona = new Map<string, number>();
+
+    for (const line of md.lines) {
+      if (!isNegativosTargetLine(line)) continue;
+      targetLinesByZona.set(line.zona, (targetLinesByZona.get(line.zona) || 0) + Math.abs(line.importe));
+    }
 
     const newLines = md.lines.map((line) => {
-      // Solo aplica a Fútbol Emotion + Equipaciones
-      if (line.vertical !== 'Fútbol Emotion' || line.medio_venta !== 'Equipaciones') {
-        return line;
-      }
+      if (!isNegativosTargetLine(line)) return line;
 
-      const negativo = negativosMap.get(line.zona);
-      if (!negativo || negativo === 0) return line;
+      const negativoZona = negativosMap.get(line.zona);
+      if (!negativoZona || negativoZona === 0) return line;
 
-      // Encontrar índices de días laborables
+      const totalZona = targetLinesByZona.get(line.zona) || 0;
+      const pesoLinea = totalZona > 0 ? Math.abs(line.importe) / totalZona : 1;
+      const negativoLinea = negativoZona * pesoLinea;
       const workingIndices = line.dias
         .map((d, i) => (d.is_working ? i : -1))
         .filter((i) => i >= 0);
 
-      if (workingIndices.length <= numDiasNeg) return line;
+      if (workingIndices.length === 0) return line;
 
-      // Calcular cuánto se resta en cada uno de los primeros N días
-      const restoPorDia = ponderacion.map((p) => negativo * p);
-      const totalRestado = restoPorDia.reduce((s, v) => s + v, 0);
-
-      // Días restantes donde redistribuir
-      const restantesIndices = workingIndices.slice(numDiasNeg);
+      const totalRestado = ponderacion.reduce((s, p) => s + negativoLinea * p, 0);
+      const restantesIndices = workingIndices.slice(ponderacion.length);
       const sumaRestantes = restantesIndices.reduce((s, i) => s + line.dias[i].importe, 0);
 
       const newDias = line.dias.map((d, i) => {
         const wIdx = workingIndices.indexOf(i);
 
-        if (wIdx >= 0 && wIdx < numDiasNeg) {
-          // Primeros N laborables: restar negativo ponderado
+        if (wIdx >= 0 && wIdx < ponderacion.length) {
           return {
             ...d,
-            importe: d.importe - restoPorDia[wIdx],
-            margen: d.margen, // margen no se toca
+            importe: d.importe - negativoLinea * ponderacion[wIdx],
+            margen: d.margen,
           };
         }
 
-        if (wIdx >= numDiasNeg && sumaRestantes > 0) {
-          // Resto de laborables: sumar proporcionalmente
+        if (wIdx >= ponderacion.length && sumaRestantes !== 0) {
           const proporcion = d.importe / sumaRestantes;
           return {
             ...d,
@@ -316,20 +308,27 @@ export function step2_negativos(
       };
     });
 
-    return { ...md, lines: newLines };
+    return {
+      ...md,
+      lines: newLines,
+      total_importe: newLines.reduce((s, l) => s + l.total_check, 0),
+    };
   });
 }
 
-/** Zonas por defecto (las del Excel) */
 export const ZONAS_DEFAULT = [
-  'Centro-Sur', 'Francia', 'Italia Centro-Sur',
-  'Italia Norte', 'Levante', 'Norte', 'Portugal',
+  'Centro-Sur',
+  'Francia',
+  'Italia Centro-Sur',
+  'Italia Norte',
+  'Levante',
+  'Norte',
+  'Portugal',
 ];
 
-/** Config por defecto para un mes nuevo */
-export function defaultNegativosConfig(): NegativosConfig {
+export function defaultNegativosConfig(zonas = ZONAS_DEFAULT): NegativosConfig {
   return {
-    zonas: ZONAS_DEFAULT.map((zona) => ({
+    zonas: zonas.map((zona) => ({
       zona,
       web_b2c_anterior: 0,
       pct_gen_web: 0,
@@ -340,71 +339,78 @@ export function defaultNegativosConfig(): NegativosConfig {
   };
 }
 
-// ==========================================
-// PARSER DEL EXCEL
-// ==========================================
-
-/**
- * Parsea el Excel "Budget TS FY 26.27".
- * Columnas: # Mes | Área | Vertical | Medio de Venta | País | Zona | Importe | Margen Bruto | % Margen
- */
 export function parseExcelData(rows: any[][]): BudgetLineInput[] {
-  // Buscar fila de encabezados
   let headerIdx = 0;
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const row = rows[i];
-    if (row && row.some((cell: any) =>
-      typeof cell === 'string' && (
-        cell.toLowerCase().includes('mes') ||
-        cell.toLowerCase().includes('área') ||
-        cell.toLowerCase().includes('importe')
-      )
-    )) {
+    if (row && row.some((cell: any) => {
+      const value = normalizeText(String(cell || ''));
+      return value.includes('mes') || value.includes('area') || value.includes('importe');
+    })) {
       headerIdx = i;
       break;
     }
   }
 
-  const headers = (rows[headerIdx] || []).map((h: any) =>
-    String(h || '').toLowerCase().trim()
-  );
-
-  // Mapear columnas
+  const headers = (rows[headerIdx] || []).map((h: any) => normalizeText(String(h || '')));
   const colMap = {
     mes: headers.findIndex((h) => h.includes('mes')),
-    area: headers.findIndex((h) => h.includes('área') || h.includes('area')),
+    area: headers.findIndex((h) => h.includes('area')),
     vertical: headers.findIndex((h) => h.includes('vertical')),
     medio: headers.findIndex((h) => h.includes('medio') || h.includes('venta')),
-    pais: headers.findIndex((h) => h.includes('país') || h.includes('pais')),
+    pais: headers.findIndex((h) => h.includes('pais')),
     zona: headers.findIndex((h) => h.includes('zona')),
     importe: headers.findIndex((h) => h.includes('importe')),
     margen: headers.findIndex((h) => h.includes('margen') && !h.includes('%')),
     pct: headers.findIndex((h) => h.includes('%')),
   };
 
+  const requiredColumns: Array<[string, number]> = [
+    ['# Mes', colMap.mes],
+    ['Area', colMap.area],
+    ['Vertical', colMap.vertical],
+    ['Medio de Venta', colMap.medio],
+    ['Pais', colMap.pais],
+    ['Zona', colMap.zona],
+    ['Importe', colMap.importe],
+    ['Margen Bruto', colMap.margen],
+    ['% Margen', colMap.pct],
+  ];
+  const missingColumns = requiredColumns.filter(([, idx]) => idx < 0).map(([name]) => name);
+
+  if (missingColumns.length > 0) {
+    throw new Error(`Faltan columnas obligatorias: ${missingColumns.join(', ')}`);
+  }
+
   const dataRows = rows.slice(headerIdx + 1).filter((row) =>
     row && row.length > 0 && row.some((cell: any) => cell !== null && cell !== undefined && cell !== '')
   );
 
-  return dataRows
+  const parsed = dataRows
     .map((row) => {
-      const importe = colMap.importe >= 0 ? Number(row[colMap.importe]) : 0;
+      const importe = parseExcelNumber(row[colMap.importe]);
       if (!importe || isNaN(importe)) return null;
 
-      const mesFiscal = colMap.mes >= 0 ? String(row[colMap.mes] || '') : '';
+      const mesFiscal = normalizeFiscalMonth(String(row[colMap.mes] || ''));
       if (!mesFiscal || !FISCAL_TO_CALENDAR[mesFiscal]) return null;
 
       return {
         mes_fiscal: mesFiscal,
-        area: colMap.area >= 0 ? String(row[colMap.area] || '') : '',
-        vertical: colMap.vertical >= 0 ? String(row[colMap.vertical] || '') : '',
-        medio_venta: colMap.medio >= 0 ? String(row[colMap.medio] || '') : '',
-        pais: colMap.pais >= 0 ? String(row[colMap.pais] || '') : '',
-        zona: colMap.zona >= 0 ? String(row[colMap.zona] || '') : '',
+        area: String(row[colMap.area] || ''),
+        vertical: String(row[colMap.vertical] || ''),
+        medio_venta: String(row[colMap.medio] || ''),
+        pais: String(row[colMap.pais] || ''),
+        zona: String(row[colMap.zona] || ''),
         importe,
-        margen_bruto: colMap.margen >= 0 ? Number(row[colMap.margen]) || 0 : 0,
-        pct_margen: colMap.pct >= 0 ? Number(row[colMap.pct]) || 0 : 0,
+        margen_bruto: parseExcelNumber(row[colMap.margen]),
+        pct_margen: parseExcelNumber(row[colMap.pct]),
       };
     })
     .filter((line): line is BudgetLineInput => line !== null);
+
+  if (parsed.length === 0) {
+    throw new Error('No se ha encontrado ninguna linea valida para el FY 26/27.');
+  }
+
+  return parsed;
 }

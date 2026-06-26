@@ -5,10 +5,8 @@ import {
   NegativosConfig,
   NegativosZona,
   calcularNegativoZona,
-  defaultNegativosConfig,
-  FISCAL_MONTHS_ORDER,
 } from '@/lib/budget-processor';
-import { Minus, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Minus } from 'lucide-react';
 
 interface NegativosFormProps {
   selectedMonth: string;
@@ -17,8 +15,8 @@ interface NegativosFormProps {
   onApply: () => void;
 }
 
-function formatNum(n: number): string {
-  return n.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+function formatCurrency(n: number): string {
+  return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
 export default function NegativosForm({ selectedMonth, config, onChange, onApply }: NegativosFormProps) {
@@ -40,30 +38,30 @@ export default function NegativosForm({ selectedMonth, config, onChange, onApply
   const sumPonderacion = config.ponderacion.reduce((s, v) => s + v, 0);
 
   return (
-    <div className="border border-[var(--border)] rounded-lg overflow-hidden">
-      {/* Header */}
+    <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-sm">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--bg-card)] hover:bg-[var(--border)]/30 transition-colors"
+        className="flex w-full items-center justify-between px-4 py-3 transition hover:bg-[var(--bg-soft)]"
       >
         <div className="flex items-center gap-3">
-          <Minus className="w-4 h-4 text-[var(--danger)]" />
-          <span className="text-sm font-medium">Negativos — {selectedMonth}</span>
-          <span className="text-xs text-[var(--text-secondary)]">
-            Total: <span className="text-[var(--danger)] font-mono">{formatNum(totalNegativo)} €</span>
-          </span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--danger-soft)] text-[var(--danger)]">
+            <Minus className="h-4 w-4" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-semibold">Negativos - {selectedMonth}</p>
+            <p className="text-xs text-[var(--text-secondary)]">Total: <span className="font-mono text-[var(--danger)]">{formatCurrency(totalNegativo)}</span></p>
+          </div>
         </div>
-        <span className="text-xs text-[var(--text-secondary)]">{expanded ? '▲' : '▼'}</span>
+        {expanded ? <ChevronUp className="h-4 w-4 text-[var(--text-secondary)]" /> : <ChevronDown className="h-4 w-4 text-[var(--text-secondary)]" />}
       </button>
 
       {expanded && (
-        <div className="p-4 space-y-4">
-          {/* Ponderación */}
+        <div className="space-y-4 border-t border-[var(--border)] p-4">
           <div className="flex items-center gap-4 flex-wrap">
-            <span className="text-xs text-[var(--text-secondary)] font-medium">Ponderación días:</span>
+            <span className="text-xs font-medium text-[var(--text-secondary)]">Ponderacion dias</span>
             {config.ponderacion.map((p, i) => (
               <div key={i} className="flex items-center gap-1">
-                <span className="text-[10px] text-[var(--text-secondary)]">Día {i + 1}:</span>
+                <span className="text-xs text-[var(--text-secondary)]">Dia {i + 1}</span>
                 <input
                   type="number"
                   step="0.05"
@@ -71,122 +69,92 @@ export default function NegativosForm({ selectedMonth, config, onChange, onApply
                   max="1"
                   value={p}
                   onChange={(e) => updatePonderacion(i, parseFloat(e.target.value) || 0)}
-                  className="w-16 bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono text-center"
+                  className="w-16 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-center font-mono text-xs"
                 />
-                <span className="text-[10px] text-[var(--text-secondary)]">({(p * 100).toFixed(0)}%)</span>
+                <span className="text-xs text-[var(--text-muted)]">({(p * 100).toFixed(0)}%)</span>
               </div>
             ))}
-            <span className={`text-[10px] font-mono ${Math.abs(sumPonderacion - 1) < 0.001 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
-              Σ = {(sumPonderacion * 100).toFixed(0)}%
+            <span className={`rounded-md px-2 py-1 text-xs font-mono ${Math.abs(sumPonderacion - 1) < 0.001 ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
+              Total {(sumPonderacion * 100).toFixed(0)}%
             </span>
           </div>
 
-          {/* Tabla de zonas */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+          <div className="overflow-x-auto rounded-md border border-[var(--border)]">
+            <table className="w-full border-separate border-spacing-0 text-xs">
               <thead>
-                <tr className="bg-[var(--bg-secondary)]">
-                  <th className="px-3 py-2 text-left font-medium">Zona</th>
-                  <th className="px-3 py-2 text-right font-medium">Web B2C Anterior</th>
-                  <th className="px-3 py-2 text-right font-medium">% Gen Web</th>
-                  <th className="px-3 py-2 text-right font-medium">Gen Web</th>
-                  <th className="px-3 py-2 text-right font-medium">Grassroots</th>
-                  <th className="px-3 py-2 text-right font-medium">% Frees</th>
-                  <th className="px-3 py-2 text-right font-medium">Frees</th>
-                  <th className="px-3 py-2 text-right font-medium text-[var(--danger)]">Total Negativo</th>
+                <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium">Zona</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Web B2C anterior</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">% Gen Web</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Gen Web</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Grassroots</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">% Frees</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Frees</th>
+                  <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium text-[var(--danger)]">Total negativo</th>
                 </tr>
               </thead>
               <tbody>
                 {config.zonas.map((z, i) => {
                   const calc = calcularNegativoZona(z);
                   return (
-                    <tr key={z.zona} className="border-t border-[var(--border)]/50">
-                      <td className="px-3 py-1.5 font-medium whitespace-nowrap">{z.zona}</td>
-                      <td className="px-1 py-1.5">
+                    <tr key={z.zona} className="hover:bg-[var(--bg-primary)]">
+                      <td className="border-b border-[var(--border)] px-3 py-2 font-medium whitespace-nowrap">{z.zona}</td>
+                      <td className="border-b border-[var(--border)] px-2 py-1.5">
                         <input
                           type="number"
                           value={z.web_b2c_anterior || ''}
                           onChange={(e) => updateZona(i, 'web_b2c_anterior', parseFloat(e.target.value) || 0)}
                           placeholder="0"
-                          className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono text-right"
+                          className="w-full min-w-[120px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-right font-mono text-xs"
                         />
                       </td>
-                      <td className="px-1 py-1.5">
+                      <td className="border-b border-[var(--border)] px-2 py-1.5">
                         <input
                           type="number"
                           step="0.01"
                           value={z.pct_gen_web || ''}
                           onChange={(e) => updateZona(i, 'pct_gen_web', parseFloat(e.target.value) || 0)}
                           placeholder="0.00"
-                          className="w-20 bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono text-right"
+                          className="w-20 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-right font-mono text-xs"
                         />
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-[var(--text-secondary)]">
-                        {formatNum(calc.gen_web)}
-                      </td>
-                      <td className="px-1 py-1.5">
+                      <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono text-[var(--text-secondary)]">{formatCurrency(calc.gen_web)}</td>
+                      <td className="border-b border-[var(--border)] px-2 py-1.5">
                         <input
                           type="number"
                           value={z.grassroots || ''}
                           onChange={(e) => updateZona(i, 'grassroots', parseFloat(e.target.value) || 0)}
                           placeholder="0"
-                          className="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono text-right"
+                          className="w-full min-w-[120px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-right font-mono text-xs"
                         />
                       </td>
-                      <td className="px-1 py-1.5">
+                      <td className="border-b border-[var(--border)] px-2 py-1.5">
                         <input
                           type="number"
                           step="0.01"
                           value={z.pct_frees || ''}
                           onChange={(e) => updateZona(i, 'pct_frees', parseFloat(e.target.value) || 0)}
                           placeholder="0.00"
-                          className="w-20 bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono text-right"
+                          className="w-20 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 text-right font-mono text-xs"
                         />
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-[var(--text-secondary)]">
-                        {formatNum(calc.frees)}
-                      </td>
-                      <td className="px-3 py-1.5 text-right font-mono font-medium text-[var(--danger)]">
-                        {formatNum(calc.total)}
-                      </td>
+                      <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono text-[var(--text-secondary)]">{formatCurrency(calc.frees)}</td>
+                      <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono font-semibold text-[var(--danger)]">{formatCurrency(calc.total)}</td>
                     </tr>
                   );
                 })}
               </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-[var(--border)] bg-[var(--bg-card)] font-medium">
-                  <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {formatNum(config.zonas.reduce((s, z) => s + z.web_b2c_anterior, 0))}
-                  </td>
-                  <td></td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {formatNum(config.zonas.reduce((s, z) => s + calcularNegativoZona(z).gen_web, 0))}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {formatNum(config.zonas.reduce((s, z) => s + z.grassroots, 0))}
-                  </td>
-                  <td></td>
-                  <td className="px-3 py-2 text-right font-mono">
-                    {formatNum(config.zonas.reduce((s, z) => s + calcularNegativoZona(z).frees, 0))}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">
-                    {formatNum(totalNegativo)}
-                  </td>
-                </tr>
-              </tfoot>
             </table>
           </div>
 
-          {/* Botón aplicar */}
           <div className="flex justify-end">
             <button
               onClick={onApply}
               disabled={totalNegativo === 0}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-[var(--danger)] hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed rounded transition-colors"
+              className="flex items-center gap-2 rounded-md bg-[var(--danger)] px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-35"
             >
-              <Minus className="w-4 h-4" />
-              Aplicar Negativos
+              <Minus className="h-4 w-4" />
+              Aplicar negativos
             </button>
           </div>
         </div>

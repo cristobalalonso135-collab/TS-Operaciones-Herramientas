@@ -12,7 +12,7 @@ interface FileUploadProps {
 export default function FileUpload({
   onFileLoaded,
   accept = '.xlsx,.xls,.csv',
-  label = 'Sube tu Excel de budget mensual',
+  label = 'Sube tu Excel de budget',
 }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -25,8 +25,6 @@ export default function FileUpload({
         const XLSX = await import('xlsx');
         const buffer = await file.arrayBuffer();
         const wb = XLSX.read(buffer, { type: 'array' });
-
-        // Tomar la primera hoja
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
         const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
@@ -34,7 +32,7 @@ export default function FileUpload({
         setFileName(file.name);
         onFileLoaded(data, file.name);
       } catch (err) {
-        setError('Error leyendo el archivo. Asegúrate de que es un Excel válido.');
+        setError(err instanceof Error ? err.message : 'Error leyendo el archivo. Asegurate de que es un Excel valido.');
         console.error(err);
       }
     },
@@ -61,15 +59,13 @@ export default function FileUpload({
 
   return (
     <div className="space-y-2">
-      <label className="text-sm font-medium text-[var(--text-secondary)]">
-        {label}
-      </label>
+      <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>
       <div
-        className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer
-          ${dragActive
-            ? 'border-[var(--accent)] bg-[var(--accent)]/5'
-            : 'border-[var(--border)] hover:border-[var(--accent)]/50'
-          }`}
+        className={`relative cursor-pointer rounded-lg border border-dashed p-8 text-center transition ${
+          dragActive
+            ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+            : 'border-[var(--border-strong)] bg-[var(--bg-secondary)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]'
+        }`}
         onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
@@ -84,38 +80,33 @@ export default function FileUpload({
         />
         {fileName ? (
           <div className="flex items-center justify-center gap-3">
-            <FileSpreadsheet className="w-8 h-8 text-[var(--success)]" />
+            <FileSpreadsheet className="h-8 w-8 text-[var(--success)]" />
             <div className="text-left">
               <p className="text-sm font-medium">{fileName}</p>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Archivo cargado correctamente
-              </p>
+              <p className="text-xs text-[var(--text-secondary)]">Archivo cargado correctamente</p>
             </div>
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setFileName(null);
               }}
-              className="ml-2 p-1 rounded hover:bg-[var(--bg-secondary)]"
+              className="ml-2 rounded-md p-1 text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         ) : (
           <div className="space-y-2">
-            <Upload className="w-10 h-10 mx-auto text-[var(--text-secondary)]" />
+            <Upload className="mx-auto h-9 w-9 text-[var(--text-secondary)]" />
             <p className="text-sm text-[var(--text-secondary)]">
-              Arrastra tu archivo aquí o{' '}
-              <span className="text-[var(--accent)] underline">selecciona</span>
+              Arrastra el archivo aqui o <span className="font-medium text-[var(--accent)]">seleccionalo</span>
             </p>
-            <p className="text-xs text-[var(--text-secondary)]/60">
-              .xlsx, .xls o .csv
-            </p>
+            <p className="text-xs text-[var(--text-muted)]">.xlsx, .xls o .csv</p>
           </div>
         )}
       </div>
       {error && (
-        <p className="text-xs text-[var(--danger)]">{error}</p>
+        <p className="rounded-md bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]">{error}</p>
       )}
     </div>
   );
