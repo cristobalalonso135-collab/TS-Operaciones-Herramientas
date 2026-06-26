@@ -120,19 +120,34 @@ export interface WeekBucket {
 }
 
 export interface WeeklyWeightConfig {
-  weights: Record<string, number>;
+  mediaGrowth: Record<string, Record<string, number>>;
 }
 
 export interface WeeklySummary {
+  medio: string;
   weekId: string;
   label: string;
-  current: number;
-  proposed: number;
+  workingDays: number;
+  currentBudget: number;
+  currentDailyAverage: number;
+  growthPct: number;
+  targetBudget: number;
+  targetDailyAverage: number;
 }
 
-export function isWeeklyTargetLine(line: Pick<BudgetLineInput, 'medio_venta'>): boolean {
+export const WEEKLY_TARGET_MEDIOS = ['Equipaciones', 'Equipaciones Web B2C'];
+
+export function normalizeMedioVenta(value: string): string {
+  const medioVenta = normalizeText(value);
+  if (medioVenta === 'equipaciones') return 'Equipaciones';
+  if (medioVenta === 'equipaciones web b2c') return 'Equipaciones Web B2C';
+  return value;
+}
+
+export function isWeeklyTargetLine(line: Pick<BudgetLineInput, 'medio_venta'>, medio?: string): boolean {
   const medioVenta = normalizeText(line.medio_venta);
-  return medioVenta === 'equipaciones' || medioVenta === 'equipaciones web b2c';
+  if (medio) return medioVenta === normalizeText(medio);
+  return WEEKLY_TARGET_MEDIOS.some((targetMedio) => medioVenta === normalizeText(targetMedio));
 }
 
 export function getWeeksForMonthData(monthData: MonthData): WeekBucket[] {
@@ -162,30 +177,82 @@ export function getWeeksForMonthData(monthData: MonthData): WeekBucket[] {
 
 export function defaultWeeklyWeightConfig(monthData: MonthData): WeeklyWeightConfig {
   const weeks = getWeeksForMonthData(monthData);
-  const equalWeight = weeks.length > 0 ? 100 / weeks.length : 0;
 
   return {
-    weights: Object.fromEntries(weeks.map((week) => [week.id, Number(equalWeight.toFixed(2))])),
+    mediaGrowth: Object.fromEntries(
+      WEEKLY_TARGET_MEDIOS.map((medio) => [
+        medio,
+        Object.fromEntries(weeks.map((week) => [week.id, 0])),
+      ])
+    ),
   };
 }
 
-export function getWeeklySummary(monthData: MonthData, config: WeeklyWeightConfig): WeeklySummary[] {
+function getWorkingDayCountForWeek(week: WeekBucket, monthData: MonthData): number {
+  const firstLine = monthData.lines[0];
+  if (!firstLine) return 0;
+
+  return firstLine.dias.filter((day) => week.dates.includes(day.fecha) && day.is_working).length;
+}
+
+function getWeeklyFactors(weeks: WeekBucket[], growthByWeek: Record<string, number>): Record<string, number> {
+  let factor = 1;
+  const result: Record<string, number> = {};
+
+  weeks.forEach((week, index) => {
+    if (index > 0) {
+      factor *= 1 + ((growthByWeek[week.id] || 0) / 100);
+    }
+    result[week.id] = factor;
+  });
+
+  return result;
+}
+
+function getTargetBudgetByWeek(monthData: MonthData, medio: string, config: WeeklyWeightConfig): Record<string, number> {
   const weeks = getWeeksForMonthData(monthData);
-  const targetLines = monthData.lines.filter(isWeeklyTargetLine);
-  const totalTarget = targetLines.reduce((sum, line) => sum + line.total_check, 0);
+  const targetLines = monthData.lines.filter((line) => isWeeklyTargetLine(line, medio));
+  const totalTarget = targetLines.reduce((sum, line) => sum + line.importe, 0);
+  const growthByWeek = config.mediaGrowth[medio] || {};
+  const factors = getWeeklyFactors(weeks, growthByWeek);
+  const denominator = weeks.reduce((sum, week) => (
+    sum + getWorkingDayCountForWeek(week, monthData) * (factors[week.id] || 0)
+  ), 0);
+  const baseDailyBudget = denominator !== 0 ? totalTarget / denominator : 0;
+
+  return Object.fromEntries(
+    weeks.map((week) => [
+      week.id,
+      baseDailyBudget * (factors[week.id] || 0) * getWorkingDayCountForWeek(week, monthData),
+    ])
+  );
+}
+
+export function getWeeklySummary(monthData: MonthData, config: WeeklyWeightConfig, medio: string): WeeklySummary[] {
+  const weeks = getWeeksForMonthData(monthData);
+  const targetLines = monthData.lines.filter((line) => isWeeklyTargetLine(line, medio));
+  const targetBudgetByWeek = getTargetBudgetByWeek(monthData, medio, config);
+  const growthByWeek = config.mediaGrowth[medio] || {};
 
   return weeks.map((week) => {
-    const current = targetLines.reduce((sum, line) => (
+    const workingDays = getWorkingDayCountForWeek(week, monthData);
+    const currentBudget = targetLines.reduce((sum, line) => (
       sum + line.dias
         .filter((day) => week.dates.includes(day.fecha))
         .reduce((daySum, day) => daySum + day.importe, 0)
     ), 0);
+    const targetBudget = targetBudgetByWeek[week.id] || 0;
 
     return {
+      medio,
       weekId: week.id,
       label: week.label,
-      current,
-      proposed: totalTarget * ((config.weights[week.id] || 0) / 100),
+      workingDays,
+      currentBudget,
+      currentDailyAverage: workingDays > 0 ? currentBudget / workingDays : 0,
+      growthPct: growthByWeek[week.id] || 0,
+      targetBudget,
+      targetDailyAverage: workingDays > 0 ? targetBudget / workingDays : 0,
     };
   });
 }
@@ -405,13 +472,20 @@ export function step3_ponderacionSemanal(
     if (!config) return md;
 
     const weeks = getWeeksForMonthData(md);
-    const totalWeight = weeks.reduce((sum, week) => sum + (config.weights[week.id] || 0), 0);
-    if (weeks.length === 0 || Math.abs(totalWeight - 100) > 0.01) return md;
+    if (weeks.length === 0) return md;
+    const targetBudgetByMedio = Object.fromEntries(
+      WEEKLY_TARGET_MEDIOS.map((medio) => [medio, getTargetBudgetByWeek(md, medio, config)])
+    );
 
     const newLines = md.lines.map((line) => {
-      if (!isWeeklyTargetLine(line)) return line;
+      const medio = WEEKLY_TARGET_MEDIOS.find((targetMedio) => isWeeklyTargetLine(line, targetMedio));
+      if (!medio) return line;
 
       const newDias = line.dias.map((day) => ({ ...day }));
+      const totalMedio = md.lines
+        .filter((candidate) => isWeeklyTargetLine(candidate, medio))
+        .reduce((sum, candidate) => sum + candidate.importe, 0);
+      const lineShare = totalMedio !== 0 ? line.importe / totalMedio : 0;
 
       for (const week of weeks) {
         const weekIndices = line.dias
@@ -420,8 +494,8 @@ export function step3_ponderacionSemanal(
 
         if (weekIndices.length === 0) continue;
 
-        const targetImporteWeek = line.importe * ((config.weights[week.id] || 0) / 100);
-        const targetMargenWeek = line.margen_bruto * ((config.weights[week.id] || 0) / 100);
+        const targetImporteWeek = (targetBudgetByMedio[medio]?.[week.id] || 0) * lineShare;
+        const targetMargenWeek = line.margen_bruto * (line.importe !== 0 ? targetImporteWeek / line.importe : 0);
         const currentImporteWeek = weekIndices.reduce((sum, index) => sum + line.dias[index].importe, 0);
         const currentMargenWeek = weekIndices.reduce((sum, index) => sum + line.dias[index].margen, 0);
 
