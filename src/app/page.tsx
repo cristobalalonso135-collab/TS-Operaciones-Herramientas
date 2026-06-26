@@ -469,6 +469,8 @@ export default function Home() {
     ? allMonthsData
     : activeData?.find((m) => m.mes_fiscal === selectedMonth);
   const totalBudget = activeData?.reduce((s, m) => s + m.total_importe, 0) || 0;
+  const totalMargen = activeData?.reduce((s, m) => s + m.total_margen, 0) || 0;
+  const totalCogs = totalBudget - totalMargen;
   const selectedMonthClosed = selectedMonth !== ALL_MONTHS && closedMonths.includes(selectedMonth);
 
   const stepAvailable = (id: number) => {
@@ -614,7 +616,7 @@ export default function Home() {
 
       {activeData && (
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-5">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Lineas</p>
               <p className="mt-1 text-xl font-semibold">{formatNumber(totalLines)}</p>
@@ -623,9 +625,19 @@ export default function Home() {
               <p className="text-xs text-[var(--text-secondary)]">Meses</p>
               <p className="mt-1 text-xl font-semibold">{activeData.length}</p>
             </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 md:col-span-2">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Budget total</p>
               <p className="mt-1 text-xl font-semibold">{formatCurrency(totalBudget)}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Margen bruto</p>
+              <p className={`mt-1 text-xl font-semibold ${totalMargen >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                {formatCurrency(totalMargen)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">COGS</p>
+              <p className="mt-1 text-xl font-semibold">{formatCurrency(totalCogs)}</p>
             </div>
           </div>
 

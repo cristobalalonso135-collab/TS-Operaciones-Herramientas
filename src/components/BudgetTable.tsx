@@ -1,9 +1,10 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import { BudgetLineDaily } from '@/lib/budget-processor';
 import { getHolidayName } from '@/lib/holidays';
-import { Download } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Download } from 'lucide-react';
 
 interface BudgetTableProps {
   data: BudgetLineDaily[];
@@ -13,6 +14,14 @@ interface BudgetTableProps {
 }
 
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+
+type SortDirection = 'asc' | 'desc';
+type SortKey = 'vertical' | 'medio' | 'pais' | 'zona' | 'mensual' | 'diario' | `day:${string}`;
+
+interface SortState {
+  key: SortKey;
+  direction: SortDirection;
+}
 
 function formatCurrency(n: number): string {
   return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -78,6 +87,36 @@ function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
   );
 }
 
+function SortButton({
+  label,
+  align = 'left',
+  active,
+  direction,
+  onClick,
+  children,
+}: {
+  label: string;
+  align?: 'left' | 'right';
+  active: boolean;
+  direction?: SortDirection;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const Icon = active ? (direction === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Ordenar por ${label}`}
+      className={`group flex w-full items-center gap-1.5 ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'}`}
+    >
+      <span>{children}</span>
+      <Icon className={`h-3 w-3 flex-none transition ${active ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)] opacity-45 group-hover:opacity-100'}`} />
+    </button>
+  );
+}
+
 export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   if (data.length === 0) return null;
 
@@ -87,6 +126,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
     pais: '',
     zona: '',
   });
+  const [sort, setSort] = useState<SortState>({ key: 'mensual', direction: 'desc' });
 
   const filterOptions = useMemo(() => ({
     vertical: Array.from(new Set(data.map((line) => line.vertical).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es')),
@@ -102,8 +142,41 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
     (!filters.zona || line.zona === filters.zona)
   )), [data, filters]);
 
+  const sortedData = useMemo(() => {
+    const direction = sort.direction === 'asc' ? 1 : -1;
+    const getValue = (line: BudgetLineDaily): string | number => {
+      if (sort.key === 'vertical') return line.vertical || '';
+      if (sort.key === 'medio') return line.medio_venta || '';
+      if (sort.key === 'pais') return line.pais || '';
+      if (sort.key === 'zona') return line.zona || '';
+      if (sort.key === 'mensual') return line.importe;
+      if (sort.key === 'diario') return line.importe_diario;
+      if (sort.key.startsWith('day:')) {
+        const fecha = sort.key.slice(4);
+        return line.dias.find((day) => day.fecha === fecha)?.importe || 0;
+      }
+      return '';
+    };
+
+    return [...filteredData].sort((a, b) => {
+      const aValue = getValue(a);
+      const bValue = getValue(b);
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return (aValue - bValue) * direction;
+      }
+      return String(aValue).localeCompare(String(bValue), 'es') * direction;
+    });
+  }, [filteredData, sort]);
+
   const updateFilter = (key: keyof typeof filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }));
   };
 
   const clearFilters = () => {
@@ -114,7 +187,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   const days = data[0].dias;
   const totalMensual = filteredData.reduce((sum, l) => sum + l.importe, 0);
   const totalMargen = filteredData.reduce((sum, l) => sum + l.margen_bruto, 0);
-  const totalCheck = filteredData.reduce((sum, l) => sum + l.total_check, 0);
+  const totalCogs = totalMensual - totalMargen;
   const isAllFy = mesFiscal === 'Todo FY';
 
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
@@ -189,9 +262,9 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
             </p>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-secondary)]">Check</p>
-            <p className={`mt-1 text-sm font-semibold ${Math.abs(totalMensual - totalCheck) < 0.01 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
-              {Math.abs(totalMensual - totalCheck) < 0.01 ? 'OK' : formatCurrency(totalCheck)}
+            <p className="text-xs text-[var(--text-secondary)]">COGS</p>
+            <p className="mt-1 text-sm font-semibold">
+              {formatCurrency(totalCogs)}
             </p>
           </div>
         </div>
@@ -244,16 +317,31 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
         <table className="w-full border-separate border-spacing-0 text-xs">
           <thead className="sticky top-0 z-20">
             <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
-              <th className="sticky left-0 z-30 min-w-[150px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">Vertical</th>
-              <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">Medio</th>
-              <th className="min-w-[80px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">Pais</th>
-              <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">Zona</th>
-              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">{isAllFy ? 'FY' : 'Mensual'}</th>
-              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">Diario</th>
+              <th className="sticky left-0 z-30 min-w-[150px] border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3 text-left font-medium">
+                <SortButton label="Vertical" active={sort.key === 'vertical'} direction={sort.direction} onClick={() => toggleSort('vertical')}>Vertical</SortButton>
+              </th>
+              <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">
+                <SortButton label="Medio" active={sort.key === 'medio'} direction={sort.direction} onClick={() => toggleSort('medio')}>Medio</SortButton>
+              </th>
+              <th className="min-w-[80px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">
+                <SortButton label="Pais" active={sort.key === 'pais'} direction={sort.direction} onClick={() => toggleSort('pais')}>Pais</SortButton>
+              </th>
+              <th className="min-w-[130px] border-b border-[var(--border)] px-3 py-3 text-left font-medium">
+                <SortButton label="Zona" active={sort.key === 'zona'} direction={sort.direction} onClick={() => toggleSort('zona')}>Zona</SortButton>
+              </th>
+              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">
+                <SortButton label={isAllFy ? 'FY' : 'Mensual'} align="right" active={sort.key === 'mensual'} direction={sort.direction} onClick={() => toggleSort('mensual')}>
+                  {isAllFy ? 'FY' : 'Mensual'}
+                </SortButton>
+              </th>
+              <th className="min-w-[120px] border-b border-[var(--border)] px-3 py-3 text-right font-medium">
+                <SortButton label="Diario" align="right" active={sort.key === 'diario'} direction={sort.direction} onClick={() => toggleSort('diario')}>Diario</SortButton>
+              </th>
               {days.map((d) => {
                 const date = new Date(d.fecha);
                 const dow = date.getUTCDay();
                 const noBudgetReason = !d.is_working ? getNoBudgetReason(d.fecha) : undefined;
+                const daySortKey: SortKey = `day:${d.fecha}`;
                 return (
                   <th
                     key={d.fecha}
@@ -262,15 +350,19 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                       !d.is_working ? 'bg-amber-100 text-amber-900' : ''
                     }`}
                   >
-                    <div className="text-[10px]">{DAY_NAMES[dow]}</div>
-                    <div>{formatDateHeader(d.fecha)}</div>
+                    <SortButton label={formatDateHeader(d.fecha)} align="right" active={sort.key === daySortKey} direction={sort.direction} onClick={() => toggleSort(daySortKey)}>
+                      <span className="block">
+                        <span className="block text-[10px]">{DAY_NAMES[dow]}</span>
+                        <span className="block">{formatDateHeader(d.fecha)}</span>
+                      </span>
+                    </SortButton>
                   </th>
                 );
               })}
             </tr>
           </thead>
           <tbody>
-            {filteredData.map((line, i) => (
+            {sortedData.map((line, i) => (
               <tr key={i} className="hover:bg-[var(--bg-primary)]">
                 <td className="sticky left-0 z-10 max-w-[180px] truncate border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2.5 font-medium" title={line.vertical}>
                   {line.vertical}
