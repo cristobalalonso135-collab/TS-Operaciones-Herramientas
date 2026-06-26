@@ -16,13 +16,6 @@ function formatCurrency(n: number): string {
   return `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
-function formatShortCurrency(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1000000) return `${(n / 1000000).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M€`;
-  if (abs >= 1000) return `${(n / 1000).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} K€`;
-  return formatCurrency(n);
-}
-
 function formatDateHeader(dateValue: string): string {
   const date = new Date(dateValue);
   const day = String(date.getUTCDate()).padStart(2, '0');
@@ -44,7 +37,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
   const buildSheetData = (kind: 'facturacion' | 'cogs') => {
     const wsData: any[][] = [];
     const header = ['Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', isAllFy ? 'FY' : 'Mensual', 'Margen', '% Margen', 'Diario', 'Dias Lab.'];
-    days.forEach((d) => header.push(d.fecha));
+    days.forEach((d) => header.push(formatDateHeader(d.fecha)));
     header.push('Total Check');
     wsData.push(header);
 
@@ -193,9 +186,9 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
               <td className="border-t border-[var(--border-strong)]"></td>
               <td className="border-t border-[var(--border-strong)]"></td>
               <td className="border-t border-[var(--border-strong)]"></td>
-              <td className="border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums">{formatShortCurrency(totalMensual)}</td>
+              <td className="border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums">{formatCurrency(totalMensual)}</td>
               <td className="border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums text-[var(--accent)]">
-                {formatShortCurrency(totalMensual / data[0].dias_laborables)}
+                {formatCurrency(totalMensual / data[0].dias_laborables)}
               </td>
               {days.map((d, di) => {
                 const dayTotal = data.reduce((sum, l) => sum + l.dias[di].importe, 0);
@@ -208,7 +201,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                   >
                     {dayTotal !== 0 ? (
                       <span className={dayTotal < 0 ? 'text-[var(--danger)]' : ''}>
-                        {formatShortCurrency(dayTotal)}
+                        {formatCurrency(dayTotal)}
                       </span>
                     ) : ''}
                   </td>

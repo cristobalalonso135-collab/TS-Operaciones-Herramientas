@@ -39,6 +39,15 @@ function getAllDates(data: MonthData[]): string[] {
   return data.flatMap((month) => month.lines[0]?.dias.map((day) => day.fecha) || []);
 }
 
+function formatDateHeader(dateValue: string): string {
+  const date = new Date(dateValue);
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = date.getUTCFullYear();
+
+  return `${day}/${month}/${year}`;
+}
+
 function createAllMonthsData(data: MonthData[] | null): MonthData | null {
   if (!data || data.length === 0) return null;
 
@@ -130,7 +139,7 @@ function createAllMonthsData(data: MonthData[] | null): MonthData | null {
 function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
   const allDates = getAllDates(data);
   const rows: any[][] = [];
-  rows.push(['Mes Fiscal', 'Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', 'Mensual', 'Margen', '% Margen', ...allDates, 'Total Check']);
+  rows.push(['Mes Fiscal', 'Area', 'Vertical', 'Medio Venta', 'Pais', 'Zona', 'FY', 'Margen', '% Margen', ...allDates.map(formatDateHeader), 'Total Check']);
 
   data.forEach((month) => {
     month.lines.forEach((line) => {
