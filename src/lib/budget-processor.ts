@@ -143,6 +143,68 @@ export function processFullBudget(allLines: BudgetLineInput[]): MonthData[] {
 }
 
 // ==========================================
+// STEP 1: ALEATORIO ±20% (total restringido)
+// ==========================================
+
+/**
+ * Aplica variación aleatoria ±20% a cada día laborable de cada línea,
+ * pero ajusta los valores para que el total mensual de cada línea
+ * se mantenga exactamente igual al original.
+ *
+ * Algoritmo:
+ * 1. Genera un factor aleatorio (0.8–1.2) por cada día laborable
+ * 2. Multiplica el importe diario base por ese factor
+ * 3. Calcula el factor corrector = total_original / total_aleatorio
+ * 4. Multiplica cada día por el corrector → total cuadra exacto
+ */
+export function step1_aleatorioRestringido(step0Data: MonthData[]): MonthData[] {
+  return step0Data.map((md) => {
+    const newLines = md.lines.map((line) => {
+      // 1. Generar factores aleatorios para días laborables
+      const rawDias = line.dias.map((d) => {
+        if (!d.is_working || d.importe === 0) {
+          return { ...d };
+        }
+        const factor = 0.8 + Math.random() * 0.4; // 0.8 a 1.2
+        return {
+          ...d,
+          importe: d.importe * factor,
+          margen: d.margen * factor,
+        };
+      });
+
+      // 2. Calcular total aleatorio
+      const totalAleatorio = rawDias.reduce((s, d) => s + d.importe, 0);
+      const totalMargenAleatorio = rawDias.reduce((s, d) => s + d.margen, 0);
+
+      // 3. Factor corrector para que cuadre
+      const correctorImporte = totalAleatorio !== 0 ? line.importe / totalAleatorio : 1;
+      const correctorMargen = totalMargenAleatorio !== 0 ? line.margen_bruto / totalMargenAleatorio : 1;
+
+      // 4. Aplicar corrector
+      const diasCorregidos = rawDias.map((d) => ({
+        ...d,
+        importe: d.is_working ? d.importe * correctorImporte : 0,
+        margen: d.is_working ? d.margen * correctorMargen : 0,
+      }));
+
+      const totalCheck = diasCorregidos.reduce((s, d) => s + d.importe, 0);
+
+      return {
+        ...line,
+        dias: diasCorregidos,
+        total_check: totalCheck,
+      };
+    });
+
+    return {
+      ...md,
+      lines: newLines,
+    };
+  });
+}
+
+// ==========================================
 // PARSER DEL EXCEL
 // ==========================================
 
