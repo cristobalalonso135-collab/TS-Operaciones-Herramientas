@@ -138,7 +138,7 @@ function mergeWideSheet(historyRows: any[][] | undefined, generatedRows: any[][]
   if (!historyRows || historyRows.length === 0) return generatedRows;
 
   const headerIdx = findWideHeaderIndex(historyRows);
-  if (headerIdx < 0) return generatedRows;
+  if (headerIdx < 0) return historyRows;
 
   const rows = historyRows.map((row) => [...row]);
   const header = rows[headerIdx];
@@ -206,7 +206,19 @@ function findSheetRows(sheets: Record<string, any[][]>, preferred: string): any[
   if (exact) return exact;
 
   const foundName = Object.keys(sheets).find((name) => normalizeMatchPart(name) === normalizeMatchPart(preferred));
-  return foundName ? sheets[foundName] : undefined;
+  if (foundName) return sheets[foundName];
+
+  if (normalizeMatchPart(preferred) === 'cogs') {
+    const cogsName = Object.keys(sheets).find((name) => normalizeMatchPart(name).includes('cogs'));
+    if (cogsName) return sheets[cogsName];
+  }
+
+  const wideSheetName = Object.keys(sheets).find((name) => {
+    if (normalizeMatchPart(preferred) !== 'cogs' && normalizeMatchPart(name).includes('cogs')) return false;
+    return findWideHeaderIndex(sheets[name]) >= 0;
+  });
+
+  return wideSheetName ? sheets[wideSheetName] : undefined;
 }
 
 function createAllMonthsData(data: MonthData[] | null): MonthData | null {
