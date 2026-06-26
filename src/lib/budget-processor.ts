@@ -113,6 +113,83 @@ export function getNegativosZonasForMonth(monthData: MonthData): string[] {
   ).sort((a, b) => a.localeCompare(b, 'es'));
 }
 
+export interface WeekBucket {
+  id: string;
+  label: string;
+  dates: string[];
+}
+
+export interface WeeklyWeightConfig {
+  weights: Record<string, number>;
+}
+
+export interface WeeklySummary {
+  weekId: string;
+  label: string;
+  current: number;
+  proposed: number;
+}
+
+export function isWeeklyTargetLine(line: Pick<BudgetLineInput, 'medio_venta'>): boolean {
+  const medioVenta = normalizeText(line.medio_venta);
+  return medioVenta === 'equipaciones' || medioVenta === 'equipaciones web b2c';
+}
+
+export function getWeeksForMonthData(monthData: MonthData): WeekBucket[] {
+  const buckets = new Map<string, WeekBucket>();
+
+  for (const day of monthData.lines[0]?.dias || []) {
+    const date = new Date(day.fecha);
+    const monthStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+    const offset = (monthStart.getUTCDay() + 6) % 7;
+    const weekNumber = Math.floor((date.getUTCDate() + offset - 1) / 7) + 1;
+    const id = `W${weekNumber}`;
+    const existing = buckets.get(id);
+
+    if (existing) {
+      existing.dates.push(day.fecha);
+    } else {
+      buckets.set(id, {
+        id,
+        label: `Semana ${weekNumber}`,
+        dates: [day.fecha],
+      });
+    }
+  }
+
+  return Array.from(buckets.values());
+}
+
+export function defaultWeeklyWeightConfig(monthData: MonthData): WeeklyWeightConfig {
+  const weeks = getWeeksForMonthData(monthData);
+  const equalWeight = weeks.length > 0 ? 100 / weeks.length : 0;
+
+  return {
+    weights: Object.fromEntries(weeks.map((week) => [week.id, Number(equalWeight.toFixed(2))])),
+  };
+}
+
+export function getWeeklySummary(monthData: MonthData, config: WeeklyWeightConfig): WeeklySummary[] {
+  const weeks = getWeeksForMonthData(monthData);
+  const targetLines = monthData.lines.filter(isWeeklyTargetLine);
+  const totalTarget = targetLines.reduce((sum, line) => sum + line.total_check, 0);
+
+  return weeks.map((week) => {
+    const current = targetLines.reduce((sum, line) => (
+      sum + line.dias
+        .filter((day) => week.dates.includes(day.fecha))
+        .reduce((daySum, day) => daySum + day.importe, 0)
+    ), 0);
+
+    return {
+      weekId: week.id,
+      label: week.label,
+      current,
+      proposed: totalTarget * ((config.weights[week.id] || 0) / 100),
+    };
+  });
+}
+
 export function step0_distribuirPorLaborables(
   lines: BudgetLineInput[],
   year: number,
@@ -315,6 +392,69 @@ export function step2_negativos(
       ...md,
       lines: newLines,
       total_importe: newLines.reduce((s, l) => s + l.total_check, 0),
+    };
+  });
+}
+
+export function step3_ponderacionSemanal(
+  inputData: MonthData[],
+  weeklyConfigByMonth: Record<string, WeeklyWeightConfig>
+): MonthData[] {
+  return inputData.map((md) => {
+    const config = weeklyConfigByMonth[md.mes_fiscal];
+    if (!config) return md;
+
+    const weeks = getWeeksForMonthData(md);
+    const totalWeight = weeks.reduce((sum, week) => sum + (config.weights[week.id] || 0), 0);
+    if (weeks.length === 0 || Math.abs(totalWeight - 100) > 0.01) return md;
+
+    const newLines = md.lines.map((line) => {
+      if (!isWeeklyTargetLine(line)) return line;
+
+      const newDias = line.dias.map((day) => ({ ...day }));
+
+      for (const week of weeks) {
+        const weekIndices = line.dias
+          .map((day, index) => (week.dates.includes(day.fecha) && day.is_working ? index : -1))
+          .filter((index) => index >= 0);
+
+        if (weekIndices.length === 0) continue;
+
+        const targetImporteWeek = line.importe * ((config.weights[week.id] || 0) / 100);
+        const targetMargenWeek = line.margen_bruto * ((config.weights[week.id] || 0) / 100);
+        const currentImporteWeek = weekIndices.reduce((sum, index) => sum + line.dias[index].importe, 0);
+        const currentMargenWeek = weekIndices.reduce((sum, index) => sum + line.dias[index].margen, 0);
+
+        for (const index of weekIndices) {
+          const importeShare = currentImporteWeek !== 0
+            ? line.dias[index].importe / currentImporteWeek
+            : 1 / weekIndices.length;
+          const margenShare = currentMargenWeek !== 0
+            ? line.dias[index].margen / currentMargenWeek
+            : 1 / weekIndices.length;
+
+          newDias[index] = {
+            ...newDias[index],
+            importe: targetImporteWeek * importeShare,
+            margen: targetMargenWeek * margenShare,
+          };
+        }
+      }
+
+      const totalCheck = newDias.reduce((sum, day) => sum + day.importe, 0);
+
+      return {
+        ...line,
+        dias: newDias,
+        total_check: totalCheck,
+      };
+    });
+
+    return {
+      ...md,
+      lines: newLines,
+      total_importe: newLines.reduce((sum, line) => sum + line.total_check, 0),
+      total_margen: newLines.reduce((sum, line) => sum + line.margen_bruto, 0),
     };
   });
 }

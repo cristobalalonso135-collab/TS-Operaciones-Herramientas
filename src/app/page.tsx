@@ -4,15 +4,19 @@ import { useState, useCallback, useMemo } from 'react';
 import FileUpload from '@/components/FileUpload';
 import BudgetTable from '@/components/BudgetTable';
 import NegativosForm from '@/components/NegativosForm';
+import WeeklyWeightsForm from '@/components/WeeklyWeightsForm';
 import {
   parseExcelData,
   processFullBudget,
   step1_aleatorioRestringido,
   step2_negativos,
+  step3_ponderacionSemanal,
   MonthData,
   BudgetLineDaily,
   NegativosConfig,
+  WeeklyWeightConfig,
   defaultNegativosConfig,
+  defaultWeeklyWeightConfig,
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
@@ -24,7 +28,8 @@ const STEPS = [
   { id: 0, name: 'Distribucion diaria', description: 'Mensual a dias laborables' },
   { id: 1, name: 'Aleatorio +/-20%', description: 'Variacion diaria con total fijo' },
   { id: 2, name: 'Negativos', description: 'Ajustes por zona y primeros laborables' },
-  { id: 3, name: 'Definitiva', description: 'Export final' },
+  { id: 3, name: 'Ponderacion semanal', description: 'Peso por semana para Equipaciones' },
+  { id: 4, name: 'Definitiva', description: 'Export final' },
 ];
 
 function formatNumber(n: number): string {
@@ -176,29 +181,37 @@ export default function Home() {
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
   const [step2Data, setStep2Data] = useState<MonthData[] | null>(null);
+  const [step3Data, setStep3Data] = useState<MonthData[] | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>(FISCAL_MONTHS_ORDER[0]);
   const [totalLines, setTotalLines] = useState(0);
   const [closedMonths, setClosedMonths] = useState<string[]>([]);
   const [negativosConfig, setNegativosConfig] = useState<Record<string, NegativosConfig>>({});
+  const [weeklyConfig, setWeeklyConfig] = useState<Record<string, WeeklyWeightConfig>>({});
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const [weeklyMessage, setWeeklyMessage] = useState<string | null>(null);
 
   const handleFileLoaded = useCallback((data: any[][], _fileName: string) => {
     const parsed = parseExcelData(data);
     const processed = processFullBudget(parsed);
     const negConfig: Record<string, NegativosConfig> = {};
+    const weekConfig: Record<string, WeeklyWeightConfig> = {};
 
     processed.forEach((month) => {
       const zonas = getNegativosZonasForMonth(month);
       negConfig[month.mes_fiscal] = defaultNegativosConfig(zonas.length > 0 ? zonas : undefined);
+      weekConfig[month.mes_fiscal] = defaultWeeklyWeightConfig(month);
     });
 
     setTotalLines(parsed.length);
     setStep0Data(processed);
     setStep1Data(null);
     setStep2Data(null);
+    setStep3Data(null);
     setClosedMonths([]);
     setNegativosConfig(negConfig);
+    setWeeklyConfig(weekConfig);
     setApplyMessage(null);
+    setWeeklyMessage(null);
     setCurrentStep(0);
     setSelectedMonth(processed.length > 0 ? processed[0].mes_fiscal : FISCAL_MONTHS_ORDER[0]);
   }, []);
@@ -214,6 +227,7 @@ export default function Home() {
 
     setStep1Data(result);
     setStep2Data(null);
+    setStep3Data(null);
     setCurrentStep(1);
   }, [closedMonths, step0Data, step1Data]);
 
@@ -227,6 +241,7 @@ export default function Home() {
     });
 
     setStep2Data(result);
+    setStep3Data(null);
     setCurrentStep(2);
 
     const beforeMonth = step1Data.find((month) => month.mes_fiscal === selectedMonth);
@@ -249,6 +264,25 @@ export default function Home() {
     setNegativosConfig((prev) => ({ ...prev, [month]: config }));
   }, []);
 
+  const handleUpdateWeeklyConfig = useCallback((month: string, config: WeeklyWeightConfig) => {
+    setWeeklyConfig((prev) => ({ ...prev, [month]: config }));
+  }, []);
+
+  const handleApplyWeeklyWeights = useCallback(() => {
+    if (!step2Data) return;
+
+    const applied = step3_ponderacionSemanal(step2Data, weeklyConfig);
+    const result = applied.map((month) => {
+      if (!closedMonths.includes(month.mes_fiscal)) return month;
+      return step3Data?.find((locked) => locked.mes_fiscal === month.mes_fiscal) || month;
+    });
+
+    setStep3Data(result);
+    setCurrentStep(3);
+    setWeeklyMessage(`Ponderacion semanal aplicada en ${selectedMonth}.`);
+    window.setTimeout(() => setWeeklyMessage(null), 4500);
+  }, [closedMonths, selectedMonth, step2Data, step3Data, weeklyConfig]);
+
   const toggleClosedMonth = useCallback((month: string) => {
     if (month === ALL_MONTHS) return;
     setClosedMonths((prev) => (
@@ -256,7 +290,9 @@ export default function Home() {
     ));
   }, []);
 
-  const activeData = currentStep >= 2 && step2Data
+  const activeData = currentStep >= 3 && step3Data
+    ? step3Data
+    : currentStep >= 2 && step2Data
     ? step2Data
     : currentStep === 1 && step1Data
       ? step1Data
@@ -273,7 +309,8 @@ export default function Home() {
     if (id === 0) return !!step0Data;
     if (id === 1) return !!step1Data;
     if (id === 2) return !!step2Data;
-    if (id === 3) return !!step2Data;
+    if (id === 3) return !!step3Data || !!step2Data;
+    if (id === 4) return !!step3Data;
     return false;
   };
 
@@ -483,6 +520,22 @@ export default function Home() {
                 config={negativosConfig[selectedMonth]}
                 onChange={handleUpdateNegConfig}
                 onApply={handleApplyNegativos}
+              />
+            </div>
+          )}
+
+          {step2Data && selectedMonth !== ALL_MONTHS && currentStep === 3 && weeklyConfig[selectedMonth] && currentMonthData && (
+            <div className="space-y-3">
+              {weeklyMessage && (
+                <div className="rounded-lg border border-green-200 bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
+                  {weeklyMessage}
+                </div>
+              )}
+              <WeeklyWeightsForm
+                monthData={currentMonthData}
+                config={weeklyConfig[selectedMonth]}
+                onChange={handleUpdateWeeklyConfig}
+                onApply={handleApplyWeeklyWeights}
               />
             </div>
           )}
