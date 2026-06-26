@@ -32,6 +32,11 @@ const STEPS = [
   { id: 4, name: 'Definitiva', description: 'Export final' },
 ];
 
+interface HistoricalWorkbook {
+  fileName: string;
+  sheets: Record<string, any[][]>;
+}
+
 function formatNumber(n: number): string {
   return n.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
@@ -53,6 +58,42 @@ function formatDateHeader(dateValue: string): string {
   return `${day}/${month}/${year}`;
 }
 
+function normalizeDateHeaderValue(value: any): string | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const day = String(value.getUTCDate()).padStart(2, '0');
+    const month = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const year = value.getUTCFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  if (typeof value === 'number' && value > 20000) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86400000);
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  const spanish = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (spanish) {
+    return `${spanish[1].padStart(2, '0')}/${spanish[2].padStart(2, '0')}/${spanish[3]}`;
+  }
+
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    return `${iso[3].padStart(2, '0')}/${iso[2].padStart(2, '0')}/${iso[1]}`;
+  }
+
+  return null;
+}
+
+function normalizeMatchPart(value: any): string {
+  return String(value ?? '').replace(/\u00a0/g, ' ').trim().toLowerCase();
+}
+
 function formatZonaForMatch(zona: string): string {
   const cleanZona = String(zona || '').trim();
   if (!cleanZona) return '\u00a0';
@@ -66,6 +107,102 @@ function getExportIndexKey(line: BudgetLineDaily): string {
     formatZonaForMatch(line.zona),
     line.cod_mercado || line.pais,
   ].join('|');
+}
+
+function getWideRowKey(row: any[], indexes: Record<string, number>): string {
+  return [
+    row[indexes.idVertical],
+    row[indexes.nombre],
+    row[indexes.zona],
+    row[indexes.codMercado],
+  ].map(normalizeMatchPart).join('|');
+}
+
+function findWideHeaderIndex(rows: any[][]): number {
+  return rows.findIndex((row) => {
+    const normalized = row.map((cell) => normalizeMatchPart(cell));
+    return (
+      normalized.includes('id_vertical') &&
+      normalized.includes('nombre') &&
+      normalized.includes('zona_equipaciones') &&
+      normalized.includes('cod_mercado')
+    );
+  });
+}
+
+function mergeWideSheet(historyRows: any[][] | undefined, generatedRows: any[][]): any[][] {
+  if (!historyRows || historyRows.length === 0) return generatedRows;
+
+  const headerIdx = findWideHeaderIndex(historyRows);
+  if (headerIdx < 0) return generatedRows;
+
+  const rows = historyRows.map((row) => [...row]);
+  const header = rows[headerIdx];
+  const normalizedHeader = header.map((cell) => normalizeMatchPart(cell));
+  const historyIndexes = {
+    idVertical: normalizedHeader.indexOf('id_vertical'),
+    nombre: normalizedHeader.indexOf('nombre'),
+    zona: normalizedHeader.indexOf('zona_equipaciones'),
+    codMercado: normalizedHeader.indexOf('cod_mercado'),
+  };
+  const generatedHeader = generatedRows[0] || [];
+  const generatedDates = generatedHeader.slice(4).map(normalizeDateHeaderValue);
+  const dateColumnByKey = new Map<string, number>();
+
+  header.forEach((cell, index) => {
+    const key = normalizeDateHeaderValue(cell);
+    if (key) dateColumnByKey.set(key, index);
+  });
+
+  generatedDates.forEach((dateKey, generatedIndex) => {
+    if (!dateKey || dateColumnByKey.has(dateKey)) return;
+    const newIndex = header.length;
+    header.push(generatedHeader[generatedIndex + 4]);
+    dateColumnByKey.set(dateKey, newIndex);
+  });
+
+  const rowByKey = new Map<string, any[]>();
+  rows.slice(headerIdx + 1).forEach((row) => {
+    const key = getWideRowKey(row, historyIndexes);
+    if (key.replace(/\|/g, '')) rowByKey.set(key, row);
+  });
+
+  generatedRows.slice(1).forEach((generatedRow) => {
+    const generatedKey = generatedRow.slice(0, 4).map(normalizeMatchPart).join('|');
+    let targetRow = rowByKey.get(generatedKey);
+
+    if (!targetRow) {
+      targetRow = Array(header.length).fill(null);
+      targetRow[historyIndexes.idVertical] = generatedRow[0];
+      targetRow[historyIndexes.nombre] = generatedRow[1];
+      targetRow[historyIndexes.zona] = generatedRow[2];
+      targetRow[historyIndexes.codMercado] = generatedRow[3];
+      rows.push(targetRow);
+      rowByKey.set(generatedKey, targetRow);
+    }
+
+    generatedDates.forEach((dateKey, generatedIndex) => {
+      if (!dateKey) return;
+      const targetColumn = dateColumnByKey.get(dateKey);
+      if (targetColumn === undefined) return;
+      const existingValue = targetRow[targetColumn];
+      const generatedValue = generatedRow[generatedIndex + 4];
+      const isEmpty = existingValue === null || existingValue === undefined || existingValue === '';
+      if (isEmpty && generatedValue !== null && generatedValue !== undefined && generatedValue !== '') {
+        targetRow[targetColumn] = generatedValue;
+      }
+    });
+  });
+
+  return rows;
+}
+
+function findSheetRows(sheets: Record<string, any[][]>, preferred: string): any[][] | undefined {
+  const exact = sheets[preferred];
+  if (exact) return exact;
+
+  const foundName = Object.keys(sheets).find((name) => normalizeMatchPart(name) === normalizeMatchPart(preferred));
+  return foundName ? sheets[foundName] : undefined;
 }
 
 function createAllMonthsData(data: MonthData[] | null): MonthData | null {
@@ -216,6 +353,7 @@ export default function Home() {
   const [weeklyConfig, setWeeklyConfig] = useState<Record<string, WeeklyWeightConfig>>({});
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
   const [weeklyMessage, setWeeklyMessage] = useState<string | null>(null);
+  const [historicalWorkbook, setHistoricalWorkbook] = useState<HistoricalWorkbook | null>(null);
 
   const handleFileLoaded = useCallback((data: any[][], _fileName: string) => {
     const parsed = parseExcelData(data);
@@ -239,6 +377,7 @@ export default function Home() {
     setWeeklyConfig(weekConfig);
     setApplyMessage(null);
     setWeeklyMessage(null);
+    setHistoricalWorkbook(null);
     setCurrentStep(0);
     setSelectedMonth(processed.length > 0 ? processed[0].mes_fiscal : FISCAL_MONTHS_ORDER[0]);
   }, []);
@@ -353,6 +492,25 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildFySheetData(activeData, 'cogs')), 'COGS');
     }
     XLSX.writeFile(wb, kind === 'cogs' ? 'budget_COGS_FY_26_27.xlsx' : kind === 'facturacion' ? 'budget_facturacion_FY_26_27.xlsx' : 'budget_FY_26_27.xlsx');
+  };
+
+  const handleExportMergedHistorical = async () => {
+    if (!activeData || !historicalWorkbook) return;
+
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const facturacionRows = mergeWideSheet(
+      findSheetRows(historicalWorkbook.sheets, 'Hoja1'),
+      buildFySheetData(activeData, 'facturacion')
+    );
+    const cogsRows = mergeWideSheet(
+      findSheetRows(historicalWorkbook.sheets, 'COGS'),
+      buildFySheetData(activeData, 'cogs')
+    );
+
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(facturacionRows), 'Hoja1');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cogsRows), 'COGS');
+    XLSX.writeFile(wb, `budget_historico_completado_${historicalWorkbook.fileName.replace(/\.[^.]+$/, '')}.xlsx`);
   };
 
   if (view === 'tools') {
@@ -595,6 +753,32 @@ export default function Home() {
                       <FileSpreadsheet className="h-4 w-4" />
                     </div>
                     <span className="text-sm font-semibold">Budget COGS</span>
+                  </div>
+                  <Download className="h-4 w-4 text-[var(--text-secondary)]" />
+                </button>
+              </div>
+              <div className="mt-4 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
+                <FileUpload
+                  inputId="historical-file-input"
+                  label="Historico para completar"
+                  onFileLoaded={() => {}}
+                  onWorkbookLoaded={(sheets, fileName) => setHistoricalWorkbook({ sheets, fileName })}
+                />
+                <button
+                  onClick={handleExportMergedHistorical}
+                  disabled={!historicalWorkbook}
+                  className="flex w-full items-center justify-between rounded-lg border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--success-soft)] text-[var(--success)]">
+                      <FileSpreadsheet className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold">Descargar historico completado</span>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                        Mantiene lo existente, rellena huecos y añade filas/fechas nuevas.
+                      </p>
+                    </div>
                   </div>
                   <Download className="h-4 w-4 text-[var(--text-secondary)]" />
                 </button>

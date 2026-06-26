@@ -5,14 +5,18 @@ import { Upload, FileSpreadsheet, X } from 'lucide-react';
 
 interface FileUploadProps {
   onFileLoaded: (data: any[][], fileName: string) => void;
+  onWorkbookLoaded?: (workbook: Record<string, any[][]>, fileName: string) => void;
   accept?: string;
   label?: string;
+  inputId?: string;
 }
 
 export default function FileUpload({
   onFileLoaded,
+  onWorkbookLoaded,
   accept = '.xlsx,.xls,.csv',
   label = 'Sube tu Excel de budget',
+  inputId = 'file-input',
 }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -24,19 +28,26 @@ export default function FileUpload({
       try {
         const XLSX = await import('xlsx');
         const buffer = await file.arrayBuffer();
-        const wb = XLSX.read(buffer, { type: 'array' });
+        const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
         const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+        const sheets: Record<string, any[][]> = Object.fromEntries(
+          wb.SheetNames.map((name) => [
+            name,
+            XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1 }) as any[][],
+          ])
+        );
 
         setFileName(file.name);
+        onWorkbookLoaded?.(sheets, file.name);
         onFileLoaded(data, file.name);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error leyendo el archivo. Asegurate de que es un Excel valido.');
         console.error(err);
       }
     },
-    [onFileLoaded]
+    [onFileLoaded, onWorkbookLoaded]
   );
 
   const handleDrop = useCallback(
@@ -69,10 +80,10 @@ export default function FileUpload({
         onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
-        onClick={() => document.getElementById('file-input')?.click()}
+        onClick={() => document.getElementById(inputId)?.click()}
       >
         <input
-          id="file-input"
+          id={inputId}
           type="file"
           accept={accept}
           onChange={handleChange}
