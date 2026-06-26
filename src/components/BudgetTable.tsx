@@ -151,7 +151,11 @@ export default function BudgetTable({ data, year, month, mesFiscal }: BudgetTabl
                       !d.is_working ? 'text-[var(--text-secondary)]/20 bg-[var(--bg-secondary)]' : ''
                     }`}
                   >
-                    {d.importe > 0 ? formatCompact(d.importe) : ''}
+                    {d.importe !== 0 ? (
+                      <span className={d.importe < 0 ? 'text-[var(--danger)]' : ''}>
+                        {formatCompact(d.importe)}
+                      </span>
+                    ) : ''}
                   </td>
                 ))}
               </tr>
@@ -175,7 +179,11 @@ export default function BudgetTable({ data, year, month, mesFiscal }: BudgetTabl
                       !d.is_working ? 'text-[var(--text-secondary)]/20 bg-[var(--bg-secondary)]' : ''
                     }`}
                   >
-                    {dayTotal > 0 ? formatCompact(dayTotal) : ''}
+                    {dayTotal !== 0 ? (
+                      <span className={dayTotal < 0 ? 'text-[var(--danger)]' : ''}>
+                        {formatCompact(dayTotal)}
+                      </span>
+                    ) : ''}
                   </td>
                 );
               })}

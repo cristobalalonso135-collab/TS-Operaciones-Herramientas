@@ -222,10 +222,10 @@ export interface NegativosConfig {
   ponderacion: number[];     // [0.6, 0.25, 0.15] por defecto
 }
 
-/** Calcula el total negativo de una zona */
+/** Calcula el total negativo de una zona. Los % se introducen como enteros (11 = 11%) */
 export function calcularNegativoZona(z: NegativosZona): { gen_web: number; frees: number; total: number } {
-  const gen_web = z.web_b2c_anterior * z.pct_gen_web;
-  const frees = z.grassroots * z.pct_frees;
+  const gen_web = z.web_b2c_anterior * (z.pct_gen_web / 100);
+  const frees = z.grassroots * (z.pct_frees / 100);
   return { gen_web, frees, total: gen_web + frees };
 }
 
@@ -334,7 +334,7 @@ export function defaultNegativosConfig(): NegativosConfig {
       web_b2c_anterior: 0,
       pct_gen_web: 0,
       grassroots: 0,
-      pct_frees: 0.03,
+      pct_frees: 3,
     })),
     ponderacion: [0.6, 0.25, 0.15],
   };
