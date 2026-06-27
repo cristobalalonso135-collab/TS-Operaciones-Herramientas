@@ -152,6 +152,7 @@ function mergeWideSheet(historyRows: any[][] | undefined, generatedRows: any[][]
   const generatedHeader = generatedRows[0] || [];
   const generatedDates = generatedHeader.slice(4).map(normalizeDateHeaderValue);
   const dateColumnByKey = new Map<string, number>();
+  const newDateKeys = new Set<string>();
 
   header.forEach((cell, index) => {
     const key = normalizeDateHeaderValue(cell);
@@ -163,6 +164,7 @@ function mergeWideSheet(historyRows: any[][] | undefined, generatedRows: any[][]
     const newIndex = header.length;
     header.push(generatedHeader[generatedIndex + 4]);
     dateColumnByKey.set(dateKey, newIndex);
+    newDateKeys.add(dateKey);
   });
 
   const rowByKey = new Map<string, any[]>();
@@ -187,12 +189,11 @@ function mergeWideSheet(historyRows: any[][] | undefined, generatedRows: any[][]
 
     generatedDates.forEach((dateKey, generatedIndex) => {
       if (!dateKey) return;
+      if (!newDateKeys.has(dateKey)) return;
       const targetColumn = dateColumnByKey.get(dateKey);
       if (targetColumn === undefined) return;
-      const existingValue = targetRow[targetColumn];
       const generatedValue = generatedRow[generatedIndex + 4];
-      const isEmpty = existingValue === null || existingValue === undefined || existingValue === '';
-      if (isEmpty && generatedValue !== null && generatedValue !== undefined && generatedValue !== '') {
+      if (generatedValue !== null && generatedValue !== undefined && generatedValue !== '') {
         targetRow[targetColumn] = generatedValue;
       }
     });

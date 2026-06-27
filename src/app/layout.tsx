@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: 'TS Operaciones Herramientas',
   description: 'Herramientas operativas de Teamsports',
   icons: {
-    icon: '/icon.svg',
+    icon: '/icon.svg?v=gear',
   },
 };
 
