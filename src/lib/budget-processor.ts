@@ -92,6 +92,39 @@ function parseExcelNumber(value: any): number {
   return Number(cleaned) || 0;
 }
 
+function roundMoney(value: number): number {
+  const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function reconcileDailyValues(
+  dias: BudgetDayValue[],
+  targetImporte: number,
+  targetMargen: number
+): { dias: BudgetDayValue[]; totalCheck: number } {
+  const roundedDias = dias.map((day) => ({
+    ...day,
+    importe: roundMoney(day.importe),
+    margen: roundMoney(day.margen),
+  }));
+  const lastWorkingIndex = roundedDias.map((day, index) => (day.is_working ? index : -1)).filter((index) => index >= 0).pop();
+
+  if (lastWorkingIndex !== undefined) {
+    const importeDiff = roundMoney(targetImporte - roundedDias.reduce((sum, day) => sum + day.importe, 0));
+    const margenDiff = roundMoney(targetMargen - roundedDias.reduce((sum, day) => sum + day.margen, 0));
+    roundedDias[lastWorkingIndex] = {
+      ...roundedDias[lastWorkingIndex],
+      importe: roundMoney(roundedDias[lastWorkingIndex].importe + importeDiff),
+      margen: roundMoney(roundedDias[lastWorkingIndex].margen + margenDiff),
+    };
+  }
+
+  return {
+    dias: roundedDias,
+    totalCheck: roundMoney(roundedDias.reduce((sum, day) => sum + day.importe, 0)),
+  };
+}
+
 export function isNegativosTargetLine(line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'>): boolean {
   const vertical = normalizeText(line.vertical);
   const medioVenta = normalizeText(line.medio_venta);
@@ -272,14 +305,14 @@ export function step0_distribuirPorLaborables(
       is_working: day.isWorking,
     }));
 
-    const totalCheck = dias.reduce((sum, d) => sum + d.importe, 0);
+    const reconciled = reconcileDailyValues(dias, line.importe, line.margen_bruto);
 
     return {
       ...line,
       importe_diario: importeDiario,
       dias_laborables: numWorkingDays,
-      dias,
-      total_check: totalCheck,
+      dias: reconciled.dias,
+      total_check: reconciled.totalCheck,
     };
   });
 }
@@ -341,12 +374,12 @@ export function step1_aleatorioRestringido(step0Data: MonthData[]): MonthData[] 
         margen: d.is_working ? d.margen * correctorMargen : 0,
       }));
 
-      const totalCheck = diasCorregidos.reduce((s, d) => s + d.importe, 0);
+      const reconciled = reconcileDailyValues(diasCorregidos, line.importe, line.margen_bruto);
 
       return {
         ...line,
-        dias: diasCorregidos,
-        total_check: totalCheck,
+        dias: reconciled.dias,
+        total_check: reconciled.totalCheck,
       };
     });
 
@@ -441,12 +474,12 @@ export function step2_negativos(
         return d;
       });
 
-      const totalCheck = newDias.reduce((s, d) => s + d.importe, 0);
+      const reconciled = reconcileDailyValues(newDias, line.importe, line.margen_bruto);
 
       return {
         ...line,
-        dias: newDias,
-        total_check: totalCheck,
+        dias: reconciled.dias,
+        total_check: reconciled.totalCheck,
       };
     });
 
@@ -518,12 +551,12 @@ export function step3_ponderacionSemanal(
         }
       }
 
-      const totalCheck = newDias.reduce((sum, day) => sum + day.importe, 0);
+      const reconciled = reconcileDailyValues(newDias, line.importe, line.margen_bruto);
 
       return {
         ...line,
-        dias: newDias,
-        total_check: totalCheck,
+        dias: reconciled.dias,
+        total_check: reconciled.totalCheck,
       };
     });
 
