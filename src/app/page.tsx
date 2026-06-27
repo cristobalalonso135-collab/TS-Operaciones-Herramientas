@@ -64,9 +64,9 @@ function formatDateHeader(dateValue: string): string {
 
 function normalizeDateHeaderValue(value: any): string | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const day = String(value.getUTCDate()).padStart(2, '0');
-    const month = String(value.getUTCMonth() + 1).padStart(2, '0');
-    const year = value.getUTCFullYear();
+    const day = String(value.getDate()).padStart(2, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const year = value.getFullYear();
     return `${day}/${month}/${year}`;
   }
 
