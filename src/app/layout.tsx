@@ -2,8 +2,11 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'TS Operaciones',
+  title: 'TS Operaciones Herramientas',
   description: 'Herramientas operativas de Teamsports',
+  icons: {
+    icon: '/icon.svg',
+  },
 };
 
 export default function RootLayout({
@@ -17,8 +20,8 @@ export default function RootLayout({
         <nav className="border-b border-[var(--border)] bg-[var(--bg-secondary)]/90 backdrop-blur px-6 py-3">
           <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg-soft)] text-sm font-semibold">
-                TS
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--text-primary)] text-sm font-semibold text-white shadow-sm">
+                <span>TS</span>
               </div>
               <div>
                 <h1 className="text-sm font-semibold tracking-tight">TS Operaciones</h1>
