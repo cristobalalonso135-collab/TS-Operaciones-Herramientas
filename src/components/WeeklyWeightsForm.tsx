@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import {
   MonthData,
   WEEKLY_TARGET_MEDIOS,
@@ -12,6 +13,7 @@ import { BarChart3 } from 'lucide-react';
 interface WeeklyWeightsFormProps {
   monthData: MonthData;
   config: WeeklyWeightConfig;
+  isApplied?: boolean;
   onChange: (month: string, config: WeeklyWeightConfig) => void;
   onApply: () => void;
 }
@@ -32,7 +34,10 @@ function formatDate(dateValue: string): string {
   return `${day}/${month}/${year}`;
 }
 
-export default function WeeklyWeightsForm({ monthData, config, onChange, onApply }: WeeklyWeightsFormProps) {
+export default function WeeklyWeightsForm({ monthData, config, isApplied = false, onChange, onApply }: WeeklyWeightsFormProps) {
+  const [progressionPct, setProgressionPct] = useState<Record<string, number>>(
+    Object.fromEntries(WEEKLY_TARGET_MEDIOS.map((medio) => [medio, 2]))
+  );
   const weeks = getWeeksForMonthData(monthData);
 
   const updateDailyIndex = (medio: string, weekId: string, value: number) => {
@@ -47,11 +52,31 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
     });
   };
 
+  const applyProgression = (medio: string) => {
+    const increment = progressionPct[medio] || 0;
+    const nextIndex = Object.fromEntries(
+      weeks.map((week, index) => [week.id, Number((1 + (increment / 100) * index).toFixed(4))])
+    );
+
+    onChange(monthData.mes_fiscal, {
+      mediaDailyIndex: {
+        ...config.mediaDailyIndex,
+        [medio]: nextIndex,
+      },
+    });
+  };
+
   return (
-    <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-sm">
+    <div className={`overflow-hidden rounded-lg border shadow-sm transition ${
+      isApplied
+        ? 'border-[var(--border)] bg-[var(--bg-soft)]'
+        : 'border-[var(--border)] bg-[var(--bg-card)]'
+    }`}>
       <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
+          <div className={`flex h-8 w-8 items-center justify-center rounded-md ${
+            isApplied ? 'bg-[var(--bg-card)] text-[var(--text-muted)]' : 'bg-[var(--accent-soft)] text-[var(--accent)]'
+          }`}>
             <BarChart3 className="h-4 w-4" />
           </div>
           <div>
@@ -59,6 +84,11 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
             <p className="text-xs text-[var(--text-secondary)]">Ajuste independiente por medio usando indice de promedio diario</p>
           </div>
         </div>
+        {isApplied && (
+          <span className="rounded-md bg-[var(--bg-card)] px-2 py-1 text-xs font-medium text-[var(--text-secondary)]">
+            Aplicado
+          </span>
+        )}
       </div>
 
       <div className="space-y-6 p-4">
@@ -74,9 +104,32 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
                   <h3 className="text-sm font-semibold">{medio}</h3>
                   <p className="text-xs text-[var(--text-secondary)]">Budget total objetivo: {formatCurrency(totalTarget)}</p>
                 </div>
-                <span className={`rounded-md px-2 py-1 text-xs font-mono ${hasValidIndex ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
-                  Total mes conservado
-                </span>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    + semanal
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={progressionPct[medio] ?? 2}
+                      onChange={(event) => setProgressionPct((prev) => ({
+                        ...prev,
+                        [medio]: parseFloat(event.target.value) || 0,
+                      }))}
+                      className="w-20 rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-right font-mono text-xs"
+                    />
+                    %
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => applyProgression(medio)}
+                    className="rounded-md border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-medium transition hover:bg-[var(--bg-soft)]"
+                  >
+                    Rellenar progresion
+                  </button>
+                  <span className={`rounded-md px-2 py-1 text-xs font-mono ${hasValidIndex ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
+                    Total mes conservado
+                  </span>
+                </div>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -153,7 +206,7 @@ export default function WeeklyWeightsForm({ monthData, config, onChange, onApply
             disabled={WEEKLY_TARGET_MEDIOS.some((medio) => weeks.every((week) => (config.mediaDailyIndex[medio]?.[week.id] || 0) <= 0))}
             className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-35"
           >
-            Aplicar ponderacion semanal
+            {isApplied ? 'Reaplicar ponderacion semanal' : 'Aplicar ponderacion semanal'}
           </button>
         </div>
       </div>

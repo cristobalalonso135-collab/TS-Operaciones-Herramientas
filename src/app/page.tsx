@@ -368,6 +368,7 @@ export default function Home() {
   const [closedMonths, setClosedMonths] = useState<string[]>([]);
   const [negativosConfig, setNegativosConfig] = useState<Record<string, NegativosConfig>>({});
   const [weeklyConfig, setWeeklyConfig] = useState<Record<string, WeeklyWeightConfig>>({});
+  const [weeklyAppliedMonths, setWeeklyAppliedMonths] = useState<string[]>([]);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
   const [weeklyMessage, setWeeklyMessage] = useState<string | null>(null);
   const [historicalWorkbook, setHistoricalWorkbook] = useState<HistoricalWorkbook | null>(null);
@@ -392,6 +393,7 @@ export default function Home() {
     setClosedMonths([]);
     setNegativosConfig(negConfig);
     setWeeklyConfig(weekConfig);
+    setWeeklyAppliedMonths([]);
     setApplyMessage(null);
     setWeeklyMessage(null);
     setHistoricalWorkbook(null);
@@ -411,6 +413,7 @@ export default function Home() {
     setStep1Data(result);
     setStep2Data(null);
     setStep3Data(null);
+    setWeeklyAppliedMonths([]);
     setCurrentStep(1);
   }, [closedMonths, step0Data, step1Data]);
 
@@ -456,6 +459,7 @@ export default function Home() {
 
   const handleUpdateWeeklyConfig = useCallback((month: string, config: WeeklyWeightConfig) => {
     setWeeklyConfig((prev) => ({ ...prev, [month]: config }));
+    setWeeklyAppliedMonths((prev) => prev.filter((appliedMonth) => appliedMonth !== month));
   }, []);
 
   const handleApplyWeeklyWeights = useCallback(() => {
@@ -469,6 +473,9 @@ export default function Home() {
 
     setStep2Data(result);
     setStep3Data(null);
+    setWeeklyAppliedMonths((prev) => (
+      prev.includes(selectedMonth) ? prev : [...prev, selectedMonth]
+    ));
     setCurrentStep(2);
     setWeeklyMessage(`Ponderacion semanal aplicada en ${selectedMonth}.`);
     window.setTimeout(() => setWeeklyMessage(null), 4500);
@@ -493,6 +500,9 @@ export default function Home() {
   const currentMonthData = selectedMonth === ALL_MONTHS
     ? allMonthsData
     : activeData?.find((m) => m.mes_fiscal === selectedMonth);
+  const weeklyBaseMonthData = selectedMonth === ALL_MONTHS
+    ? null
+    : step1Data?.find((m) => m.mes_fiscal === selectedMonth);
   const totalBudget = activeData?.reduce((s, m) => s + m.total_importe, 0) || 0;
   const totalMargen = activeData?.reduce((s, m) => s + m.total_margen, 0) || 0;
   const totalCogs = totalBudget - totalMargen;
@@ -765,7 +775,7 @@ export default function Home() {
             </div>
           )}
 
-          {step1Data && selectedMonth !== ALL_MONTHS && currentStep === 2 && weeklyConfig[selectedMonth] && currentMonthData && (
+          {step1Data && selectedMonth !== ALL_MONTHS && currentStep === 2 && weeklyConfig[selectedMonth] && weeklyBaseMonthData && (
             <div className="space-y-3">
               {weeklyMessage && (
                 <div className="rounded-lg border border-green-200 bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
@@ -773,8 +783,9 @@ export default function Home() {
                 </div>
               )}
               <WeeklyWeightsForm
-                monthData={currentMonthData}
+                monthData={weeklyBaseMonthData}
                 config={weeklyConfig[selectedMonth]}
+                isApplied={weeklyAppliedMonths.includes(selectedMonth)}
                 onChange={handleUpdateWeeklyConfig}
                 onApply={handleApplyWeeklyWeights}
               />
