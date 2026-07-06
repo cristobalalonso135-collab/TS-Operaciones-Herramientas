@@ -125,6 +125,14 @@ function reconcileDailyValues(
   };
 }
 
+function applyLineMarginRate(dias: BudgetDayValue[], line: BudgetLineInput): BudgetDayValue[] {
+  const marginRate = line.importe !== 0 ? line.margen_bruto / line.importe : 0;
+  return dias.map((day) => ({
+    ...day,
+    margen: day.importe * marginRate,
+  }));
+}
+
 export function isNegativosTargetLine(line: Pick<BudgetLineInput, 'vertical' | 'medio_venta'>): boolean {
   const vertical = normalizeText(line.vertical);
   const medioVenta = normalizeText(line.medio_venta);
@@ -474,7 +482,8 @@ export function step2_negativos(
         return d;
       });
 
-      const reconciled = reconcileDailyValues(newDias, line.importe, line.margen_bruto);
+      const proportionalMarginDias = applyLineMarginRate(newDias, line);
+      const reconciled = reconcileDailyValues(proportionalMarginDias, line.importe, line.margen_bruto);
 
       return {
         ...line,

@@ -334,9 +334,10 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
         codMercado: line.cod_mercado || line.pais,
         valuesByDate: new Map<string, number>(),
       };
+      const marginRate = line.importe !== 0 ? line.margen_bruto / line.importe : 0;
 
       line.dias.forEach((day) => {
-        const value = isCogs ? day.importe - day.margen : day.importe;
+        const value = isCogs ? day.importe * (1 - marginRate) : day.importe;
         row.valuesByDate.set(day.fecha, (row.valuesByDate.get(day.fecha) || 0) + value);
       });
 
