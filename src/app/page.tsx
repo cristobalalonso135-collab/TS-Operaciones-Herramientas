@@ -336,7 +336,13 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
       };
       const marginRate = line.importe !== 0 ? line.margen_bruto / line.importe : 0;
 
+      if (line.importe_is_blank) {
+        if (!existing) rowsByKey.set(key, row);
+        return;
+      }
+
       line.dias.forEach((day) => {
+        if (!day.is_working && day.importe === 0) return;
         const value = isCogs ? day.importe * (1 - marginRate) : day.importe;
         row.valuesByDate.set(day.fecha, (row.valuesByDate.get(day.fecha) || 0) + value);
       });
@@ -352,7 +358,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
       row.nombre,
       row.zona,
       row.codMercado,
-      ...allDates.map((date) => row.valuesByDate.get(date) || null),
+      ...allDates.map((date) => row.valuesByDate.has(date) ? row.valuesByDate.get(date) : null),
     ]),
   ];
 }

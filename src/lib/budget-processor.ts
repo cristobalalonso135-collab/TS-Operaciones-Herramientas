@@ -12,6 +12,7 @@ export interface BudgetLineInput {
   importe: number;
   margen_bruto: number;
   pct_margen: number;
+  importe_is_blank: boolean;
 }
 
 export interface BudgetDayValue {
@@ -90,6 +91,10 @@ function parseExcelNumber(value: any): number {
     .replace(',', '.');
 
   return Number(cleaned) || 0;
+}
+
+function isBlankExcelCell(value: any): boolean {
+  return value === null || value === undefined || String(value).trim() === '';
 }
 
 function roundMoney(value: number): number {
@@ -652,8 +657,9 @@ export function parseExcelData(rows: any[][]): BudgetLineInput[] {
 
   const parsed = dataRows
     .map((row) => {
+      const importeIsBlank = isBlankExcelCell(row[colMap.importe]);
       const importe = parseExcelNumber(row[colMap.importe]);
-      if (!importe || isNaN(importe)) return null;
+      if (!importeIsBlank && isNaN(importe)) return null;
 
       const mesFiscal = normalizeFiscalMonth(String(row[colMap.mes] || ''));
       if (!mesFiscal || !FISCAL_TO_CALENDAR[mesFiscal]) return null;
@@ -670,6 +676,7 @@ export function parseExcelData(rows: any[][]): BudgetLineInput[] {
         importe,
         margen_bruto: parseExcelNumber(row[colMap.margen]),
         pct_margen: parseExcelNumber(row[colMap.pct]),
+        importe_is_blank: importeIsBlank,
       };
     })
     .filter((line): line is BudgetLineInput => line !== null);
