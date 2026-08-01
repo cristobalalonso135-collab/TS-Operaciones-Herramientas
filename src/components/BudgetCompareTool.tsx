@@ -8,9 +8,10 @@ type SourceKind = 'budget' | 'facturacion';
 type StatusFilter = 'Todos' | CompareStatus;
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
-type SortKey = 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
+type SortKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
 type CompareView = 'tabla' | 'barras' | 'lineas';
-type ChartGroupKey = 'total' | 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona';
+type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
+type ComparatorTab = 'analisis' | 'reglas';
 
 interface ParsedLine {
   monthKey: string;
@@ -27,6 +28,8 @@ interface CompareRow {
   monthKey: string;
   monthLabel: string;
   area: string;
+  responsable: string;
+  subresponsable: string;
   vertical: string;
   medio: string;
   region: string;
@@ -275,6 +278,30 @@ function findArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
   return deriveBusinessArea(line);
 }
 
+function findResponsable(area: string, line: Pick<ParsedLine, 'region' | 'zona'>): string {
+  const normalizedArea = normalizeText(area);
+  const country = normalizeCountry(line.region, line.zona);
+
+  if (normalizedArea === 'pro clubs') return 'Pablo Domeque';
+
+  if (normalizedArea === 'grassroots') {
+    if (country === 'espana' || country === 'portugal') return 'Santi Navarro';
+    if (country === 'italia') return 'Francesco Nunziato';
+    if (country === 'francia') return 'Maxime Servi';
+    return 'Pendiente';
+  }
+
+  if (normalizedArea === 'b2b') {
+    return country === 'francia' ? 'Maxime Servi' : 'Santi Navarro';
+  }
+
+  return 'Pendiente';
+}
+
+function findSubresponsable(): string {
+  return 'Pendiente';
+}
+
 function formatCurrency(value: number): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
@@ -297,6 +324,8 @@ function getChartGroup(row: CompareRow, groupBy: ChartGroupKey): { label: string
   if (groupBy === 'total') return { label: 'Total selección', order: 0 };
   if (groupBy === 'month') return { label: row.monthLabel, order: MONTH_ORDER.get(row.monthLabel) ?? 99 };
   if (groupBy === 'area') return { label: row.area || 'Sin área', order: 0 };
+  if (groupBy === 'responsable') return { label: row.responsable || 'Sin responsable', order: 0 };
+  if (groupBy === 'subresponsable') return { label: row.subresponsable || 'Sin subresponsable', order: 0 };
   if (groupBy === 'vertical') return { label: row.vertical || 'Sin vertical', order: 0 };
   if (groupBy === 'medio') return { label: row.medio || 'Sin medio', order: 0 };
   if (groupBy === 'region') return { label: row.region || 'Sin región', order: 0 };
@@ -347,7 +376,7 @@ function linePoint(row: ChartRow, index: number, rows: ChartRow[], getter: (row:
 }
 
 function anomalyBaseKey(row: CompareRow): string {
-  return [row.area, row.vertical, row.medio, row.region, row.zona].map(normalizeText).join('|');
+  return [row.area, row.responsable, row.subresponsable, row.vertical, row.medio, row.region, row.zona].map(normalizeText).join('|');
 }
 
 function anomalyLabel(row: CompareRow): string {
@@ -463,11 +492,14 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [error, setError] = useState<string | null>(null);
   const [absThreshold, setAbsThreshold] = useState(10000);
   const [pctThreshold, setPctThreshold] = useState(30);
+  const [activeTab, setActiveTab] = useState<ComparatorTab>('analisis');
   const [activeView, setActiveView] = useState<CompareView>('tabla');
   const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
   const [filters, setFilters] = useState({
     month: 'Todos',
     area: 'Todos',
+    responsable: 'Todos',
+    subresponsable: 'Todos',
     vertical: 'Todos',
     medio: 'Todos',
     region: 'Todos',
@@ -498,6 +530,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     const ensureRow = (line: ParsedLine): CompareRow => {
       const area = findArea(line);
       const comparableLine = normalizeLineForComparison(line, area);
+      const responsable = findResponsable(area, comparableLine);
+      const subresponsable = findSubresponsable();
       const key = rowKey(comparableLine);
       const existing = grouped.get(key);
       if (existing) return existing;
@@ -507,6 +541,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         monthKey: comparableLine.monthKey,
         monthLabel: comparableLine.monthLabel,
         area,
+        responsable,
+        subresponsable,
         vertical: comparableLine.vertical,
         medio: comparableLine.medio,
         region: comparableLine.region,
@@ -557,6 +593,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     const filtered = comparisonRows.filter((row) => (
       (filters.month === 'Todos' || row.monthLabel === filters.month) &&
       (filters.area === 'Todos' || row.area === filters.area) &&
+      (filters.responsable === 'Todos' || row.responsable === filters.responsable) &&
+      (filters.subresponsable === 'Todos' || row.subresponsable === filters.subresponsable) &&
       (filters.vertical === 'Todos' || row.vertical === filters.vertical) &&
       (filters.medio === 'Todos' || row.medio === filters.medio) &&
       (filters.region === 'Todos' || row.region === filters.region) &&
@@ -567,6 +605,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     const getValue = (row: CompareRow): string | number => {
       if (sort.key === 'month') return MONTH_ORDER.get(row.monthLabel) ?? 99;
       if (sort.key === 'area') return row.area;
+      if (sort.key === 'responsable') return row.responsable;
+      if (sort.key === 'subresponsable') return row.subresponsable;
       if (sort.key === 'vertical') return row.vertical;
       if (sort.key === 'medio') return row.medio;
       if (sort.key === 'region') return row.region;
@@ -641,6 +681,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const options = useMemo(() => ({
     month: Array.from(new Set(comparisonRows.map((row) => row.monthLabel))).sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99)),
     area: uniqueOptions(comparisonRows, (row) => row.area),
+    responsable: uniqueOptions(comparisonRows, (row) => row.responsable),
+    subresponsable: uniqueOptions(comparisonRows, (row) => row.subresponsable),
     vertical: uniqueOptions(comparisonRows, (row) => row.vertical),
     medio: uniqueOptions(comparisonRows, (row) => row.medio),
     region: uniqueOptions(comparisonRows, (row) => row.region),
@@ -660,10 +702,12 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   };
 
   const handleExport = () => {
-    const header = ['Mes', 'Área', 'Vertical', 'Medio de Venta', 'Región', 'Zona', 'Facturación FY 25/26', 'Budget FY 26/27', 'Diferencia', 'Variación %', 'Estado'];
+    const header = ['Mes', 'Área', 'Responsable', 'Subresponsable', 'Vertical', 'Medio de Venta', 'Región', 'Zona', 'Facturación FY 25/26', 'Budget FY 26/27', 'Diferencia', 'Variación %', 'Estado'];
     const rows = filteredRows.map((row) => [
       row.monthLabel,
       row.area,
+      row.responsable,
+      row.subresponsable,
       row.vertical,
       row.medio,
       row.region,
@@ -701,28 +745,65 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
       </div>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
-        <h2 className="mt-1 text-2xl font-semibold tracking-tight">Comparador budget</h2>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
-        </p>
-        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
-          <p className="font-semibold text-[var(--text-primary)]">Lógica completa de áreas</p>
-          <p className="mt-1">
-            Core: Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming.
-          </p>
-          <p className="mt-1">
-            Grassroots: incluye siempre las verticales Real Federación Andaluza de Fútbol y The Pitch. Además, dentro del core, incluye los medios de venta Equipaciones, Equipaciones FEDS, Equipaciones Web B2B y Equipaciones Web B2C.
-          </p>
-          <p className="mt-1">
-            B2B: solo se clasifica dentro del core y únicamente para los medios de venta Academy, B2B, B2B Clearance y B2B Reps.
-          </p>
-          <p className="mt-1">
-            Pro Clubs: incluye todos los verticales que no forman parte del core, salvo los verticales definidos directamente como Grassroots. También incluye, dentro del core, el medio de venta Equipaciones PRO. Si aparece una combinación del core que no sea Grassroots, B2B ni Equipaciones PRO, se marca como Sin área para revisarla.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
+            <h2 className="mt-1 text-2xl font-semibold tracking-tight">Comparador budget</h2>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
+            </p>
+          </div>
+          <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab('analisis')}
+              className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeTab === 'analisis' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+            >
+              Análisis
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('reglas')}
+              className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeTab === 'reglas' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+            >
+              Reglas
+            </button>
+          </div>
         </div>
       </section>
 
+      {activeTab === 'reglas' && (
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Áreas</p>
+            <h3 className="mt-1 text-lg font-semibold">Clasificación por área</h3>
+            <div className="mt-4 space-y-3 text-sm text-[var(--text-secondary)]">
+              <p><span className="font-semibold text-[var(--text-primary)]">Core:</span> Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots:</span> incluye siempre las verticales Real Federación Andaluza de Fútbol y The Pitch. Además, dentro del core, incluye los medios Equipaciones, Equipaciones FEDS, Equipaciones Web B2B y Equipaciones Web B2C.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">B2B:</span> solo se clasifica dentro del core y únicamente para los medios Academy, B2B, B2B Clearance y B2B Reps.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs:</span> incluye todos los verticales que no forman parte del core, salvo los verticales definidos directamente como Grassroots. También incluye, dentro del core, el medio Equipaciones PRO.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Sin área:</span> cualquier combinación del core que no sea Grassroots, B2B ni Equipaciones PRO queda marcada como Sin área para revisarla.</p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Responsables</p>
+            <h3 className="mt-1 text-lg font-semibold">Asignación de responsable</h3>
+            <div className="mt-4 space-y-3 text-sm text-[var(--text-secondary)]">
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs:</span> Pablo Domeque.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Iberia:</span> Santi Navarro cuando región o zona sean España o Portugal.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia:</span> Francesco Nunziato cuando región o zona sea Italia.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Francia:</span> Maxime Servi cuando región o zona sea Francia.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">B2B Francia:</span> Maxime Servi.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">B2B no Francia:</span> Santi Navarro.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Subresponsable:</span> pendiente de definir.</p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'analisis' && (
+      <>
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
@@ -812,9 +893,11 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               </p>
             </div>
 
-            <div className="mb-4 grid gap-3 md:grid-cols-7">
+            <div className="mb-4 grid gap-3 md:grid-cols-3 xl:grid-cols-9">
               <FilterSelect label="Mes" value={filters.month} options={options.month} onChange={(value) => updateFilter('month', value)} />
               <FilterSelect label="Área" value={filters.area} options={options.area} onChange={(value) => updateFilter('area', value)} />
+              <FilterSelect label="Responsable" value={filters.responsable} options={options.responsable} onChange={(value) => updateFilter('responsable', value)} />
+              <FilterSelect label="Subresponsable" value={filters.subresponsable} options={options.subresponsable} onChange={(value) => updateFilter('subresponsable', value)} />
               <FilterSelect label="Vertical" value={filters.vertical} options={options.vertical} onChange={(value) => updateFilter('vertical', value)} />
               <FilterSelect label="Medio" value={filters.medio} options={options.medio} onChange={(value) => updateFilter('medio', value)} />
               <FilterSelect label="Región" value={filters.region} options={options.region} onChange={(value) => updateFilter('region', value)} />
@@ -834,6 +917,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                     >
                       <option value="month">Mes</option>
                       <option value="area">Área</option>
+                      <option value="responsable">Responsable</option>
+                      <option value="subresponsable">Subresponsable</option>
                       <option value="vertical">Vertical</option>
                       <option value="medio">Medio</option>
                       <option value="region">Región</option>
@@ -875,11 +960,13 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
             {activeView === 'tabla' && (
               <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
-                <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-xs">
+                <table className="w-full min-w-[1480px] border-separate border-spacing-0 text-xs">
                   <thead>
                     <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                       <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Mes" sortKey="month" sort={sort} onSort={updateSort} /></th>
                       <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Área" sortKey="area" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Responsable" sortKey="responsable" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Subresponsable" sortKey="subresponsable" sort={sort} onSort={updateSort} /></th>
                       <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Vertical" sortKey="vertical" sort={sort} onSort={updateSort} /></th>
                       <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Medio" sortKey="medio" sort={sort} onSort={updateSort} /></th>
                       <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Región" sortKey="region" sort={sort} onSort={updateSort} /></th>
@@ -896,6 +983,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                       <tr key={row.key} className="hover:bg-[var(--bg-primary)]">
                         <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.monthLabel}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.area}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.responsable}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.subresponsable}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.vertical}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.medio}</td>
                         <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.region}</td>
@@ -1066,6 +1155,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
           <p className="mt-3 text-sm font-medium">Carga los dos CSV para ver la comparativa.</p>
         </section>
+      )}
+      </>
       )}
     </div>
   );
