@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Download, FileSpreadsheet } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, BarChart3, Download, FileSpreadsheet } from 'lucide-react';
 
 type SourceKind = 'budget' | 'facturacion';
 type StatusFilter = 'Todos' | CompareStatus;
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
+type CompareView = 'tabla' | 'grafico';
+type ChartGroupKey = 'total' | 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona';
 
 interface ParsedLine {
   monthKey: string;
@@ -36,6 +38,15 @@ interface CompareRow {
   diff: number;
   pct: number | null;
   status: CompareStatus;
+}
+
+interface ChartRow {
+  label: string;
+  order: number;
+  facturacion: number;
+  budget: number;
+  diff: number;
+  pct: number | null;
 }
 
 interface BudgetCompareToolProps {
@@ -266,6 +277,44 @@ function uniqueOptions(rows: CompareRow[], getter: (row: CompareRow) => string):
   return Array.from(new Set(rows.map(getter).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es'));
 }
 
+function getChartGroup(row: CompareRow, groupBy: ChartGroupKey): { label: string; order: number } {
+  if (groupBy === 'total') return { label: 'Total selección', order: 0 };
+  if (groupBy === 'month') return { label: row.monthLabel, order: MONTH_ORDER.get(row.monthLabel) ?? 99 };
+  if (groupBy === 'area') return { label: row.area || 'Sin área', order: 0 };
+  if (groupBy === 'vertical') return { label: row.vertical || 'Sin vertical', order: 0 };
+  if (groupBy === 'medio') return { label: row.medio || 'Sin medio', order: 0 };
+  if (groupBy === 'region') return { label: row.region || 'Sin región', order: 0 };
+  return { label: row.zona || 'Sin zona', order: 0 };
+}
+
+function buildChartRows(rows: CompareRow[], groupBy: ChartGroupKey): ChartRow[] {
+  const grouped = new Map<string, ChartRow>();
+
+  rows.forEach((row) => {
+    const group = getChartGroup(row, groupBy);
+    const existing = grouped.get(group.label) || {
+      label: group.label,
+      order: group.order,
+      facturacion: 0,
+      budget: 0,
+      diff: 0,
+      pct: null,
+    };
+
+    existing.facturacion += row.facturacion;
+    existing.budget += row.budget;
+    grouped.set(group.label, existing);
+  });
+
+  return Array.from(grouped.values())
+    .map((row) => {
+      const diff = row.budget - row.facturacion;
+      const pct = row.facturacion !== 0 ? (diff / Math.abs(row.facturacion)) * 100 : null;
+      return { ...row, diff, pct };
+    })
+    .sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label, 'es'));
+}
+
 interface FilterSelectProps {
   label: string;
   value: string;
@@ -327,6 +376,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [error, setError] = useState<string | null>(null);
   const [absThreshold, setAbsThreshold] = useState(10000);
   const [pctThreshold, setPctThreshold] = useState(30);
+  const [activeView, setActiveView] = useState<CompareView>('tabla');
+  const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
   const [filters, setFilters] = useState({
     month: 'Todos',
     area: 'Todos',
@@ -461,6 +512,23 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     return { facturacion, budget, diff, pct, reviewCount, missingAreaCount };
   }, [filteredRows]);
 
+  const chartRows = useMemo(() => buildChartRows(filteredRows, chartGroupBy), [chartGroupBy, filteredRows]);
+  const chartMax = useMemo(() => Math.max(1, ...chartRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [chartRows]);
+  const chartInsight = useMemo(() => {
+    const rowsWithPct = chartRows.filter((row) => row.pct !== null && Number.isFinite(row.pct));
+    if (rowsWithPct.length < 2) return 'Selecciona más de un grupo para valorar si el crecimiento es homogéneo.';
+
+    const average = rowsWithPct.reduce((sum, row) => sum + (row.pct || 0), 0) / rowsWithPct.length;
+    const maxDeviation = rowsWithPct.reduce((max, row) => Math.max(max, Math.abs((row.pct || 0) - average)), 0);
+    const outliers = rowsWithPct.filter((row) => Math.abs((row.pct || 0) - average) >= Math.max(15, Math.abs(average) * 0.5));
+
+    if (outliers.length === 0) {
+      return `Crecimiento bastante homogéneo: media ${formatPercent(average)} y desviación máxima ${formatPercent(maxDeviation)}.`;
+    }
+
+    return `Revisa ${outliers.length} grupo${outliers.length === 1 ? '' : 's'} fuera de tendencia. Media ${formatPercent(average)}; mayor desviación ${formatPercent(maxDeviation)}.`;
+  }, [chartRows]);
+
   const options = useMemo(() => ({
     month: Array.from(new Set(comparisonRows.map((row) => row.monthLabel))).sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99)),
     area: uniqueOptions(comparisonRows, (row) => row.area),
@@ -529,9 +597,10 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
         </p>
-        <p className="mt-2 max-w-5xl text-xs leading-5 text-[var(--text-secondary)]">
-          Grassroots: Real Federación Andaluza de Fútbol, The Pitch y equipaciones del core. B2B: Academy, B2B, B2B Clearance y B2B Reps del core. Pro Clubs: el resto de verticales y Equipaciones PRO del core.
-        </p>
+        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)]">
+          <span className="font-semibold text-[var(--text-primary)]">Lógica de áreas: </span>
+          Grassroots = Real Federación Andaluza de Fútbol, The Pitch y equipaciones del core. B2B = Academy, B2B, B2B Clearance y B2B Reps del core. Pro Clubs = el resto de verticales y Equipaciones PRO del core.
+        </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -590,6 +659,29 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveView('tabla')}
+                  className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'tabla' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                >
+                  Tabla
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('grafico')}
+                  className={`flex items-center gap-1 rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'grafico' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                >
+                  <BarChart3 className="h-3.5 w-3.5" />
+                  Gráfico
+                </button>
+              </div>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Los filtros se combinan entre sí y recalculan totales, tabla y gráfico.
+              </p>
+            </div>
+
             <div className="mb-4 grid gap-3 md:grid-cols-7">
               <FilterSelect label="Mes" value={filters.month} options={options.month} onChange={(value) => updateFilter('month', value)} />
               <FilterSelect label="Área" value={filters.area} options={options.area} onChange={(value) => updateFilter('area', value)} />
@@ -602,6 +694,24 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <div className="flex flex-wrap gap-3">
+                {activeView === 'grafico' && (
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Comparar por</span>
+                    <select
+                      value={chartGroupBy}
+                      onChange={(event) => setChartGroupBy(event.target.value as ChartGroupKey)}
+                      className="h-10 w-44 rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
+                    >
+                      <option value="month">Mes</option>
+                      <option value="area">Área</option>
+                      <option value="vertical">Vertical</option>
+                      <option value="medio">Medio</option>
+                      <option value="region">Región</option>
+                      <option value="zona">Zona</option>
+                      <option value="total">Todo seleccionado</option>
+                    </select>
+                  </label>
+                )}
                 <label className="space-y-1">
                   <span className="text-xs font-medium text-[var(--text-secondary)]">Umbral diferencia €</span>
                   <input
@@ -621,16 +731,19 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   />
                 </label>
               </div>
-              <button
-                type="button"
-                onClick={handleExport}
-                className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs font-medium transition hover:bg-[var(--bg-soft)]"
-              >
-                <Download className="h-4 w-4" />
-                Exportar vista
-              </button>
+              {activeView === 'tabla' && (
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs font-medium transition hover:bg-[var(--bg-soft)]"
+                >
+                  <Download className="h-4 w-4" />
+                  Exportar vista
+                </button>
+              )}
             </div>
 
+            {activeView === 'tabla' ? (
             <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
               <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-xs">
                 <thead>
@@ -677,6 +790,57 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                 </tbody>
               </table>
             </div>
+            ) : (
+              <div className="rounded-md border border-[var(--border)] bg-white p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Budget vs facturación</p>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">{chartInsight}</p>
+                  </div>
+                  <div className="flex gap-4 text-xs text-[var(--text-secondary)]">
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#111827]" /> Budget</span>
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#9ca3af]" /> Facturación</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {chartRows.map((row) => {
+                    const facturacionWidth = Math.max(2, Math.min(100, (Math.abs(row.facturacion) / chartMax) * 100));
+                    const budgetWidth = Math.max(2, Math.min(100, (Math.abs(row.budget) / chartMax) * 100));
+                    const isPositive = (row.pct ?? 0) >= 0;
+
+                    return (
+                      <div key={row.label} className="grid gap-2 rounded-md border border-[var(--border)] p-3 lg:grid-cols-[220px_1fr_130px] lg:items-center">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium" title={row.label}>{row.label}</p>
+                          <p className={`mt-0.5 text-xs font-medium ${isPositive ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                            {formatPercent(row.pct)}
+                          </p>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="w-20 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Budget</span>
+                            <div className="h-3 flex-1 rounded-sm bg-[var(--bg-soft)]">
+                              <div className="h-3 rounded-sm bg-[#111827]" style={{ width: `${budgetWidth}%` }} />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-20 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">Fact.</span>
+                            <div className="h-3 flex-1 rounded-sm bg-[var(--bg-soft)]">
+                              <div className="h-3 rounded-sm bg-[#9ca3af]" style={{ width: `${facturacionWidth}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right font-mono text-xs">
+                          <p>{formatCurrency(row.budget)}</p>
+                          <p className="text-[var(--text-secondary)]">{formatCurrency(row.facturacion)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
         </>
       )}
