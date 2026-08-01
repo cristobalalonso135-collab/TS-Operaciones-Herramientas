@@ -9,7 +9,7 @@ type StatusFilter = 'Todos' | CompareStatus;
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
-type CompareView = 'tabla' | 'barras' | 'lineas' | 'operaciones';
+type CompareView = 'tabla' | 'barras' | 'lineas' | 'operaciones' | 'pendientes';
 type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
 type ComparatorTab = 'analisis' | 'reglas';
 
@@ -80,6 +80,7 @@ interface QualityOperation {
   toMonth: string;
   amount: number;
   estimatedGain: number;
+  resultingScore: number;
   fromPct: number | null;
   toPct: number | null;
   targetPct: number | null;
@@ -91,6 +92,22 @@ interface QualitySummary {
   editableRows: number;
   suggestions: QualitySuggestion[];
   operations: QualityOperation[];
+}
+
+interface ClassificationIssue {
+  key: string;
+  issues: string[];
+  area: string;
+  responsable: string;
+  subresponsable: string;
+  vertical: string;
+  medio: string;
+  region: string;
+  zona: string;
+  facturacion: number;
+  budget: number;
+  months: string[];
+  rows: number;
 }
 
 interface BudgetCompareToolProps {
@@ -581,7 +598,6 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
       if (amount < 1000) return;
 
       const currentImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
-      const estimatedGain = Math.min(1.5, (currentImpact / Math.max(1, totalWeight || currentImpact)) * 2);
 
       operations.push({
         key: `${key}|${donor.row.monthKey}|${receiver.row.monthKey}`,
@@ -589,7 +605,8 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
         fromMonth: donor.row.monthLabel,
         toMonth: receiver.row.monthLabel,
         amount,
-        estimatedGain,
+        estimatedGain: currentImpact,
+        resultingScore: 0,
         fromPct: donor.monthPct,
         toPct: receiver.monthPct,
         targetPct: groupPct,
@@ -601,13 +618,27 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
 
   const averageDeviation = totalWeight > 0 ? weightedDeviation / totalWeight : 0;
   const score = Math.max(0, Math.min(10, 10 - (averageDeviation / 18)));
+  let runningScore = score;
+  const rankedOperations = operations
+    .sort((a, b) => b.estimatedGain - a.estimatedGain)
+    .slice(0, 8)
+    .map((operation) => {
+      const rawGain = totalWeight > 0 ? operation.estimatedGain / totalWeight / 18 : 0;
+      const estimatedGain = Math.min(Math.max(0, 10 - runningScore), rawGain);
+      runningScore = Math.min(10, runningScore + estimatedGain);
+      return {
+        ...operation,
+        estimatedGain,
+        resultingScore: runningScore,
+      };
+    });
 
   return {
     score,
     averageDeviation,
     editableRows,
     suggestions: suggestions.sort((a, b) => b.impact - a.impact).slice(0, 8),
-    operations: operations.sort((a, b) => b.estimatedGain - a.estimatedGain).slice(0, 8),
+    operations: rankedOperations,
   };
 }
 
@@ -827,6 +858,62 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
   const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
+  const classificationIssues = useMemo<ClassificationIssue[]>(() => {
+    const grouped = new Map<string, ClassificationIssue>();
+
+    filteredRows.forEach((row) => {
+      const issues = [
+        row.area === 'Sin área' ? 'Sin área' : '',
+        row.responsable === 'Pendiente' ? 'Sin responsable' : '',
+        row.subresponsable === 'Pendiente' ? 'Sin subresponsable' : '',
+      ].filter(Boolean);
+
+      if (issues.length === 0) return;
+
+      const key = [
+        issues.join('|'),
+        row.area,
+        row.responsable,
+        row.subresponsable,
+        row.vertical,
+        row.medio,
+        row.region,
+        row.zona,
+      ].join('::');
+      const existing = grouped.get(key);
+
+      if (existing) {
+        existing.facturacion += row.facturacion;
+        existing.budget += row.budget;
+        existing.rows += 1;
+        if (!existing.months.includes(row.monthLabel)) existing.months.push(row.monthLabel);
+        return;
+      }
+
+      grouped.set(key, {
+        key,
+        issues,
+        area: row.area,
+        responsable: row.responsable,
+        subresponsable: row.subresponsable,
+        vertical: row.vertical,
+        medio: row.medio,
+        region: row.region,
+        zona: row.zona,
+        facturacion: row.facturacion,
+        budget: row.budget,
+        months: [row.monthLabel],
+        rows: 1,
+      });
+    });
+
+    return Array.from(grouped.values())
+      .map((issue) => ({
+        ...issue,
+        months: issue.months.sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99)),
+      }))
+      .sort((a, b) => Math.max(Math.abs(b.facturacion), Math.abs(b.budget)) - Math.max(Math.abs(a.facturacion), Math.abs(a.budget)));
+  }, [filteredRows]);
   const chartInsight = useMemo(() => {
     const rowsWithPct = chartRows.filter((row) => row.pct !== null && Number.isFinite(row.pct));
     if (rowsWithPct.length < 2) return 'Selecciona más de un grupo para valorar si el crecimiento es homogéneo.';
@@ -1051,18 +1138,30 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                 {totals.reviewCount.toLocaleString('de-DE')}
               </p>
             </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            <button
+              type="button"
+              onClick={() => setActiveView('pendientes')}
+              className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:border-[var(--accent)] hover:bg-[var(--bg-soft)]"
+            >
               <p className="text-xs text-[var(--text-secondary)]">Sin área</p>
               <p className="mt-1 text-xl font-semibold text-[var(--warning)]">{totals.missingAreaCount.toLocaleString('de-DE')}</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('pendientes')}
+              className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:border-[var(--accent)] hover:bg-[var(--bg-soft)]"
+            >
               <p className="text-xs text-[var(--text-secondary)]">Sin responsable</p>
               <p className="mt-1 text-xl font-semibold text-[var(--warning)]">{totals.missingResponsableCount.toLocaleString('de-DE')}</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('pendientes')}
+              className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:border-[var(--accent)] hover:bg-[var(--bg-soft)]"
+            >
               <p className="text-xs text-[var(--text-secondary)]">Sin subresp.</p>
               <p className="mt-1 text-xl font-semibold text-[var(--warning)]">{totals.missingSubresponsableCount.toLocaleString('de-DE')}</p>
-            </div>
+            </button>
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -1141,10 +1240,17 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   >
                     Operaciones
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('pendientes')}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'pendientes' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                  >
+                    Pendientes
+                  </button>
                 </div>
               </div>
               <p className="text-xs text-[var(--text-secondary)]">
-                Los filtros se combinan entre sí y recalculan totales, tabla, barras, líneas y operaciones.
+                Los filtros se combinan entre sí y recalculan totales, tabla, barras, líneas, operaciones y pendientes.
               </p>
             </div>
 
@@ -1425,7 +1531,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                             <p className="mt-1 text-xs text-[var(--text-secondary)]">{operation.groupLabel}</p>
                           </div>
                           <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">
-                            +{operation.estimatedGain.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} nota
+                            +{operation.estimatedGain.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} · nota {operation.resultingScore.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                           </p>
                         </div>
                         <p className="mt-3 text-sm">
@@ -1436,6 +1542,66 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                         </p>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeView === 'pendientes' && (
+              <div className="rounded-md border border-[var(--border)] bg-white">
+                <div className="border-b border-[var(--border)] p-4">
+                  <p className="text-sm font-semibold">Pendientes de clasificación</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    Muestra las combinaciones que no han recibido área, responsable o subresponsable con los filtros actuales.
+                  </p>
+                </div>
+
+                {classificationIssues.length === 0 ? (
+                  <p className="m-4 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
+                    No hay pendientes de clasificación con los filtros actuales.
+                  </p>
+                ) : (
+                  <div className="max-h-[520px] overflow-auto">
+                    <table className="w-full min-w-[1180px] border-collapse text-sm">
+                      <thead className="sticky top-0 bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
+                        <tr>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Pendiente</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Área</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Responsable</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Subresponsable</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Vertical</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Medio</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Región</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Zona</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Meses</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {classificationIssues.map((issue) => (
+                          <tr key={issue.key} className="border-b border-[var(--border)]">
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {issue.issues.map((name) => (
+                                  <span key={name} className="rounded bg-[var(--danger-soft)] px-2 py-1 text-xs font-medium text-[var(--warning)]">{name}</span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">{issue.area || '-'}</td>
+                            <td className="px-3 py-2">{issue.responsable || '-'}</td>
+                            <td className="px-3 py-2">{issue.subresponsable || '-'}</td>
+                            <td className="px-3 py-2 font-medium">{issue.vertical || '-'}</td>
+                            <td className="px-3 py-2">{issue.medio || '-'}</td>
+                            <td className="px-3 py-2">{issue.region || '-'}</td>
+                            <td className="px-3 py-2">{issue.zona || '-'}</td>
+                            <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.facturacion)}</td>
+                            <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.budget)}</td>
+                            <td className="px-3 py-2 text-xs text-[var(--text-secondary)]">{issue.months.join(', ')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
