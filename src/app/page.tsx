@@ -5,6 +5,7 @@ import FileUpload from '@/components/FileUpload';
 import BudgetTable from '@/components/BudgetTable';
 import NegativosForm from '@/components/NegativosForm';
 import WeeklyWeightsForm from '@/components/WeeklyWeightsForm';
+import BudgetCompareTool from '@/components/BudgetCompareTool';
 import {
   parseExcelData,
   processFullBudget,
@@ -20,7 +21,7 @@ import {
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
-import { ArrowLeft, Calculator, Download, FileSpreadsheet, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
+import { ArrowLeft, BarChart3, Calculator, Download, FileSpreadsheet, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
 
 const ALL_MONTHS = 'ALL';
 
@@ -364,7 +365,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'budget'>('tools');
+  const [view, setView] = useState<'tools' | 'budget' | 'budgetCompare'>('tools');
   const [currentStep, setCurrentStep] = useState(0);
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
@@ -572,6 +573,10 @@ export default function Home() {
     window.alert('Recuerda sustituir los valores de las tiendas de Pro Clubs (mes siguiente) y Francia online (hasta final de FY).');
   };
 
+  if (view === 'budgetCompare') {
+    return <BudgetCompareTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     return (
       <div className="mx-auto max-w-5xl space-y-7">
@@ -592,6 +597,19 @@ export default function Home() {
               <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
             </div>
             <h3 className="text-base font-semibold">Budget</h3>
+          </button>
+
+          <button
+            onClick={() => setView('budgetCompare')}
+            className="group min-h-[152px] rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
+          >
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-[var(--warning)]">
+                <BarChart3 className="h-5 w-5" />
+              </div>
+              <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
+            </div>
+            <h3 className="text-base font-semibold">Comparador budget</h3>
           </button>
 
           {['Forecast', 'Pedidos', 'Stock'].map((tool) => (
