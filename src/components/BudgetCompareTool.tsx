@@ -368,13 +368,13 @@ function findSubresponsable(area: string, line: Pick<ParsedLine, 'vertical' | 'm
   }
 
   if (normalizedArea === 'grassroots') {
-    if (country === 'francia') return 'Maxime';
+    if (!zona) return 'Pendiente';
+    if (zona.includes('francia')) return 'Maxime';
     if (vertical === 'the pitch') return 'Stefano';
-    if (country === 'portugal' || zona.includes('norte')) return 'Juanjo';
+    if (zona === 'portugal' || zona.includes('norte')) return 'Juanjo';
     if (zona.includes('levante')) return 'Samu';
     if (zona.includes('centro-sur') || zona.includes('centro sur')) return 'Tornos';
-    if (country === 'italia') return 'Francesco';
-    if (country === 'espana') return 'Juanjo';
+    if (zona.includes('italia')) return 'Francesco';
   }
 
   if (normalizedArea === 'b2b') {
@@ -1103,7 +1103,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Norte o Portugal:</span> Juanjo.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots The Pitch:</span> Stefano.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia restante:</span> Francesco.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots/B2B Francia:</span> Maxime.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Francia y B2B Francia:</span> Maxime.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots sin zona:</span> queda pendiente de responsable y subresponsable.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">B2B no Francia:</span> Marta.</p>
             </div>
           </div>
