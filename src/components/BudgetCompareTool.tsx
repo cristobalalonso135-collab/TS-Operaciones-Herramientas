@@ -287,18 +287,46 @@ function findResponsable(area: string, line: Pick<ParsedLine, 'region' | 'zona'>
   if (normalizedArea === 'grassroots') {
     if (country === 'espana' || country === 'portugal') return 'Santi Navarro';
     if (country === 'italia') return 'Francesco Nunziato';
-    if (country === 'francia') return 'Maxime Servi';
+    if (country === 'francia') return 'Maxime';
     return 'Pendiente';
   }
 
   if (normalizedArea === 'b2b') {
-    return country === 'francia' ? 'Maxime Servi' : 'Santi Navarro';
+    return country === 'francia' ? 'Maxime' : 'Santi Navarro';
   }
 
   return 'Pendiente';
 }
 
-function findSubresponsable(): string {
+function findSubresponsable(area: string, line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>): string {
+  const normalizedArea = normalizeText(area);
+  const vertical = normalizeText(line.vertical);
+  const medio = normalizeText(line.medio);
+  const zona = normalizeText(line.zona);
+  const country = normalizeCountry(line.region, line.zona);
+
+  if (normalizedArea === 'pro clubs') {
+    if (vertical.includes('mallorca') || vertical.includes('deportivo')) return 'Arturo';
+    if (vertical.includes('kings league') || vertical.includes('huesca') || vertical.includes('nastic')) return 'Carlos';
+    if (vertical.includes('real zaragoza')) return 'Pablo';
+    if (medio === 'equipaciones pro') return 'David';
+    return 'Pablo';
+  }
+
+  if (normalizedArea === 'grassroots') {
+    if (country === 'francia') return 'Maxime';
+    if (vertical === 'the pitch') return 'Stefano';
+    if (country === 'portugal' || zona.includes('norte')) return 'Juanjo';
+    if (zona.includes('levante')) return 'Samu';
+    if (zona.includes('centro-sur') || zona.includes('centro sur')) return 'Tornos';
+    if (country === 'italia') return 'Francesco';
+    if (country === 'espana') return 'Juanjo';
+  }
+
+  if (normalizedArea === 'b2b') {
+    return country === 'francia' ? 'Maxime' : 'Marta';
+  }
+
   return 'Pendiente';
 }
 
@@ -531,7 +559,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
       const area = findArea(line);
       const comparableLine = normalizeLineForComparison(line, area);
       const responsable = findResponsable(area, comparableLine);
-      const subresponsable = findSubresponsable();
+      const subresponsable = findSubresponsable(area, comparableLine);
       const key = rowKey(comparableLine);
       const existing = grouped.get(key);
       if (existing) return existing;
@@ -764,9 +792,9 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             <button
               type="button"
               onClick={() => setActiveTab('reglas')}
-              className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeTab === 'reglas' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+              className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeTab === 'reglas' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] ring-1 ring-[var(--border)] hover:bg-[var(--bg-soft)]'}`}
             >
-              Reglas
+              Reglas y responsables
             </button>
           </div>
         </div>
@@ -793,10 +821,26 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs:</span> Pablo Domeque.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Iberia:</span> Santi Navarro cuando región o zona sean España o Portugal.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia:</span> Francesco Nunziato cuando región o zona sea Italia.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Francia:</span> Maxime Servi cuando región o zona sea Francia.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">B2B Francia:</span> Maxime Servi.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Francia:</span> Maxime cuando región o zona sea Francia.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">B2B Francia:</span> Maxime.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">B2B no Francia:</span> Santi Navarro.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Subresponsable:</span> pendiente de definir.</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm lg:col-span-2">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Subresponsables</p>
+            <h3 className="mt-1 text-lg font-semibold">Asignación de subresponsable</h3>
+            <div className="mt-4 grid gap-3 text-sm text-[var(--text-secondary)] md:grid-cols-2">
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs Mallorca o Deportivo:</span> Arturo.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs Kings League, Huesca o Nàstic:</span> Carlos.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs Real Zaragoza:</span> Pablo.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs Equipaciones PRO:</span> David.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Centro-Sur:</span> Tornos.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Levante:</span> Samu.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Norte o Portugal:</span> Juanjo.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots The Pitch:</span> Stefano.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia restante:</span> Francesco.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots/B2B Francia:</span> Maxime.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">B2B no Francia:</span> Marta.</p>
             </div>
           </div>
         </section>
