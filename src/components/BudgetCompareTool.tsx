@@ -20,20 +20,6 @@ interface ParsedLine {
   value: number;
 }
 
-interface AreaMapping {
-  area: string;
-  vertical: string;
-  medio: string;
-  pais: string;
-  zona: string;
-}
-
-interface AreaLookup {
-  exact: Map<string, string>;
-  wildcard: Map<string, string>;
-  simple: Map<string, string>;
-}
-
 interface CompareRow {
   key: string;
   monthKey: string;
@@ -81,6 +67,7 @@ const CORE_VERTICALS = new Set([
 ]);
 const GRASSROOTS_VERTICALS = new Set([
   'real federacion andaluza de futbol',
+  'the pitch',
 ]);
 const GRASSROOTS_MEDIOS = new Set([
   'equipaciones',
@@ -93,8 +80,9 @@ const B2B_MEDIOS = new Set([
   'b2b',
   'b2b clearance',
   'b2b reps',
-  'b2b res',
-  'b2b teams',
+]);
+const PRO_CLUBS_CORE_MEDIOS = new Set([
+  'equipaciones pro',
 ]);
 
 function normalizeText(value: unknown): string {
@@ -186,7 +174,8 @@ function deriveBusinessArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): strin
   if (!CORE_VERTICALS.has(vertical)) return 'Pro Clubs';
   if (GRASSROOTS_MEDIOS.has(medio)) return 'Grassroots';
   if (B2B_MEDIOS.has(medio)) return 'B2B';
-  return 'Pro Clubs';
+  if (PRO_CLUBS_CORE_MEDIOS.has(medio)) return 'Pro Clubs';
+  return 'Sin área';
 }
 
 function parseAmount(value: unknown): number {
@@ -201,38 +190,6 @@ function parseAmount(value: unknown): number {
     : raw.replace(',', '.');
 
   return Number(normalized) || 0;
-}
-
-function parseAreaMappings(rows: any[][]): AreaMapping[] {
-  if (!rows.length) return [];
-
-  const headerIndex = rows.findIndex((row) => {
-    const normalized = row.map(normalizeHeader);
-    return normalized.includes('area') && normalized.includes('vertical') && normalized.some((cell) => cell.includes('medio'));
-  });
-  const headers = (rows[headerIndex >= 0 ? headerIndex : 0] || []).map(normalizeHeader);
-  const colMap = {
-    area: findColumn(headers, ['area', 'área']),
-    vertical: findColumn(headers, ['vertical']),
-    medio: findColumn(headers, ['medio de venta', 'medio']),
-    pais: findColumn(headers, ['pais', 'país', 'region', 'región']),
-    zona: findColumn(headers, ['zona']),
-  };
-  const missing = Object.entries(colMap).filter(([, index]) => index < 0).map(([name]) => name);
-  if (missing.length > 0) {
-    throw new Error(`Faltan columnas en áreas: ${missing.join(', ')}`);
-  }
-
-  return rows.slice((headerIndex >= 0 ? headerIndex : 0) + 1)
-    .filter((row) => row.some((cell) => cell !== null && cell !== undefined && cell !== ''))
-    .map((row) => ({
-      area: String(row[colMap.area] ?? '').trim(),
-      vertical: String(row[colMap.vertical] ?? '').trim(),
-      medio: String(row[colMap.medio] ?? '').trim(),
-      pais: String(row[colMap.pais] ?? '').trim(),
-      zona: String(row[colMap.zona] ?? '').trim(),
-    }))
-    .filter((row) => row.area && row.vertical && row.medio);
 }
 
 function normalizeMonth(value: unknown): { key: string; label: string } {
@@ -292,70 +249,8 @@ function rowKey(line: Pick<ParsedLine, 'monthKey' | 'vertical' | 'medio' | 'regi
   ].map(normalizeText).join('|');
 }
 
-function areaKey(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>): string {
-  return [
-    line.vertical,
-    line.medio,
-    normalizeCountry(line.region, line.zona),
-    line.zona,
-  ].map(normalizeText).join('|');
-}
-
-function areaWildcardKey(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>): string {
-  return [
-    line.vertical,
-    line.medio,
-    normalizeCountry(line.region, line.zona),
-    '',
-  ].map(normalizeText).join('|');
-}
-
-function areaSimpleKey(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
-  return [
-    line.vertical,
-    line.medio,
-  ].map(normalizeText).join('|');
-}
-
-function createAreaLookup(mappings: AreaMapping[]): AreaLookup {
-  const lookup: AreaLookup = {
-    exact: new Map<string, string>(),
-    wildcard: new Map<string, string>(),
-    simple: new Map<string, string>(),
-  };
-
-  mappings.forEach((mapping) => {
-    const exactKey = [
-      mapping.vertical,
-      mapping.medio,
-      normalizeCountry(mapping.pais, mapping.zona),
-      mapping.zona,
-    ].map(normalizeText).join('|');
-    const wildcardKey = [
-      mapping.vertical,
-      mapping.medio,
-      normalizeCountry(mapping.pais, mapping.zona),
-      '',
-    ].map(normalizeText).join('|');
-
-    if (normalizeText(mapping.area) === 'grassroots') {
-      lookup.exact.set(exactKey, mapping.area);
-      lookup.wildcard.set(wildcardKey, mapping.area);
-    } else {
-      lookup.simple.set(areaSimpleKey(mapping), mapping.area);
-    }
-  });
-  return lookup;
-}
-
-function findArea(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>, lookup: AreaLookup): string {
-  return (
-    deriveBusinessArea(line) ||
-    lookup.simple.get(areaSimpleKey(line)) ||
-    lookup.exact.get(areaKey(line)) ||
-    lookup.wildcard.get(areaWildcardKey(line)) ||
-    'Sin área'
-  );
+function findArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
+  return deriveBusinessArea(line);
 }
 
 function formatCurrency(value: number): string {
@@ -427,10 +322,8 @@ function SortButton({
 export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [budgetLines, setBudgetLines] = useState<ParsedLine[]>([]);
   const [facturacionLines, setFacturacionLines] = useState<ParsedLine[]>([]);
-  const [areaMappings, setAreaMappings] = useState<AreaMapping[]>([]);
   const [budgetFile, setBudgetFile] = useState<string | null>(null);
   const [facturacionFile, setFacturacionFile] = useState<string | null>(null);
-  const [areaFile, setAreaFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [absThreshold, setAbsThreshold] = useState(10000);
   const [pctThreshold, setPctThreshold] = useState(30);
@@ -461,23 +354,11 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     }
   };
 
-  const handleLoadAreas = (rows: any[][], fileName: string) => {
-    try {
-      const parsed = parseAreaMappings(rows);
-      setAreaMappings(parsed);
-      setAreaFile(fileName);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No he podido leer el archivo de áreas.');
-    }
-  };
-
   const comparisonRows = useMemo<CompareRow[]>(() => {
     const grouped = new Map<string, CompareRow>();
-    const areaLookup = createAreaLookup(areaMappings);
 
     const ensureRow = (line: ParsedLine): CompareRow => {
-      const area = findArea(line, areaLookup);
+      const area = findArea(line);
       const comparableLine = normalizeLineForComparison(line, area);
       const key = rowKey(comparableLine);
       const existing = grouped.get(key);
@@ -532,7 +413,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
       return { ...row, diff, pct, status };
     });
-  }, [absThreshold, areaMappings, budgetLines, facturacionLines, pctThreshold]);
+  }, [absThreshold, budgetLines, facturacionLines, pctThreshold]);
 
   const filteredRows = useMemo(() => {
     const filtered = comparisonRows.filter((row) => (
@@ -648,9 +529,12 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
         </p>
+        <p className="mt-2 max-w-5xl text-xs leading-5 text-[var(--text-secondary)]">
+          Grassroots: Real Federación Andaluza de Fútbol, The Pitch y equipaciones del core. B2B: Academy, B2B, B2B Clearance y B2B Reps del core. Pro Clubs: el resto de verticales y Equipaciones PRO del core.
+        </p>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-3">
+      <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="facturacion-compare-input"
@@ -666,17 +550,6 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             onFileLoaded={handleLoad('budget')}
           />
           {budgetFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {budgetFile}</p>}
-        </div>
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-          <FileUpload
-            inputId="area-compare-input"
-            label="Áreas (opcional)"
-            onFileLoaded={handleLoadAreas}
-          />
-          {areaFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {areaFile}</p>}
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            La app calcula el área con regla interna. Grassroots cruza con región y zona. Pro Clubs cruza a nivel país. B2B separa Francia y agrupa el resto como Sin país.
-          </p>
         </div>
       </section>
 
