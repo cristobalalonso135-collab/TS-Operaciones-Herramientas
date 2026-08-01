@@ -104,6 +104,8 @@ function normalizeCountry(value: unknown, zonaFallback?: unknown): string {
     de: 'alemania',
     ale: 'alemania',
     alemania: 'alemania',
+    otros: 'otros',
+    'sin pais': 'sin pais',
   };
 
   if (aliases[normalized]) return aliases[normalized];
@@ -112,6 +114,44 @@ function normalizeCountry(value: unknown, zonaFallback?: unknown): string {
   if (zona.includes('italia')) return 'italia';
   if (zona.includes('portugal')) return 'portugal';
   return normalized;
+}
+
+function regionCode(value: unknown, zonaFallback?: unknown): string {
+  const country = normalizeCountry(value, zonaFallback);
+  const aliases: Record<string, string> = {
+    espana: 'ES',
+    francia: 'FR',
+    italia: 'IT',
+    portugal: 'PT',
+    alemania: 'OTROS',
+    otros: 'OTROS',
+    'sin pais': 'Sin país',
+  };
+
+  return aliases[country] || String(value ?? '').trim();
+}
+
+function normalizeLineForComparison(line: ParsedLine, area: string): ParsedLine {
+  const normalizedArea = normalizeText(area);
+  const normalizedRegion = regionCode(line.region, line.zona);
+
+  if (normalizedArea === 'grassroots') {
+    return { ...line, region: normalizedRegion, zona: line.zona.trim() };
+  }
+
+  if (normalizedArea === 'pro clubs') {
+    return { ...line, region: normalizedRegion, zona: '' };
+  }
+
+  if (normalizedArea === 'b2b') {
+    return {
+      ...line,
+      region: normalizeCountry(line.region, line.zona) === 'francia' ? 'FR' : 'Sin país',
+      zona: '',
+    };
+  }
+
+  return { ...line, region: normalizedRegion, zona: line.zona.trim() };
 }
 
 function parseAmount(value: unknown): number {
@@ -401,19 +441,21 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     const areaLookup = createAreaLookup(areaMappings);
 
     const ensureRow = (line: ParsedLine): CompareRow => {
-      const key = rowKey(line);
+      const area = findArea(line, areaLookup);
+      const comparableLine = normalizeLineForComparison(line, area);
+      const key = rowKey(comparableLine);
       const existing = grouped.get(key);
       if (existing) return existing;
 
       const row: CompareRow = {
         key,
-        monthKey: line.monthKey,
-        monthLabel: line.monthLabel,
-        area: findArea(line, areaLookup),
-        vertical: line.vertical,
-        medio: line.medio,
-        region: line.region,
-        zona: line.zona,
+        monthKey: comparableLine.monthKey,
+        monthLabel: comparableLine.monthLabel,
+        area,
+        vertical: comparableLine.vertical,
+        medio: comparableLine.medio,
+        region: comparableLine.region,
+        zona: comparableLine.zona,
         facturacion: 0,
         budget: 0,
         hasFacturacion: false,
@@ -568,7 +610,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
         <h2 className="mt-1 text-2xl font-semibold tracking-tight">Comparador budget</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Compara facturación FY 25/26 contra budget FY 26/27 por área, mes, vertical, medio de venta, región y zona.
+          Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
         </p>
       </section>
 
@@ -597,7 +639,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
           />
           {areaFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {areaFile}</p>}
           <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            En Grassroots cruza con región y zona. En Pro Clubs y B2B cruza solo por vertical y medio.
+            Grassroots cruza con región y zona. Pro Clubs cruza a nivel país. B2B separa Francia y agrupa el resto como Sin país.
           </p>
         </div>
       </section>
