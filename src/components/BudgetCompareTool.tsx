@@ -599,7 +599,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         </p>
         <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)]">
           <span className="font-semibold text-[var(--text-primary)]">Lógica de áreas: </span>
-          Grassroots = Real Federación Andaluza de Fútbol, The Pitch y equipaciones del core. B2B = Academy, B2B, B2B Clearance y B2B Reps del core. Pro Clubs = el resto de verticales y Equipaciones PRO del core.
+          Core = Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming. Grassroots = Real Federación Andaluza de Fútbol, The Pitch y equipaciones del core. B2B = Academy, B2B, B2B Clearance y B2B Reps del core. Pro Clubs = el resto de verticales y Equipaciones PRO del core.
         </div>
       </section>
 
@@ -660,22 +660,25 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
-                <button
-                  type="button"
-                  onClick={() => setActiveView('tabla')}
-                  className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'tabla' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
-                >
-                  Tabla
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveView('grafico')}
-                  className={`flex items-center gap-1 rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'grafico' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
-                >
-                  <BarChart3 className="h-3.5 w-3.5" />
-                  Gráfico
-                </button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Vista</span>
+                <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('tabla')}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'tabla' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                  >
+                    Tabla
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('grafico')}
+                    className={`flex items-center gap-1 rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'grafico' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                  >
+                    <BarChart3 className="h-3.5 w-3.5" />
+                    Gráfico
+                  </button>
+                </div>
               </div>
               <p className="text-xs text-[var(--text-secondary)]">
                 Los filtros se combinan entre sí y recalculan totales, tabla y gráfico.
