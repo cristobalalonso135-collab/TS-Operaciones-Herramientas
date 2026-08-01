@@ -63,6 +63,23 @@ interface MonthlyAnomaly {
   budget: number;
 }
 
+interface QualitySuggestion {
+  key: string;
+  monthLabel: string;
+  groupLabel: string;
+  groupPct: number | null;
+  monthPct: number | null;
+  suggestedAdjustment: number;
+  impact: number;
+}
+
+interface QualitySummary {
+  score: number;
+  averageDeviation: number;
+  editableRows: number;
+  suggestions: QualitySuggestion[];
+}
+
 interface BudgetCompareToolProps {
   onBack: () => void;
 }
@@ -459,6 +476,82 @@ function buildMonthlyAnomalies(rows: CompareRow[]): MonthlyAnomaly[] {
   return anomalies.sort((a, b) => b.deviation - a.deviation).slice(0, 10);
 }
 
+function isEditableMonth(monthLabel: string, lockedThroughIndex: number): boolean {
+  const order = MONTH_ORDER.get(monthLabel) ?? 99;
+  return order > lockedThroughIndex;
+}
+
+function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): QualitySummary {
+  const grouped = new Map<string, { label: string; facturacion: number; budget: number; rows: CompareRow[] }>();
+
+  rows.forEach((row) => {
+    const key = anomalyBaseKey(row);
+    const current = grouped.get(key) || { label: anomalyLabel(row), facturacion: 0, budget: 0, rows: [] };
+    current.facturacion += row.facturacion;
+    current.budget += row.budget;
+    current.rows.push(row);
+    grouped.set(key, current);
+  });
+
+  let weightedDeviation = 0;
+  let totalWeight = 0;
+  let editableRows = 0;
+  const suggestions: QualitySuggestion[] = [];
+
+  grouped.forEach((group, key) => {
+    if (Math.abs(group.facturacion) < 1000) return;
+    const groupPct = group.facturacion !== 0 ? ((group.budget - group.facturacion) / Math.abs(group.facturacion)) * 100 : null;
+    if (groupPct === null) return;
+
+    group.rows
+      .filter((row) => isEditableMonth(row.monthLabel, lockedThroughIndex))
+      .forEach((row) => {
+        const weight = Math.max(Math.abs(row.facturacion), Math.abs(row.budget));
+        if (weight < 1000) return;
+
+        let monthPct: number | null = null;
+        let expectedBudget = 0;
+        let deviation = 0;
+
+        if (row.facturacion !== 0) {
+          monthPct = ((row.budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
+          expectedBudget = row.facturacion * (1 + groupPct / 100);
+          deviation = Math.abs(monthPct - groupPct);
+        } else if (row.budget !== 0) {
+          expectedBudget = 0;
+          deviation = Math.max(100, Math.abs(groupPct));
+        }
+
+        weightedDeviation += deviation * weight;
+        totalWeight += weight;
+        editableRows += 1;
+
+        const suggestedAdjustment = expectedBudget - row.budget;
+        if (Math.abs(suggestedAdjustment) >= 1000 && deviation >= Math.max(20, Math.abs(groupPct) * 0.25)) {
+          suggestions.push({
+            key: `${key}|${row.monthKey}`,
+            monthLabel: row.monthLabel,
+            groupLabel: group.label,
+            groupPct,
+            monthPct,
+            suggestedAdjustment,
+            impact: deviation * weight,
+          });
+        }
+      });
+  });
+
+  const averageDeviation = totalWeight > 0 ? weightedDeviation / totalWeight : 0;
+  const score = Math.max(0, Math.min(10, 10 - (averageDeviation / 12)));
+
+  return {
+    score,
+    averageDeviation,
+    editableRows,
+    suggestions: suggestions.sort((a, b) => b.impact - a.impact).slice(0, 8),
+  };
+}
+
 interface FilterSelectProps {
   label: string;
   value: string;
@@ -523,6 +616,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [activeTab, setActiveTab] = useState<ComparatorTab>('analisis');
   const [activeView, setActiveView] = useState<CompareView>('tabla');
   const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
+  const [lockedThroughIndex, setLockedThroughIndex] = useState(4);
   const [filters, setFilters] = useState({
     month: 'Todos',
     area: 'Todos',
@@ -671,6 +765,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const monthlyRows = useMemo(() => buildChartRows(filteredRows, 'month'), [filteredRows]);
   const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
   const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
+  const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const chartInsight = useMemo(() => {
     const rowsWithPct = chartRows.filter((row) => row.pct !== null && Number.isFinite(row.pct));
     if (rowsWithPct.length < 2) return 'Selecciona más de un grupo para valorar si el crecimiento es homogéneo.';
@@ -806,11 +901,10 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Áreas</p>
             <h3 className="mt-1 text-lg font-semibold">Clasificación por área</h3>
             <div className="mt-4 space-y-3 text-sm text-[var(--text-secondary)]">
-              <p><span className="font-semibold text-[var(--text-primary)]">Core:</span> Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots:</span> incluye siempre las verticales Real Federación Andaluza de Fútbol y The Pitch. Además, dentro del core, incluye los medios Equipaciones, Equipaciones FEDS, Equipaciones Web B2B y Equipaciones Web B2C.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">B2B:</span> solo se clasifica dentro del core y únicamente para los medios Academy, B2B, B2B Clearance y B2B Reps.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs:</span> incluye todos los verticales que no forman parte del core, salvo los verticales definidos directamente como Grassroots. También incluye, dentro del core, el medio Equipaciones PRO.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Sin área:</span> cualquier combinación del core que no sea Grassroots, B2B ni Equipaciones PRO queda marcada como Sin área para revisarla.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots:</span> verticales Real Federación Andaluza de Fútbol y The Pitch. También entran Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming cuando el medio de venta sea Equipaciones, Equipaciones FEDS, Equipaciones Web B2B o Equipaciones Web B2C.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">B2B:</span> verticales Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming cuando el medio de venta sea Academy, B2B, B2B Clearance o B2B Reps.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs:</span> todos los demás verticales que no sean Grassroots. Además, dentro de Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming, entra el medio Equipaciones PRO.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Sin área:</span> cualquier combinación de Fútbol Emotion, Basketball Emotion, Running Emotion o Brandstorming que no entre en Grassroots, B2B ni Equipaciones PRO queda marcada como Sin área para revisarla.</p>
             </div>
           </div>
 
@@ -901,6 +995,48 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               <p className="text-xs text-[var(--text-secondary)]">Sin área</p>
               <p className="mt-1 text-xl font-semibold text-[var(--warning)]">{totals.missingAreaCount.toLocaleString('de-DE')}</p>
             </div>
+          </section>
+
+          <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Calidad de carga</p>
+                <h3 className="mt-1 text-lg font-semibold">Nota {qualitySummary.score.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}/10</h3>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  Mide si los meses editables siguen el crecimiento total de su propia combinación. Desviación media editable: {formatPercent(qualitySummary.averageDeviation)}.
+                </p>
+              </div>
+              <label className="space-y-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Meses cerrados hasta</span>
+                <select
+                  value={lockedThroughIndex}
+                  onChange={(event) => setLockedThroughIndex(parseInt(event.target.value, 10))}
+                  className="h-10 w-44 rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
+                >
+                  <option value={-1}>Ninguno</option>
+                  {MONTHS.map(([, label], index) => (
+                    <option key={label} value={index}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {qualitySummary.suggestions.length > 0 ? (
+              <div className="mt-4 grid gap-2 lg:grid-cols-2">
+                {qualitySummary.suggestions.slice(0, 4).map((item) => (
+                  <div key={item.key} className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs">
+                    <p className="font-medium text-[var(--text-primary)]">{item.monthLabel} · {item.groupLabel}</p>
+                    <p className="mt-1 text-[var(--text-secondary)]">
+                      Línea {formatPercent(item.groupPct)}, mes {formatPercent(item.monthPct)}. Ajuste orientativo: {item.suggestedAdjustment >= 0 ? 'subir' : 'bajar'} {formatCurrency(Math.abs(item.suggestedAdjustment))}.
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
+                No veo movimientos claros que suban la nota con los meses editables actuales.
+              </p>
+            )}
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
