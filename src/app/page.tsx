@@ -569,6 +569,7 @@ export default function Home() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(facturacionRows), 'Hoja1');
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cogsRows), 'COGS');
     XLSX.writeFile(wb, `budget_historico_completado_${historicalWorkbook.fileName.replace(/\.[^.]+$/, '')}.xlsx`);
+    window.alert('Recuerda sustituir los valores de las tiendas de Pro Clubs (mes siguiente) y Francia online (hasta final de FY).');
   };
 
   if (view === 'tools') {
