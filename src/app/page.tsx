@@ -25,11 +25,11 @@ import { ArrowLeft, Calculator, Download, FileSpreadsheet, Lock, Shuffle, Table2
 const ALL_MONTHS = 'ALL';
 
 const STEPS = [
-  { id: 0, name: 'Distribucion diaria', description: 'Mensual a dias laborables' },
-  { id: 1, name: 'Aleatorio +/-20%', description: 'Variacion diaria con total fijo' },
-  { id: 2, name: 'Ponderacion semanal', description: 'Curva semanal antes de negativos' },
+  { id: 0, name: 'Distribución diaria', description: 'Mensual a días laborables' },
+  { id: 1, name: 'Aleatorio +/-20%', description: 'Variación diaria con total fijo' },
+  { id: 2, name: 'Ponderación semanal', description: 'Curva semanal antes de negativos' },
   { id: 3, name: 'Negativos', description: 'Ajustes finales por zona y primeros laborables' },
-  { id: 4, name: 'Definitiva', description: 'Historico completado' },
+  { id: 4, name: 'Definitiva', description: 'Histórico completado' },
 ];
 
 interface HistoricalWorkbook {
@@ -410,7 +410,7 @@ export default function Home() {
 
   const handleHistoricalWorkbookLoaded = useCallback((sheets: Record<string, any[][]>, fileName: string) => {
     const shouldContinue = window.confirm(
-      'Recuerda: el historico completado conserva lo que ya exista y solo rellena fechas que no esten en el archivo. Si quieres recalcular desde una fecha concreta, borra antes en el historico las columnas desde ese primer dia; si las dejas, la app no las pisara.'
+      'Recuerda: el histórico completado conserva lo que ya exista y solo rellena fechas que no estén en el archivo. Si quieres recalcular desde una fecha concreta, borra antes en el histórico las columnas desde ese primer día; si las dejas, la app no las pisará.'
     );
     if (!shouldContinue) return;
 
@@ -461,10 +461,10 @@ export default function Home() {
 
     setApplyMessage(
       changedLines > 0
-        ? `Negativos aplicados en ${selectedMonth}: ${changedLines} lineas actualizadas.`
+        ? `Negativos aplicados en ${selectedMonth}: ${changedLines} líneas actualizadas.`
         : Math.abs(totalNegativo) < 0.01
           ? `Negativos aplicados en ${selectedMonth}: total 0, sin cambios en importes.`
-        : `No se han encontrado lineas Futbol Emotion + Equipaciones para las zonas de negativos en ${selectedMonth}.`
+        : `No se han encontrado líneas Fútbol Emotion + Equipaciones para las zonas de negativos en ${selectedMonth}.`
     );
     window.setTimeout(() => setApplyMessage(null), 4500);
   }, [closedMonths, negativosConfig, selectedMonth, step2Data, step3Data]);
@@ -493,7 +493,7 @@ export default function Home() {
       prev.includes(selectedMonth) ? prev : [...prev, selectedMonth]
     ));
     setCurrentStep(2);
-    setWeeklyMessage(`Ponderacion semanal aplicada en ${selectedMonth}.`);
+    setWeeklyMessage(`Ponderación semanal aplicada en ${selectedMonth}.`);
     window.setTimeout(() => setWeeklyMessage(null), 4500);
   }, [closedMonths, selectedMonth, step1Data, step2Data, weeklyConfig]);
 
@@ -704,7 +704,7 @@ export default function Home() {
               <p className="mt-1 text-xl font-semibold">{activeData.length}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Dias laborables</p>
+              <p className="text-xs text-[var(--text-secondary)]">Días laborables</p>
               <p className="mt-1 text-xl font-semibold">{totalDiasLaborables}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
@@ -816,18 +816,18 @@ export default function Home() {
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
               <div className="mb-4">
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Definitiva</p>
-                <h3 className="mt-1 text-lg font-semibold">Historico para completar</h3>
+                <h3 className="mt-1 text-lg font-semibold">Histórico para completar</h3>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  Sube el historico actual y descarga el archivo completado. La app conserva fechas existentes y solo anade lo que no este.
+                  Sube el histórico actual y descarga el archivo completado. La app conserva fechas existentes y solo añade lo que no esté.
                 </p>
               </div>
               <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                Antes de subir el historico, revisa si has borrado las columnas desde el primer dia que quieres cambiar. Si una fecha ya existe en el historico, se mantiene y no se recalcula.
+                Antes de subir el histórico, revisa si has borrado las columnas desde el primer día que quieres cambiar. Si una fecha ya existe en el histórico, se mantiene y no se recalcula.
               </div>
               <div className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
                 <FileUpload
                   inputId="historical-file-input"
-                  label="Historico para completar"
+                  label="Histórico para completar"
                   onFileLoaded={() => {}}
                   onWorkbookLoaded={handleHistoricalWorkbookLoaded}
                 />
@@ -841,9 +841,9 @@ export default function Home() {
                       <FileSpreadsheet className="h-4 w-4" />
                     </div>
                     <div>
-                      <span className="text-sm font-semibold">Descargar historico completado</span>
+                      <span className="text-sm font-semibold">Descargar histórico completado</span>
                       <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                        Mantiene lo existente, rellena huecos y añade filas/fechas nuevas.
+                        Mantiene lo existente y rellena solo filas o fechas que no existan.
                       </p>
                     </div>
                   </div>

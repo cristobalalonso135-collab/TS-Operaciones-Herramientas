@@ -84,8 +84,8 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
             <BarChart3 className="h-4 w-4" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Ponderacion semanal - {monthData.mes_fiscal}</p>
-            <p className="text-xs text-[var(--text-secondary)]">Ajuste independiente por medio usando indice de promedio diario</p>
+            <p className="text-sm font-semibold">Ponderación semanal - {monthData.mes_fiscal}</p>
+            <p className="text-xs text-[var(--text-secondary)]">Ajuste independiente por medio usando índice de promedio diario</p>
           </div>
         </div>
         {isApplied && (
@@ -140,7 +140,7 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
                     onClick={() => applyProgression(medio)}
                     className="rounded-md border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-medium transition hover:bg-[var(--bg-soft)]"
                   >
-                    Rellenar progresion
+                    Rellenar progresión
                   </button>
                   <span className={`rounded-md px-2 py-1 text-xs font-mono ${hasValidIndex ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
                     Total mes conservado
@@ -159,7 +159,7 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
                         </p>
                       </div>
                       <div className="text-right">
-                        <span className="block text-[10px] text-[var(--text-secondary)]">Indice diario</span>
+                        <span className="block text-[10px] text-[var(--text-secondary)]">Índice diario</span>
                         <input
                           type="number"
                           step="0.01"
@@ -178,8 +178,8 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
                   <thead>
                     <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                       <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Semana</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dias laborables</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Indice diario</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Días laborables</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Índice diario</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget actual</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Promedio diario actual</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget objetivo semana</th>
@@ -221,7 +221,7 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
             disabled={WEEKLY_TARGET_MEDIOS.some((medio) => weeks.every((week) => (config.mediaDailyIndex[medio]?.[week.id] || 0) <= 0))}
             className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-35"
           >
-            {isApplied ? 'Reaplicar ponderacion semanal' : 'Aplicar ponderacion semanal'}
+            {isApplied ? 'Reaplicar ponderación semanal' : 'Aplicar ponderación semanal'}
           </button>
         </div>
       </div>

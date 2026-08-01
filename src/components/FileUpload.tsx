@@ -110,7 +110,7 @@ export default function FileUpload({
           <div className="space-y-2">
             <Upload className="mx-auto h-9 w-9 text-[var(--text-secondary)]" />
             <p className="text-sm text-[var(--text-secondary)]">
-              Arrastra el archivo aqui o <span className="font-medium text-[var(--accent)]">seleccionalo</span>
+              Arrastra el archivo aquí o <span className="font-medium text-[var(--accent)]">selecciónalo</span>
             </p>
             <p className="text-xs text-[var(--text-muted)]">.xlsx, .xls o .csv</p>
           </div>

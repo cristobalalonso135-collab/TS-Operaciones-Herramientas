@@ -250,7 +250,7 @@ export default function NegativosForm({ selectedMonth, config, onChange, onApply
           </div>
 
           <div className="flex items-center gap-4 flex-wrap">
-            <span className="text-xs font-medium text-[var(--text-secondary)]">Ponderacion dias</span>
+            <span className="text-xs font-medium text-[var(--text-secondary)]">Ponderación días</span>
             {config.ponderacion.map((p, i) => (
               <div key={i} className="flex items-center gap-1">
                 <span className="text-xs text-[var(--text-secondary)]">Dia {i + 1}</span>

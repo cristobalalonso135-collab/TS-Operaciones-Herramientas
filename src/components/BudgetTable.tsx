@@ -275,7 +275,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
             <p className="mt-1 text-sm font-semibold">{filteredData.length}</p>
           </div>
           <div>
-            <p className="text-xs text-[var(--text-secondary)]">Dias laborables</p>
+            <p className="text-xs text-[var(--text-secondary)]">Días laborables</p>
             <p className="mt-1 text-sm font-semibold">{laborableDays}</p>
           </div>
           <div>
