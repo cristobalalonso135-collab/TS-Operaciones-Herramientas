@@ -84,6 +84,8 @@ interface QualityOperation {
   resultingScore: number;
   fromPct: number | null;
   toPct: number | null;
+  fromPctAfter: number | null;
+  toPctAfter: number | null;
   targetPct: number | null;
 }
 
@@ -532,6 +534,11 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
     return budget !== 0 ? Math.max(100, Math.abs(targetPct)) : 0;
   };
 
+  const pctAfterBudget = (row: CompareRow, budget: number): number | null => {
+    if (row.facturacion === 0) return null;
+    return ((budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
+  };
+
   rows.forEach((row) => {
     const key = anomalyBaseKey(row);
     const current = grouped.get(key) || { label: anomalyLabel(row), facturacion: 0, budget: 0, rows: [] };
@@ -617,6 +624,8 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
 
       const donorAfterDeviation = deviationAfterBudget(donor.row, donor.row.budget - amount, groupPct);
       const receiverAfterDeviation = deviationAfterBudget(receiver.row, receiver.row.budget + amount, groupPct);
+      const donorPctAfter = pctAfterBudget(donor.row, donor.row.budget - amount);
+      const receiverPctAfter = pctAfterBudget(receiver.row, receiver.row.budget + amount);
       const beforeImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
       const afterImpact = (Math.min(120, donorAfterDeviation) * donor.weight) + (Math.min(120, receiverAfterDeviation) * receiver.weight);
       const currentImpact = Math.max(0, beforeImpact - afterImpact);
@@ -633,6 +642,8 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
         resultingScore: 0,
         fromPct: donor.monthPct,
         toPct: receiver.monthPct,
+        fromPctAfter: donorPctAfter,
+        toPctAfter: receiverPctAfter,
         targetPct: groupPct,
       });
       usedDonor.add(donor.row.monthKey);
@@ -1561,9 +1572,17 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                           <p className="mt-3 text-sm">
                             Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>.
                           </p>
-                          <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                            Objetivo línea {formatPercent(operation.targetPct)}. Origen {formatPercent(operation.fromPct)} · destino {formatPercent(operation.toPct)}.
-                          </p>
+                          <div className="mt-2 grid gap-2 text-xs text-[var(--text-secondary)] md:grid-cols-3">
+                            <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
+                              Objetivo línea <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.targetPct)}</span>
+                            </p>
+                            <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
+                              Origen <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.fromPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.fromPctAfter)}</span>
+                            </p>
+                            <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
+                              Destino <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.toPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.toPctAfter)}</span>
+                            </p>
+                          </div>
                         </div>
                       );
                     })}
