@@ -79,6 +79,7 @@ interface QualityOperation {
   fromMonth: string;
   toMonth: string;
   amount: number;
+  impact: number;
   estimatedGain: number;
   resultingScore: number;
   fromPct: number | null;
@@ -89,6 +90,7 @@ interface QualityOperation {
 interface QualitySummary {
   score: number;
   averageDeviation: number;
+  totalWeight: number;
   editableRows: number;
   suggestions: QualitySuggestion[];
   operations: QualityOperation[];
@@ -626,7 +628,8 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
         fromMonth: donor.row.monthLabel,
         toMonth: receiver.row.monthLabel,
         amount,
-        estimatedGain: currentImpact,
+        impact: currentImpact,
+        estimatedGain: 0,
         resultingScore: 0,
         fromPct: donor.monthPct,
         toPct: receiver.monthPct,
@@ -642,10 +645,10 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   let runningScore = score;
   const rankedOperations: QualityOperation[] = [];
   operations
-    .sort((a, b) => b.estimatedGain - a.estimatedGain)
+    .sort((a, b) => b.impact - a.impact)
     .forEach((operation) => {
-      if (rankedOperations.length >= 8) return;
-      const rawGain = totalWeight > 0 ? operation.estimatedGain / totalWeight / 18 : 0;
+      if (rankedOperations.length >= 10) return;
+      const rawGain = totalWeight > 0 ? operation.impact / totalWeight / 18 : 0;
       const estimatedGain = Math.min(Math.max(0, 10 - runningScore), rawGain);
       if (estimatedGain < 0.05) return;
       runningScore = Math.min(10, runningScore + estimatedGain);
@@ -659,6 +662,7 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   return {
     score,
     averageDeviation,
+    totalWeight,
     editableRows,
     suggestions: suggestions.sort((a, b) => b.impact - a.impact).slice(0, 8),
     operations: rankedOperations,
@@ -881,6 +885,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
   const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
+  const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
   const classificationIssues = useMemo<ClassificationIssue[]>(() => {
     const grouped = new Map<string, ClassificationIssue>();
 
@@ -1212,22 +1217,6 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               </label>
             </div>
 
-            {qualitySummary.suggestions.length > 0 ? (
-              <div className="mt-4 grid gap-2 lg:grid-cols-2">
-                {qualitySummary.suggestions.slice(0, 4).map((item) => (
-                  <div key={item.key} className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs">
-                    <p className="font-medium text-[var(--text-primary)]">{item.monthLabel} · {item.groupLabel}</p>
-                    <p className="mt-1 text-[var(--text-secondary)]">
-                      Línea {formatPercent(item.groupPct)}, mes {formatPercent(item.monthPct)}. Ajuste orientativo: {item.suggestedAdjustment >= 0 ? 'subir' : 'bajar'} {formatCurrency(Math.abs(item.suggestedAdjustment))}.
-                    </p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
-                No veo movimientos claros que suban la nota con los meses editables actuales.
-              </p>
-            )}
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -1547,25 +1536,37 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {qualitySummary.operations.map((operation, index) => (
-                      <div key={operation.key} className="rounded-md border border-[var(--border)] p-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">Operación {index + 1}</p>
-                            <p className="mt-1 text-xs text-[var(--text-secondary)]">{operation.groupLabel}</p>
+                    {qualitySummary.operations.map((operation, index) => {
+                      const companyGain = companyQualitySummary.totalWeight > 0
+                        ? Math.min(Math.max(0, 10 - companyQualitySummary.score), operation.impact / companyQualitySummary.totalWeight / 18)
+                        : 0;
+                      const companyResultingScore = Math.min(10, companyQualitySummary.score + companyGain);
+
+                      return (
+                        <div key={operation.key} className="rounded-md border border-[var(--border)] p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold">Operación {index + 1}</p>
+                              <p className="mt-1 text-xs text-[var(--text-secondary)]">{operation.groupLabel}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2 text-xs font-medium">
+                              <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-[var(--success)]">
+                                Selección +{operation.estimatedGain.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} · nota {operation.resultingScore.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                              </p>
+                              <p className="rounded-md bg-[var(--bg-soft)] px-2 py-1 text-[var(--text-secondary)]">
+                                Empresa +{companyGain.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · nota {companyResultingScore.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                              </p>
+                            </div>
                           </div>
-                          <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">
-                            +{operation.estimatedGain.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} · nota {operation.resultingScore.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                          <p className="mt-3 text-sm">
+                            Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>.
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                            Objetivo línea {formatPercent(operation.targetPct)}. Origen {formatPercent(operation.fromPct)} · destino {formatPercent(operation.toPct)}.
                           </p>
                         </div>
-                        <p className="mt-3 text-sm">
-                          Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>.
-                        </p>
-                        <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                          Objetivo línea {formatPercent(operation.targetPct)}. Origen {formatPercent(operation.fromPct)} · destino {formatPercent(operation.toPct)}.
-                        </p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
