@@ -35,8 +35,11 @@ function formatDate(dateValue: string): string {
 }
 
 export default function WeeklyWeightsForm({ monthData, config, isApplied = false, onChange, onApply }: WeeklyWeightsFormProps) {
-  const [progressionPct, setProgressionPct] = useState<Record<string, number>>(
-    Object.fromEntries(WEEKLY_TARGET_MEDIOS.map((medio) => [medio, 2]))
+  const [progressionStart, setProgressionStart] = useState<Record<string, number>>(
+    Object.fromEntries(WEEKLY_TARGET_MEDIOS.map((medio) => [medio, 1]))
+  );
+  const [progressionIncrement, setProgressionIncrement] = useState<Record<string, number>>(
+    Object.fromEntries(WEEKLY_TARGET_MEDIOS.map((medio) => [medio, 0.02]))
   );
   const weeks = getWeeksForMonthData(monthData);
 
@@ -53,9 +56,10 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
   };
 
   const applyProgression = (medio: string) => {
-    const increment = progressionPct[medio] || 0;
+    const start = progressionStart[medio] ?? 1;
+    const increment = progressionIncrement[medio] ?? 0;
     const nextIndex = Object.fromEntries(
-      weeks.map((week, index) => [week.id, Number((1 + (increment / 100) * index).toFixed(4))])
+      weeks.map((week, index) => [week.id, Number((start + increment * index).toFixed(4))])
     );
 
     onChange(monthData.mes_fiscal, {
@@ -106,18 +110,30 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-                    + semanal
+                    Inicio
                     <input
                       type="number"
-                      step="0.1"
-                      value={progressionPct[medio] ?? 2}
-                      onChange={(event) => setProgressionPct((prev) => ({
+                      step="0.01"
+                      value={progressionStart[medio] ?? 1}
+                      onChange={(event) => setProgressionStart((prev) => ({
                         ...prev,
                         [medio]: parseFloat(event.target.value) || 0,
                       }))}
                       className="w-20 rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-right font-mono text-xs"
                     />
-                    %
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                    Incremento
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={progressionIncrement[medio] ?? 0.02}
+                      onChange={(event) => setProgressionIncrement((prev) => ({
+                        ...prev,
+                        [medio]: parseFloat(event.target.value) || 0,
+                      }))}
+                      className="w-20 rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-right font-mono text-xs"
+                    />
                   </label>
                   <button
                     type="button"
@@ -147,7 +163,6 @@ export default function WeeklyWeightsForm({ monthData, config, isApplied = false
                         <input
                           type="number"
                           step="0.01"
-                          min="0"
                           value={config.mediaDailyIndex[medio]?.[week.id] ?? 1}
                           onChange={(event) => updateDailyIndex(medio, week.id, parseFloat(event.target.value) || 0)}
                           className="w-24 rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-right font-mono text-sm"

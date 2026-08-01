@@ -29,7 +29,7 @@ const STEPS = [
   { id: 1, name: 'Aleatorio +/-20%', description: 'Variacion diaria con total fijo' },
   { id: 2, name: 'Ponderacion semanal', description: 'Curva semanal antes de negativos' },
   { id: 3, name: 'Negativos', description: 'Ajustes finales por zona y primeros laborables' },
-  { id: 4, name: 'Definitiva', description: 'Export final' },
+  { id: 4, name: 'Definitiva', description: 'Historico completado' },
 ];
 
 interface HistoricalWorkbook {
@@ -383,6 +383,11 @@ export default function Home() {
   const handleFileLoaded = useCallback((data: any[][], _fileName: string) => {
     const parsed = parseExcelData(data);
     const processed = processFullBudget(parsed);
+    const shouldContinue = window.confirm(
+      'Recuerda: el historico completado conserva lo que ya exista y solo rellena fechas que no esten en el archivo. Si quieres recalcular desde una fecha concreta, borra antes en el historico las columnas desde ese primer dia; si las dejas, la app no las pisara.'
+    );
+    if (!shouldContinue) return;
+
     const negConfig: Record<string, NegativosConfig> = {};
     const weekConfig: Record<string, WeeklyWeightConfig> = {};
 
@@ -634,7 +639,7 @@ export default function Home() {
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">{STEPS[currentStep].name}</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{STEPS[currentStep].description}</p>
           </div>
-          {activeData && (
+          {activeData && currentStep !== 4 && (
             <div className="flex gap-2">
               <button
                 onClick={handleGenerateStep1}
@@ -663,6 +668,8 @@ export default function Home() {
 
       {activeData && (
         <div className="space-y-4">
+          {currentStep !== 4 && (
+            <>
           <div className="grid gap-3 md:grid-cols-8">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Budget</p>
@@ -798,40 +805,22 @@ export default function Home() {
               />
             </div>
           )}
+            </>
+          )}
 
           {activeData && currentStep === 4 && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
               <div className="mb-4">
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Definitiva</p>
-                <h3 className="mt-1 text-lg font-semibold">Export final</h3>
+                <h3 className="mt-1 text-lg font-semibold">Historico para completar</h3>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  Sube el historico actual y descarga el archivo completado. La app conserva fechas existentes y solo anade lo que no este.
+                </p>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <button
-                  onClick={() => handleExportFy('facturacion')}
-                  className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--bg-soft)]"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
-                      <FileSpreadsheet className="h-4 w-4" />
-                    </div>
-                    <span className="text-sm font-semibold">Budget Facturacion</span>
-                  </div>
-                  <Download className="h-4 w-4 text-[var(--text-secondary)]" />
-                </button>
-                <button
-                  onClick={() => handleExportFy('cogs')}
-                  className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--border-strong)] hover:bg-[var(--bg-soft)]"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--bg-soft)] text-[var(--text-secondary)]">
-                      <FileSpreadsheet className="h-4 w-4" />
-                    </div>
-                    <span className="text-sm font-semibold">Budget COGS</span>
-                  </div>
-                  <Download className="h-4 w-4 text-[var(--text-secondary)]" />
-                </button>
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                Antes de subir el historico, revisa si has borrado las columnas desde el primer dia que quieres cambiar. Si una fecha ya existe en el historico, se mantiene y no se recalcula.
               </div>
-              <div className="mt-4 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
+              <div className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4">
                 <FileUpload
                   inputId="historical-file-input"
                   label="Historico para completar"
@@ -860,7 +849,7 @@ export default function Home() {
             </div>
           )}
 
-          {currentMonthData && (
+          {currentMonthData && currentStep !== 4 && (
             <BudgetTable
               data={currentMonthData.lines}
               year={currentMonthData.year}
