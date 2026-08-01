@@ -6,9 +6,9 @@ import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Download, Fi
 
 type SourceKind = 'budget' | 'facturacion';
 type StatusFilter = 'Todos' | CompareStatus;
-type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación';
+type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
-type SortKey = 'month' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
+type SortKey = 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
 
 interface ParsedLine {
   monthKey: string;
@@ -20,10 +20,25 @@ interface ParsedLine {
   value: number;
 }
 
+interface AreaMapping {
+  area: string;
+  vertical: string;
+  medio: string;
+  pais: string;
+  zona: string;
+}
+
+interface AreaLookup {
+  exact: Map<string, string>;
+  wildcard: Map<string, string>;
+  simple: Map<string, string>;
+}
+
 interface CompareRow {
   key: string;
   monthKey: string;
   monthLabel: string;
+  area: string;
   vertical: string;
   medio: string;
   region: string;
@@ -70,6 +85,35 @@ function normalizeHeader(value: unknown): string {
   return normalizeText(value).replace(/\s+/g, ' ');
 }
 
+function normalizeCountry(value: unknown, zonaFallback?: unknown): string {
+  const normalized = normalizeText(value).replace(/ñ/g, 'n');
+  const zona = normalizeText(zonaFallback).replace(/ñ/g, 'n');
+  const aliases: Record<string, string> = {
+    es: 'espana',
+    esp: 'espana',
+    espana: 'espana',
+    fr: 'francia',
+    fra: 'francia',
+    francia: 'francia',
+    it: 'italia',
+    ita: 'italia',
+    italia: 'italia',
+    pt: 'portugal',
+    por: 'portugal',
+    portugal: 'portugal',
+    de: 'alemania',
+    ale: 'alemania',
+    alemania: 'alemania',
+  };
+
+  if (aliases[normalized]) return aliases[normalized];
+  if (aliases[zona]) return aliases[zona];
+  if (zona.includes('francia')) return 'francia';
+  if (zona.includes('italia')) return 'italia';
+  if (zona.includes('portugal')) return 'portugal';
+  return normalized;
+}
+
 function parseAmount(value: unknown): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (value === null || value === undefined || value === '') return 0;
@@ -82,6 +126,38 @@ function parseAmount(value: unknown): number {
     : raw.replace(',', '.');
 
   return Number(normalized) || 0;
+}
+
+function parseAreaMappings(rows: any[][]): AreaMapping[] {
+  if (!rows.length) return [];
+
+  const headerIndex = rows.findIndex((row) => {
+    const normalized = row.map(normalizeHeader);
+    return normalized.includes('area') && normalized.includes('vertical') && normalized.some((cell) => cell.includes('medio'));
+  });
+  const headers = (rows[headerIndex >= 0 ? headerIndex : 0] || []).map(normalizeHeader);
+  const colMap = {
+    area: findColumn(headers, ['area', 'área']),
+    vertical: findColumn(headers, ['vertical']),
+    medio: findColumn(headers, ['medio de venta', 'medio']),
+    pais: findColumn(headers, ['pais', 'país', 'region', 'región']),
+    zona: findColumn(headers, ['zona']),
+  };
+  const missing = Object.entries(colMap).filter(([, index]) => index < 0).map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(`Faltan columnas en áreas: ${missing.join(', ')}`);
+  }
+
+  return rows.slice((headerIndex >= 0 ? headerIndex : 0) + 1)
+    .filter((row) => row.some((cell) => cell !== null && cell !== undefined && cell !== ''))
+    .map((row) => ({
+      area: String(row[colMap.area] ?? '').trim(),
+      vertical: String(row[colMap.vertical] ?? '').trim(),
+      medio: String(row[colMap.medio] ?? '').trim(),
+      pais: String(row[colMap.pais] ?? '').trim(),
+      zona: String(row[colMap.zona] ?? '').trim(),
+    }))
+    .filter((row) => row.area && row.vertical && row.medio);
 }
 
 function normalizeMonth(value: unknown): { key: string; label: string } {
@@ -139,6 +215,71 @@ function rowKey(line: Pick<ParsedLine, 'monthKey' | 'vertical' | 'medio' | 'regi
     line.region,
     line.zona,
   ].map(normalizeText).join('|');
+}
+
+function areaKey(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>): string {
+  return [
+    line.vertical,
+    line.medio,
+    normalizeCountry(line.region, line.zona),
+    line.zona,
+  ].map(normalizeText).join('|');
+}
+
+function areaWildcardKey(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>): string {
+  return [
+    line.vertical,
+    line.medio,
+    normalizeCountry(line.region, line.zona),
+    '',
+  ].map(normalizeText).join('|');
+}
+
+function areaSimpleKey(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
+  return [
+    line.vertical,
+    line.medio,
+  ].map(normalizeText).join('|');
+}
+
+function createAreaLookup(mappings: AreaMapping[]): AreaLookup {
+  const lookup: AreaLookup = {
+    exact: new Map<string, string>(),
+    wildcard: new Map<string, string>(),
+    simple: new Map<string, string>(),
+  };
+
+  mappings.forEach((mapping) => {
+    const exactKey = [
+      mapping.vertical,
+      mapping.medio,
+      normalizeCountry(mapping.pais, mapping.zona),
+      mapping.zona,
+    ].map(normalizeText).join('|');
+    const wildcardKey = [
+      mapping.vertical,
+      mapping.medio,
+      normalizeCountry(mapping.pais, mapping.zona),
+      '',
+    ].map(normalizeText).join('|');
+
+    if (normalizeText(mapping.area) === 'grassroots') {
+      lookup.exact.set(exactKey, mapping.area);
+      lookup.wildcard.set(wildcardKey, mapping.area);
+    } else {
+      lookup.simple.set(areaSimpleKey(mapping), mapping.area);
+    }
+  });
+  return lookup;
+}
+
+function findArea(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>, lookup: AreaLookup): string {
+  return (
+    lookup.simple.get(areaSimpleKey(line)) ||
+    lookup.exact.get(areaKey(line)) ||
+    lookup.wildcard.get(areaWildcardKey(line)) ||
+    'Sin área'
+  );
 }
 
 function formatCurrency(value: number): string {
@@ -210,13 +351,16 @@ function SortButton({
 export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [budgetLines, setBudgetLines] = useState<ParsedLine[]>([]);
   const [facturacionLines, setFacturacionLines] = useState<ParsedLine[]>([]);
+  const [areaMappings, setAreaMappings] = useState<AreaMapping[]>([]);
   const [budgetFile, setBudgetFile] = useState<string | null>(null);
   const [facturacionFile, setFacturacionFile] = useState<string | null>(null);
+  const [areaFile, setAreaFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [absThreshold, setAbsThreshold] = useState(10000);
   const [pctThreshold, setPctThreshold] = useState(30);
   const [filters, setFilters] = useState({
     month: 'Todos',
+    area: 'Todos',
     vertical: 'Todos',
     medio: 'Todos',
     region: 'Todos',
@@ -241,8 +385,20 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     }
   };
 
+  const handleLoadAreas = (rows: any[][], fileName: string) => {
+    try {
+      const parsed = parseAreaMappings(rows);
+      setAreaMappings(parsed);
+      setAreaFile(fileName);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No he podido leer el archivo de áreas.');
+    }
+  };
+
   const comparisonRows = useMemo<CompareRow[]>(() => {
     const grouped = new Map<string, CompareRow>();
+    const areaLookup = createAreaLookup(areaMappings);
 
     const ensureRow = (line: ParsedLine): CompareRow => {
       const key = rowKey(line);
@@ -253,6 +409,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         key,
         monthKey: line.monthKey,
         monthLabel: line.monthLabel,
+        area: findArea(line, areaLookup),
         vertical: line.vertical,
         medio: line.medio,
         region: line.region,
@@ -288,7 +445,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
       const absPct = Math.abs(pct ?? 0);
       let status: CompareStatus = 'OK';
 
-      if (!row.hasFacturacion && row.hasBudget) status = 'Solo budget';
+      if (row.area === 'Sin área') status = 'Sin área';
+      else if (!row.hasFacturacion && row.hasBudget) status = 'Solo budget';
       else if (row.hasFacturacion && !row.hasBudget) status = 'Solo facturación';
       else if (row.facturacion === 0 && row.budget !== 0) status = 'Base cero';
       else if (absDiff >= absThreshold && absPct >= pctThreshold) status = 'Revisar';
@@ -296,11 +454,12 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
       return { ...row, diff, pct, status };
     });
-  }, [absThreshold, budgetLines, facturacionLines, pctThreshold]);
+  }, [absThreshold, areaMappings, budgetLines, facturacionLines, pctThreshold]);
 
   const filteredRows = useMemo(() => {
     const filtered = comparisonRows.filter((row) => (
       (filters.month === 'Todos' || row.monthLabel === filters.month) &&
+      (filters.area === 'Todos' || row.area === filters.area) &&
       (filters.vertical === 'Todos' || row.vertical === filters.vertical) &&
       (filters.medio === 'Todos' || row.medio === filters.medio) &&
       (filters.region === 'Todos' || row.region === filters.region) &&
@@ -310,6 +469,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
     const getValue = (row: CompareRow): string | number => {
       if (sort.key === 'month') return MONTH_ORDER.get(row.monthLabel) ?? 99;
+      if (sort.key === 'area') return row.area;
       if (sort.key === 'vertical') return row.vertical;
       if (sort.key === 'medio') return row.medio;
       if (sort.key === 'region') return row.region;
@@ -337,17 +497,19 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     const diff = budget - facturacion;
     const pct = facturacion !== 0 ? (diff / Math.abs(facturacion)) * 100 : null;
     const reviewCount = filteredRows.filter((row) => row.status !== 'OK').length;
+    const missingAreaCount = filteredRows.filter((row) => row.area === 'Sin área').length;
 
-    return { facturacion, budget, diff, pct, reviewCount };
+    return { facturacion, budget, diff, pct, reviewCount, missingAreaCount };
   }, [filteredRows]);
 
   const options = useMemo(() => ({
     month: Array.from(new Set(comparisonRows.map((row) => row.monthLabel))).sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99)),
+    area: uniqueOptions(comparisonRows, (row) => row.area),
     vertical: uniqueOptions(comparisonRows, (row) => row.vertical),
     medio: uniqueOptions(comparisonRows, (row) => row.medio),
     region: uniqueOptions(comparisonRows, (row) => row.region),
     zona: uniqueOptions(comparisonRows, (row) => row.zona),
-    status: ['OK', 'Revisar', 'Variación alta', 'Base cero', 'Solo budget', 'Solo facturación'] as CompareStatus[],
+    status: ['OK', 'Revisar', 'Variación alta', 'Base cero', 'Solo budget', 'Solo facturación', 'Sin área'] as CompareStatus[],
   }), [comparisonRows]);
 
   const updateSort = (key: SortKey) => {
@@ -362,9 +524,10 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   };
 
   const handleExport = () => {
-    const header = ['Mes', 'Vertical', 'Medio de Venta', 'Región', 'Zona', 'Facturación FY 25/26', 'Budget FY 26/27', 'Diferencia', 'Variación %', 'Estado'];
+    const header = ['Mes', 'Área', 'Vertical', 'Medio de Venta', 'Región', 'Zona', 'Facturación FY 25/26', 'Budget FY 26/27', 'Diferencia', 'Variación %', 'Estado'];
     const rows = filteredRows.map((row) => [
       row.monthLabel,
+      row.area,
       row.vertical,
       row.medio,
       row.region,
@@ -405,11 +568,11 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
         <h2 className="mt-1 text-2xl font-semibold tracking-tight">Comparador budget</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Compara facturación FY 25/26 contra budget FY 26/27 por mes, vertical, medio de venta, región y zona.
+          Compara facturación FY 25/26 contra budget FY 26/27 por área, mes, vertical, medio de venta, región y zona.
         </p>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
+      <section className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="facturacion-compare-input"
@@ -426,6 +589,17 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
           />
           {budgetFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {budgetFile}</p>}
         </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="area-compare-input"
+            label="Áreas"
+            onFileLoaded={handleLoadAreas}
+          />
+          {areaFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {areaFile}</p>}
+          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+            En Grassroots cruza con región y zona. En Pro Clubs y B2B cruza solo por vertical y medio.
+          </p>
+        </div>
       </section>
 
       {error && (
@@ -434,7 +608,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
       {hasBothFiles && (
         <>
-          <section className="grid gap-3 md:grid-cols-5">
+          <section className="grid gap-3 md:grid-cols-6">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Facturación FY 25/26</p>
               <p className="mt-1 text-xl font-semibold">{formatCurrency(totals.facturacion)}</p>
@@ -458,11 +632,16 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                 {totals.reviewCount.toLocaleString('de-DE')}
               </p>
             </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Sin área</p>
+              <p className="mt-1 text-xl font-semibold text-[var(--warning)]">{totals.missingAreaCount.toLocaleString('de-DE')}</p>
+            </div>
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <div className="mb-4 grid gap-3 md:grid-cols-6">
+            <div className="mb-4 grid gap-3 md:grid-cols-7">
               <FilterSelect label="Mes" value={filters.month} options={options.month} onChange={(value) => updateFilter('month', value)} />
+              <FilterSelect label="Área" value={filters.area} options={options.area} onChange={(value) => updateFilter('area', value)} />
               <FilterSelect label="Vertical" value={filters.vertical} options={options.vertical} onChange={(value) => updateFilter('vertical', value)} />
               <FilterSelect label="Medio" value={filters.medio} options={options.medio} onChange={(value) => updateFilter('medio', value)} />
               <FilterSelect label="Región" value={filters.region} options={options.region} onChange={(value) => updateFilter('region', value)} />
@@ -502,10 +681,11 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             </div>
 
             <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
-              <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-xs">
+              <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-xs">
                 <thead>
                   <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                     <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Mes" sortKey="month" sort={sort} onSort={updateSort} /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Área" sortKey="area" sort={sort} onSort={updateSort} /></th>
                     <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Vertical" sortKey="vertical" sort={sort} onSort={updateSort} /></th>
                     <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Medio" sortKey="medio" sort={sort} onSort={updateSort} /></th>
                     <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Región" sortKey="region" sort={sort} onSort={updateSort} /></th>
@@ -521,6 +701,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   {filteredRows.map((row) => (
                     <tr key={row.key} className="hover:bg-[var(--bg-primary)]">
                       <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.monthLabel}</td>
+                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.area}</td>
                       <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.vertical}</td>
                       <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.medio}</td>
                       <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.region}</td>
