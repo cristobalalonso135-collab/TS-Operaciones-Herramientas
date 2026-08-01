@@ -383,11 +383,6 @@ export default function Home() {
   const handleFileLoaded = useCallback((data: any[][], _fileName: string) => {
     const parsed = parseExcelData(data);
     const processed = processFullBudget(parsed);
-    const shouldContinue = window.confirm(
-      'Recuerda: el historico completado conserva lo que ya exista y solo rellena fechas que no esten en el archivo. Si quieres recalcular desde una fecha concreta, borra antes en el historico las columnas desde ese primer dia; si las dejas, la app no las pisara.'
-    );
-    if (!shouldContinue) return;
-
     const negConfig: Record<string, NegativosConfig> = {};
     const weekConfig: Record<string, WeeklyWeightConfig> = {};
 
@@ -411,6 +406,15 @@ export default function Home() {
     setHistoricalWorkbook(null);
     setCurrentStep(0);
     setSelectedMonth(processed.length > 0 ? processed[0].mes_fiscal : FISCAL_MONTHS_ORDER[0]);
+  }, []);
+
+  const handleHistoricalWorkbookLoaded = useCallback((sheets: Record<string, any[][]>, fileName: string) => {
+    const shouldContinue = window.confirm(
+      'Recuerda: el historico completado conserva lo que ya exista y solo rellena fechas que no esten en el archivo. Si quieres recalcular desde una fecha concreta, borra antes en el historico las columnas desde ese primer dia; si las dejas, la app no las pisara.'
+    );
+    if (!shouldContinue) return;
+
+    setHistoricalWorkbook({ sheets, fileName });
   }, []);
 
   const handleGenerateStep1 = useCallback(() => {
@@ -825,7 +829,7 @@ export default function Home() {
                   inputId="historical-file-input"
                   label="Historico para completar"
                   onFileLoaded={() => {}}
-                  onWorkbookLoaded={(sheets, fileName) => setHistoricalWorkbook({ sheets, fileName })}
+                  onWorkbookLoaded={handleHistoricalWorkbookLoaded}
                 />
                 <button
                   onClick={handleExportMergedHistorical}
