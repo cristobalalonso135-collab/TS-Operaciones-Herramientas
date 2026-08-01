@@ -9,7 +9,7 @@ type StatusFilter = 'Todos' | CompareStatus;
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
-type CompareView = 'tabla' | 'grafico';
+type CompareView = 'tabla' | 'barras' | 'lineas';
 type ChartGroupKey = 'total' | 'month' | 'area' | 'vertical' | 'medio' | 'region' | 'zona';
 
 interface ParsedLine {
@@ -47,6 +47,17 @@ interface ChartRow {
   budget: number;
   diff: number;
   pct: number | null;
+}
+
+interface MonthlyAnomaly {
+  key: string;
+  monthLabel: string;
+  groupLabel: string;
+  groupPct: number | null;
+  monthPct: number | null;
+  deviation: number;
+  facturacion: number;
+  budget: number;
 }
 
 interface BudgetCompareToolProps {
@@ -273,6 +284,11 @@ function formatPercent(value: number | null): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
+function barWidth(value: number, maxValue: number): number {
+  if (value === 0 || maxValue <= 0) return 0;
+  return Math.max(1, Math.min(100, (Math.abs(value) / maxValue) * 100));
+}
+
 function uniqueOptions(rows: CompareRow[], getter: (row: CompareRow) => string): string[] {
   return Array.from(new Set(rows.map(getter).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es'));
 }
@@ -313,6 +329,77 @@ function buildChartRows(rows: CompareRow[], groupBy: ChartGroupKey): ChartRow[] 
       return { ...row, diff, pct };
     })
     .sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label, 'es'));
+}
+
+function linePoints(rows: ChartRow[], getter: (row: ChartRow) => number, maxValue: number): string {
+  if (rows.length === 0) return '';
+  return rows.map((row, index) => {
+    const x = rows.length === 1 ? 380 : 48 + (index * (664 / (rows.length - 1)));
+    const y = 220 - ((Math.max(0, getter(row)) / Math.max(1, maxValue)) * 170);
+    return `${x},${y}`;
+  }).join(' ');
+}
+
+function linePoint(row: ChartRow, index: number, rows: ChartRow[], getter: (row: ChartRow) => number, maxValue: number): { x: number; y: number } {
+  const x = rows.length === 1 ? 380 : 48 + (index * (664 / (rows.length - 1)));
+  const y = 220 - ((Math.max(0, getter(row)) / Math.max(1, maxValue)) * 170);
+  return { x, y };
+}
+
+function anomalyBaseKey(row: CompareRow): string {
+  return [row.area, row.vertical, row.medio, row.region, row.zona].map(normalizeText).join('|');
+}
+
+function anomalyLabel(row: CompareRow): string {
+  return [row.vertical, row.medio, row.region, row.zona].filter(Boolean).join(' · ');
+}
+
+function buildMonthlyAnomalies(rows: CompareRow[]): MonthlyAnomaly[] {
+  const grouped = new Map<string, { label: string; facturacion: number; budget: number; rows: CompareRow[] }>();
+
+  rows.forEach((row) => {
+    const key = anomalyBaseKey(row);
+    const current = grouped.get(key) || { label: anomalyLabel(row), facturacion: 0, budget: 0, rows: [] };
+    current.facturacion += row.facturacion;
+    current.budget += row.budget;
+    current.rows.push(row);
+    grouped.set(key, current);
+  });
+
+  const anomalies: MonthlyAnomaly[] = [];
+  grouped.forEach((group, key) => {
+    if (Math.abs(group.facturacion) < 1000) return;
+    const groupPct = group.facturacion !== 0 ? ((group.budget - group.facturacion) / Math.abs(group.facturacion)) * 100 : null;
+    if (groupPct === null) return;
+
+    group.rows.forEach((row) => {
+      let monthPct: number | null = null;
+      let deviation = 0;
+
+      if (row.facturacion !== 0) {
+        monthPct = ((row.budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
+        deviation = Math.abs(monthPct - groupPct);
+      } else if (row.budget !== 0) {
+        deviation = Math.max(100, Math.abs(groupPct));
+      }
+
+      const threshold = Math.max(25, Math.abs(groupPct) * 0.35);
+      if (deviation >= threshold && Math.abs(row.budget - row.facturacion) >= 1000) {
+        anomalies.push({
+          key: `${key}|${row.monthKey}`,
+          monthLabel: row.monthLabel,
+          groupLabel: group.label,
+          groupPct,
+          monthPct,
+          deviation,
+          facturacion: row.facturacion,
+          budget: row.budget,
+        });
+      }
+    });
+  });
+
+  return anomalies.sort((a, b) => b.deviation - a.deviation).slice(0, 10);
 }
 
 interface FilterSelectProps {
@@ -514,6 +601,9 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
   const chartRows = useMemo(() => buildChartRows(filteredRows, chartGroupBy), [chartGroupBy, filteredRows]);
   const chartMax = useMemo(() => Math.max(1, ...chartRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [chartRows]);
+  const monthlyRows = useMemo(() => buildChartRows(filteredRows, 'month'), [filteredRows]);
+  const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
+  const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
   const chartInsight = useMemo(() => {
     const rowsWithPct = chartRows.filter((row) => row.pct !== null && Number.isFinite(row.pct));
     if (rowsWithPct.length < 2) return 'Selecciona más de un grupo para valorar si el crecimiento es homogéneo.';
@@ -528,6 +618,26 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
     return `Revisa ${outliers.length} grupo${outliers.length === 1 ? '' : 's'} fuera de tendencia. Media ${formatPercent(average)}; mayor desviación ${formatPercent(maxDeviation)}.`;
   }, [chartRows]);
+  const monthlyInsight = useMemo(() => {
+    if (monthlyAnomalies.length > 0) {
+      const first = monthlyAnomalies[0];
+      return `Mayor desvío: ${first.groupLabel} en ${first.monthLabel}. La línea crece ${formatPercent(first.groupPct)} en total, pero ese mes marca ${formatPercent(first.monthPct)}.`;
+    }
+
+    const rowsWithPct = monthlyRows.filter((row) => row.pct !== null && Number.isFinite(row.pct));
+    if (rowsWithPct.length < 2) return 'La vista de líneas necesita varios meses con facturación para comparar la tendencia.';
+
+    const totalPct = totals.pct;
+    const outliers = totalPct === null
+      ? []
+      : rowsWithPct.filter((row) => Math.abs((row.pct || 0) - totalPct) >= Math.max(15, Math.abs(totalPct) * 0.35));
+
+    if (outliers.length === 0) {
+      return `Los meses se mueven cerca del crecimiento total de la selección (${formatPercent(totalPct)}).`;
+    }
+
+    return `Crecimiento total ${formatPercent(totalPct)}. Revisa ${outliers.map((row) => row.label).join(', ')} porque se aleja${outliers.length === 1 ? '' : 'n'} de esa tendencia.`;
+  }, [monthlyAnomalies, monthlyRows, totals.pct]);
 
   const options = useMemo(() => ({
     month: Array.from(new Set(comparisonRows.map((row) => row.monthLabel))).sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99)),
@@ -597,9 +707,20 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
         </p>
-        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-xs leading-5 text-[var(--text-secondary)]">
-          <span className="font-semibold text-[var(--text-primary)]">Lógica de áreas: </span>
-          Core = Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming. Grassroots = Real Federación Andaluza de Fútbol, The Pitch y equipaciones del core. B2B = Academy, B2B, B2B Clearance y B2B Reps del core. Pro Clubs = el resto de verticales y Equipaciones PRO del core.
+        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
+          <p className="font-semibold text-[var(--text-primary)]">Lógica completa de áreas</p>
+          <p className="mt-1">
+            Core: Fútbol Emotion, Basketball Emotion, Running Emotion y Brandstorming.
+          </p>
+          <p className="mt-1">
+            Grassroots: incluye siempre las verticales Real Federación Andaluza de Fútbol y The Pitch. Además, dentro del core, incluye los medios de venta Equipaciones, Equipaciones FEDS, Equipaciones Web B2B y Equipaciones Web B2C.
+          </p>
+          <p className="mt-1">
+            B2B: solo se clasifica dentro del core y únicamente para los medios de venta Academy, B2B, B2B Clearance y B2B Reps.
+          </p>
+          <p className="mt-1">
+            Pro Clubs: incluye todos los verticales que no forman parte del core, salvo los verticales definidos directamente como Grassroots. También incluye, dentro del core, el medio de venta Equipaciones PRO. Si aparece una combinación del core que no sea Grassroots, B2B ni Equipaciones PRO, se marca como Sin área para revisarla.
+          </p>
         </div>
       </section>
 
@@ -672,16 +793,23 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setActiveView('grafico')}
-                    className={`flex items-center gap-1 rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'grafico' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                    onClick={() => setActiveView('barras')}
+                    className={`flex items-center gap-1 rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'barras' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
                   >
                     <BarChart3 className="h-3.5 w-3.5" />
-                    Gráfico
+                    Barras
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('lineas')}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'lineas' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                  >
+                    Líneas
                   </button>
                 </div>
               </div>
               <p className="text-xs text-[var(--text-secondary)]">
-                Los filtros se combinan entre sí y recalculan totales, tabla y gráfico.
+                Los filtros se combinan entre sí y recalculan totales, tabla, barras y líneas.
               </p>
             </div>
 
@@ -697,7 +825,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <div className="flex flex-wrap gap-3">
-                {activeView === 'grafico' && (
+                {activeView === 'barras' && (
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Comparar por</span>
                     <select
@@ -746,54 +874,56 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               )}
             </div>
 
-            {activeView === 'tabla' ? (
-            <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
-              <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-xs">
-                <thead>
-                  <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Mes" sortKey="month" sort={sort} onSort={updateSort} /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Área" sortKey="area" sort={sort} onSort={updateSort} /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Vertical" sortKey="vertical" sort={sort} onSort={updateSort} /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Medio" sortKey="medio" sort={sort} onSort={updateSort} /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Región" sortKey="region" sort={sort} onSort={updateSort} /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Zona" sortKey="zona" sort={sort} onSort={updateSort} /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Facturación" sortKey="facturacion" sort={sort} onSort={updateSort} align="right" /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Budget" sortKey="budget" sort={sort} onSort={updateSort} align="right" /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Diferencia" sortKey="diff" sort={sort} onSort={updateSort} align="right" /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Variación" sortKey="pct" sort={sort} onSort={updateSort} align="right" /></th>
-                    <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Estado" sortKey="status" sort={sort} onSort={updateSort} /></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRows.map((row) => (
-                    <tr key={row.key} className="hover:bg-[var(--bg-primary)]">
-                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.monthLabel}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.area}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.vertical}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.medio}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.region}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.zona}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{row.hasFacturacion ? formatCurrency(row.facturacion) : '-'}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{row.hasBudget ? formatCurrency(row.budget) : '-'}</td>
-                      <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${row.diff >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(row.diff)}</td>
-                      <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${(row.pct ?? 0) >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatPercent(row.pct)}</td>
-                      <td className="border-b border-[var(--border)] px-3 py-2">
-                        <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${
-                          row.status === 'OK'
-                            ? 'bg-[var(--success-soft)] text-[var(--success)]'
-                            : row.status === 'Revisar' || row.status === 'Base cero'
-                              ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
-                              : 'bg-amber-50 text-[var(--warning)]'
-                        }`}>
-                          {row.status}
-                        </span>
-                      </td>
+            {activeView === 'tabla' && (
+              <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
+                <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-xs">
+                  <thead>
+                    <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Mes" sortKey="month" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Área" sortKey="area" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Vertical" sortKey="vertical" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Medio" sortKey="medio" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Región" sortKey="region" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Zona" sortKey="zona" sort={sort} onSort={updateSort} /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Facturación" sortKey="facturacion" sort={sort} onSort={updateSort} align="right" /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Budget" sortKey="budget" sort={sort} onSort={updateSort} align="right" /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Diferencia" sortKey="diff" sort={sort} onSort={updateSort} align="right" /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><SortButton label="Variación" sortKey="pct" sort={sort} onSort={updateSort} align="right" /></th>
+                      <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Estado" sortKey="status" sort={sort} onSort={updateSort} /></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            ) : (
+                  </thead>
+                  <tbody>
+                    {filteredRows.map((row) => (
+                      <tr key={row.key} className="hover:bg-[var(--bg-primary)]">
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.monthLabel}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.area}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.vertical}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.medio}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.region}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap">{row.zona}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{row.hasFacturacion ? formatCurrency(row.facturacion) : '-'}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{row.hasBudget ? formatCurrency(row.budget) : '-'}</td>
+                        <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${row.diff >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(row.diff)}</td>
+                        <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${(row.pct ?? 0) >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatPercent(row.pct)}</td>
+                        <td className="border-b border-[var(--border)] px-3 py-2">
+                          <span className={`rounded-md px-2 py-1 text-[11px] font-medium ${
+                            row.status === 'OK'
+                              ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                              : row.status === 'Revisar' || row.status === 'Base cero'
+                                ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
+                                : 'bg-amber-50 text-[var(--warning)]'
+                          }`}>
+                            {row.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {activeView === 'barras' && (
               <div className="rounded-md border border-[var(--border)] bg-white p-4">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -808,8 +938,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
                 <div className="space-y-3">
                   {chartRows.map((row) => {
-                    const facturacionWidth = Math.max(2, Math.min(100, (Math.abs(row.facturacion) / chartMax) * 100));
-                    const budgetWidth = Math.max(2, Math.min(100, (Math.abs(row.budget) / chartMax) * 100));
+                    const facturacionWidth = barWidth(row.facturacion, chartMax);
+                    const budgetWidth = barWidth(row.budget, chartMax);
                     const isPositive = (row.pct ?? 0) >= 0;
 
                     return (
@@ -841,6 +971,89 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            )}
+
+            {activeView === 'lineas' && (
+              <div className="rounded-md border border-[var(--border)] bg-white p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Tendencia mensual</p>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">{monthlyInsight}</p>
+                  </div>
+                  <div className="flex gap-4 text-xs text-[var(--text-secondary)]">
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#111827]" /> Budget</span>
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#9ca3af]" /> Facturación</span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <svg viewBox="0 0 760 260" className="h-[300px] min-w-[760px] w-full">
+                    <line x1="48" y1="220" x2="712" y2="220" stroke="#e5e7eb" strokeWidth="1" />
+                    <line x1="48" y1="50" x2="48" y2="220" stroke="#e5e7eb" strokeWidth="1" />
+                    <polyline points={linePoints(monthlyRows, (row) => row.facturacion, lineMax)} fill="none" stroke="#9ca3af" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                    <polyline points={linePoints(monthlyRows, (row) => row.budget, lineMax)} fill="none" stroke="#111827" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                    {monthlyRows.map((row, index) => {
+                      const budgetPoint = linePoint(row, index, monthlyRows, (r) => r.budget, lineMax);
+                      const facturacionPoint = linePoint(row, index, monthlyRows, (r) => r.facturacion, lineMax);
+                      return (
+                        <g key={row.label}>
+                          <circle cx={facturacionPoint.x} cy={facturacionPoint.y} r="4" fill="#9ca3af" />
+                          <circle cx={budgetPoint.x} cy={budgetPoint.y} r="4" fill="#111827" />
+                          <text x={budgetPoint.x} y="244" textAnchor="middle" className="fill-[var(--text-secondary)] text-[10px]">{row.label.replace(/^[0-9]+ · /, '')}</text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+
+                <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  {monthlyRows.map((row) => (
+                    <div key={row.label} className="rounded-md border border-[var(--border)] p-3">
+                      <p className="text-xs font-medium">{row.label}</p>
+                      <p className={`mt-1 text-sm font-semibold ${(row.pct ?? 0) >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatPercent(row.pct)}</p>
+                      <p className="mt-1 font-mono text-xs">{formatCurrency(row.budget)}</p>
+                      <p className="font-mono text-xs text-[var(--text-secondary)]">{formatCurrency(row.facturacion)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3">
+                  <p className="text-sm font-semibold">Desvíos mensuales frente al crecimiento de su línea</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    Compara cada mes contra el crecimiento total de la misma combinación de área, vertical, medio, región y zona. Sirve para localizar meses donde se ha metido presupuesto fuera de patrón.
+                  </p>
+                  {monthlyAnomalies.length === 0 ? (
+                    <p className="mt-3 text-xs font-medium text-[var(--success)]">No veo meses claramente fuera de la tendencia de su propia línea con los filtros actuales.</p>
+                  ) : (
+                    <div className="mt-3 overflow-x-auto rounded-md border border-[var(--border)] bg-white">
+                      <table className="w-full min-w-[980px] border-separate border-spacing-0 text-xs">
+                        <thead>
+                          <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Mes</th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Línea</th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. línea</th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. mes</th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {monthlyAnomalies.map((item) => (
+                            <tr key={item.key}>
+                              <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{item.monthLabel}</td>
+                              <td className="border-b border-[var(--border)] px-3 py-2">{item.groupLabel}</td>
+                              <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatPercent(item.groupPct)}</td>
+                              <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono text-[var(--danger)]">{formatPercent(item.monthPct)}</td>
+                              <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(item.budget)}</td>
+                              <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(item.facturacion)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
