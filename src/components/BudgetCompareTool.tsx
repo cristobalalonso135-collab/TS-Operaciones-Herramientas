@@ -600,7 +600,6 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   }, [filteredRows]);
 
   const chartRows = useMemo(() => buildChartRows(filteredRows, chartGroupBy), [chartGroupBy, filteredRows]);
-  const chartMax = useMemo(() => Math.max(1, ...chartRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [chartRows]);
   const monthlyRows = useMemo(() => buildChartRows(filteredRows, 'month'), [filteredRows]);
   const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
   const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
@@ -938,8 +937,9 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
                 <div className="space-y-3">
                   {chartRows.map((row) => {
-                    const facturacionWidth = barWidth(row.facturacion, chartMax);
-                    const budgetWidth = barWidth(row.budget, chartMax);
+                    const rowMax = Math.max(1, Math.abs(row.facturacion), Math.abs(row.budget));
+                    const facturacionWidth = barWidth(row.facturacion, rowMax);
+                    const budgetWidth = barWidth(row.budget, rowMax);
                     const isPositive = (row.pct ?? 0) >= 0;
 
                     return (
