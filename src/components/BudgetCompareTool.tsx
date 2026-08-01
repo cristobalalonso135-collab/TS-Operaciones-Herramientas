@@ -328,13 +328,20 @@ function findArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
 function findResponsable(area: string, line: Pick<ParsedLine, 'region' | 'zona'>): string {
   const normalizedArea = normalizeText(area);
   const country = normalizeCountry(line.region, line.zona);
+  const zona = normalizeText(line.zona);
 
   if (normalizedArea === 'pro clubs') return 'Pablo Domeque';
 
   if (normalizedArea === 'grassroots') {
-    if (country === 'espana' || country === 'portugal') return 'Santi Navarro';
-    if (country === 'italia') return 'Francesco Nunziato';
-    if (country === 'francia') return 'Maxime';
+    if (zona.includes('francia')) return 'Maxime';
+    if (zona.includes('italia')) return 'Francesco Nunziato';
+    if (
+      zona === 'portugal' ||
+      zona === 'norte' ||
+      zona === 'levante' ||
+      zona === 'centro-sur' ||
+      zona === 'centro sur'
+    ) return 'Santi Navarro';
     return 'Pendiente';
   }
 
@@ -514,6 +521,15 @@ function isEditableMonth(monthLabel: string, lockedThroughIndex: number): boolea
 function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): QualitySummary {
   const grouped = new Map<string, { label: string; facturacion: number; budget: number; rows: CompareRow[] }>();
 
+  const deviationAfterBudget = (row: CompareRow, budget: number, targetPct: number): number => {
+    if (row.facturacion !== 0) {
+      const pct = ((budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
+      return Math.abs(pct - targetPct);
+    }
+
+    return budget !== 0 ? Math.max(100, Math.abs(targetPct)) : 0;
+  };
+
   rows.forEach((row) => {
     const key = anomalyBaseKey(row);
     const current = grouped.get(key) || { label: anomalyLabel(row), facturacion: 0, budget: 0, rows: [] };
@@ -597,7 +613,12 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
       const amount = Math.min(Math.abs(donor.suggestedAdjustment), Math.abs(receiver.suggestedAdjustment));
       if (amount < 1000) return;
 
-      const currentImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
+      const donorAfterDeviation = deviationAfterBudget(donor.row, donor.row.budget - amount, groupPct);
+      const receiverAfterDeviation = deviationAfterBudget(receiver.row, receiver.row.budget + amount, groupPct);
+      const beforeImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
+      const afterImpact = (Math.min(120, donorAfterDeviation) * donor.weight) + (Math.min(120, receiverAfterDeviation) * receiver.weight);
+      const currentImpact = Math.max(0, beforeImpact - afterImpact);
+      if (currentImpact <= 0) return;
 
       operations.push({
         key: `${key}|${donor.row.monthKey}|${receiver.row.monthKey}`,
@@ -619,18 +640,20 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   const averageDeviation = totalWeight > 0 ? weightedDeviation / totalWeight : 0;
   const score = Math.max(0, Math.min(10, 10 - (averageDeviation / 18)));
   let runningScore = score;
-  const rankedOperations = operations
+  const rankedOperations: QualityOperation[] = [];
+  operations
     .sort((a, b) => b.estimatedGain - a.estimatedGain)
-    .slice(0, 8)
-    .map((operation) => {
+    .forEach((operation) => {
+      if (rankedOperations.length >= 8) return;
       const rawGain = totalWeight > 0 ? operation.estimatedGain / totalWeight / 18 : 0;
       const estimatedGain = Math.min(Math.max(0, 10 - runningScore), rawGain);
+      if (estimatedGain < 0.05) return;
       runningScore = Math.min(10, runningScore + estimatedGain);
-      return {
+      rankedOperations.push({
         ...operation,
         estimatedGain,
         resultingScore: runningScore,
-      };
+      });
     });
 
   return {
@@ -1060,9 +1083,9 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             <h3 className="mt-1 text-lg font-semibold">Asignación de responsable</h3>
             <div className="mt-4 space-y-3 text-sm text-[var(--text-secondary)]">
               <p><span className="font-semibold text-[var(--text-primary)]">Pro Clubs:</span> Pablo Domeque.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Iberia:</span> Santi Navarro cuando región o zona sean España o Portugal.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia:</span> Francesco Nunziato cuando región o zona sea Italia.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Francia:</span> Maxime cuando región o zona sea Francia.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Iberia:</span> Santi Navarro cuando la zona sea Centro-Sur, Levante, Norte o Portugal.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia:</span> Francesco Nunziato cuando la zona sea Italia Centro-Sur o Italia Norte.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Francia:</span> Maxime cuando la zona sea Francia.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">B2B Francia:</span> Maxime.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">B2B no Francia:</span> Santi Navarro.</p>
             </div>
