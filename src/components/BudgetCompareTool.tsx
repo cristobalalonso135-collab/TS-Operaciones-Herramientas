@@ -72,6 +72,30 @@ const MONTHS = [
 ] as const;
 
 const MONTH_ORDER: Map<string, number> = new Map(MONTHS.map(([, label], index) => [label, index]));
+const CORE_VERTICALS = new Set([
+  'futbol emotion',
+  'football emotion',
+  'basketball emotion',
+  'running emotion',
+  'brandstorming',
+]);
+const GRASSROOTS_VERTICALS = new Set([
+  'real federacion andaluza de futbol',
+]);
+const GRASSROOTS_MEDIOS = new Set([
+  'equipaciones',
+  'equipaciones feds',
+  'equipaciones web b2b',
+  'equipaciones web b2c',
+]);
+const B2B_MEDIOS = new Set([
+  'academy',
+  'b2b',
+  'b2b clearance',
+  'b2b reps',
+  'b2b res',
+  'b2b teams',
+]);
 
 function normalizeText(value: unknown): string {
   return String(value ?? '')
@@ -152,6 +176,17 @@ function normalizeLineForComparison(line: ParsedLine, area: string): ParsedLine 
   }
 
   return { ...line, region: normalizedRegion, zona: line.zona.trim() };
+}
+
+function deriveBusinessArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
+  const vertical = normalizeText(line.vertical);
+  const medio = normalizeText(line.medio);
+
+  if (GRASSROOTS_VERTICALS.has(vertical)) return 'Grassroots';
+  if (!CORE_VERTICALS.has(vertical)) return 'Pro Clubs';
+  if (GRASSROOTS_MEDIOS.has(medio)) return 'Grassroots';
+  if (B2B_MEDIOS.has(medio)) return 'B2B';
+  return 'Pro Clubs';
 }
 
 function parseAmount(value: unknown): number {
@@ -315,6 +350,7 @@ function createAreaLookup(mappings: AreaMapping[]): AreaLookup {
 
 function findArea(line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>, lookup: AreaLookup): string {
   return (
+    deriveBusinessArea(line) ||
     lookup.simple.get(areaSimpleKey(line)) ||
     lookup.exact.get(areaKey(line)) ||
     lookup.wildcard.get(areaWildcardKey(line)) ||
@@ -634,12 +670,12 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="area-compare-input"
-            label="Áreas"
+            label="Áreas (opcional)"
             onFileLoaded={handleLoadAreas}
           />
           {areaFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {areaFile}</p>}
           <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            Grassroots cruza con región y zona. Pro Clubs cruza a nivel país. B2B separa Francia y agrupa el resto como Sin país.
+            La app calcula el área con regla interna. Grassroots cruza con región y zona. Pro Clubs cruza a nivel país. B2B separa Francia y agrupa el resto como Sin país.
           </p>
         </div>
       </section>
