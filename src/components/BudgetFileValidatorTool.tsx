@@ -1190,7 +1190,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const loadedVsPlannedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance, true), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance, cogsFiscalYears), [leftWorkbook, moneyTolerance, cogsFiscalYears]);
-  const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance, cogsFiscalYears), [leftWorkbook, moneyTolerance, cogsFiscalYears]);
+  const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
   const monthlyFacturacionCorrection = useMemo(() => buildMonthlyFacturacionCorrection(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
@@ -1282,7 +1282,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 <div>
                   <p className="text-sm font-semibold">COGS corregido</p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Facturación vacía deja COGS vacío, facturación 0 deja COGS 0 y el resto recalcula con el porcentaje de cada línea dentro de su FY.
+                    La descarga corrige todos los FY presentes en el archivo. Facturación vacía deja COGS vacío, facturación 0 deja COGS 0 y el resto recalcula con el porcentaje de cada línea dentro de su FY.
                   </p>
                 </div>
                 <button
