@@ -545,9 +545,7 @@ function compareValueMaps(
 
     issueCount += 1;
     lineDiffs.push({ key: `${label}|${key}`, line, leftTotal: leftValue, rightTotal: rightValue, diff, absDiff: Math.abs(diff) });
-    if (issues.length < 250) {
-      issues.push({ key: `${label}|${key}`, line, date, leftCell: left?.cell, rightCell: right?.cell, leftValue, rightValue, diff });
-    }
+    issues.push({ key: `${label}|${key}`, line, date, leftCell: left?.cell, rightCell: right?.cell, leftValue, rightValue, diff });
   });
 
   return {
@@ -924,18 +922,16 @@ function compareWideValues(
         issueCount += 1;
         significantDiff += diff;
         absDiff += Math.abs(diff);
-        if (issues.length < 250) {
-          issues.push({
-            key: `${label}|${key}|${date}`,
-            line: lineLabel,
-            date,
-            leftCell: leftLine?.cells.get(date),
-            rightCell: rightLine?.cells.get(date),
-            leftValue,
-            rightValue,
-            diff,
-          });
-        }
+        issues.push({
+          key: `${label}|${key}|${date}`,
+          line: lineLabel,
+          date,
+          leftCell: leftLine?.cells.get(date),
+          rightCell: rightLine?.cells.get(date),
+          leftValue,
+          rightValue,
+          diff,
+        });
       }
     });
 
