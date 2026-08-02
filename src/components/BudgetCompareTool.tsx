@@ -5,13 +5,21 @@ import FileUpload from '@/components/FileUpload';
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, BarChart3, Download, FileSpreadsheet } from 'lucide-react';
 
 type SourceKind = 'budget' | 'facturacion';
-type StatusFilter = 'Todos' | CompareStatus;
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
 type CompareView = 'tabla' | 'barras' | 'lineas' | 'operaciones' | 'pendientes';
 type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
 type ComparatorTab = 'analisis' | 'reglas';
+type FilterMode = 'include' | 'exclude';
+type FilterKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'status';
+
+interface MultiFilterState {
+  mode: FilterMode;
+  values: string[];
+}
+
+type CompareFilters = Record<FilterKey, MultiFilterState>;
 
 interface ParsedLine {
   monthKey: string;
@@ -407,6 +415,16 @@ function uniqueOptions(rows: CompareRow[], getter: (row: CompareRow) => string):
   return Array.from(new Set(rows.map(getter).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es'));
 }
 
+function createFilter(mode: FilterMode = 'include', values: string[] = []): MultiFilterState {
+  return { mode, values };
+}
+
+function filterMatches(filter: MultiFilterState, value: string): boolean {
+  if (filter.values.length === 0) return true;
+  const selected = filter.values.includes(value);
+  return filter.mode === 'include' ? selected : !selected;
+}
+
 function getChartGroup(row: CompareRow, groupBy: ChartGroupKey): { label: string; order: number } {
   if (groupBy === 'total') return { label: 'Total selección', order: 0 };
   if (groupBy === 'month') return { label: row.monthLabel, order: MONTH_ORDER.get(row.monthLabel) ?? 99 };
@@ -681,28 +699,73 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   };
 }
 
-interface FilterSelectProps {
+interface MultiFilterSelectProps {
   label: string;
-  value: string;
+  value: MultiFilterState;
   options: string[];
-  onChange: (value: string) => void;
+  onChange: (value: MultiFilterState) => void;
 }
 
-function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
+function MultiFilterSelect({ label, value, options, onChange }: MultiFilterSelectProps) {
+  const summary = value.values.length === 0
+    ? 'Todos'
+    : `${value.mode === 'include' ? 'Incluye' : 'Excluye'} ${value.values.length}`;
+
+  const toggleValue = (option: string) => {
+    const values = value.values.includes(option)
+      ? value.values.filter((item) => item !== option)
+      : [...value.values, option];
+    onChange({ ...value, values });
+  };
+
   return (
-    <label className="space-y-1">
+    <div className="space-y-1">
       <span className="text-xs font-medium text-[var(--text-secondary)]">{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none transition focus:border-[var(--accent)]"
-      >
-        <option value="Todos">Todos</option>
-        {options.map((option) => (
-          <option key={option} value={option}>{option}</option>
-        ))}
-      </select>
-    </label>
+      <details className="group relative">
+        <summary className="flex h-10 cursor-pointer list-none items-center justify-between rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none transition hover:border-[var(--accent)]">
+          <span className="min-w-0 truncate">{summary}</span>
+          <span className="text-xs text-[var(--text-muted)]">▾</span>
+        </summary>
+        <div className="absolute z-30 mt-1 w-72 rounded-md border border-[var(--border)] bg-white p-2 shadow-lg">
+          <div className="mb-2 grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              onClick={() => onChange({ ...value, mode: 'include' })}
+              className={`rounded px-2 py-1.5 text-xs font-medium ${value.mode === 'include' ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}
+            >
+              Incluir
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ ...value, mode: 'exclude' })}
+              className={`rounded px-2 py-1.5 text-xs font-medium ${value.mode === 'exclude' ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}
+            >
+              Excluir
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(createFilter(value.mode))}
+            className="mb-2 w-full rounded border border-[var(--border)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)]"
+          >
+            Limpiar selección
+          </button>
+          <div className="max-h-64 space-y-1 overflow-auto pr-1">
+            {options.map((option) => (
+              <label key={option} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-[var(--bg-soft)]">
+                <input
+                  type="checkbox"
+                  checked={value.values.includes(option)}
+                  onChange={() => toggleValue(option)}
+                  className="h-4 w-4 accent-[var(--text-primary)]"
+                />
+                <span className="min-w-0 truncate" title={option}>{option}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -746,16 +809,16 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [activeView, setActiveView] = useState<CompareView>('tabla');
   const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
   const [lockedThroughIndex, setLockedThroughIndex] = useState(4);
-  const [filters, setFilters] = useState({
-    month: 'Todos',
-    area: 'Todos',
-    responsable: 'Todos',
-    subresponsable: 'Todos',
-    vertical: 'Todos',
-    medio: 'Todos',
-    region: 'Todos',
-    zona: 'Todos',
-    status: 'Todos' as StatusFilter,
+  const [filters, setFilters] = useState<CompareFilters>({
+    month: createFilter(),
+    area: createFilter(),
+    responsable: createFilter(),
+    subresponsable: createFilter(),
+    vertical: createFilter(),
+    medio: createFilter(),
+    region: createFilter(),
+    zona: createFilter(),
+    status: createFilter(),
   });
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
 
@@ -842,15 +905,15 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
   const filteredRows = useMemo(() => {
     const filtered = comparisonRows.filter((row) => (
-      (filters.month === 'Todos' || row.monthLabel === filters.month) &&
-      (filters.area === 'Todos' || row.area === filters.area) &&
-      (filters.responsable === 'Todos' || row.responsable === filters.responsable) &&
-      (filters.subresponsable === 'Todos' || row.subresponsable === filters.subresponsable) &&
-      (filters.vertical === 'Todos' || row.vertical === filters.vertical) &&
-      (filters.medio === 'Todos' || row.medio === filters.medio) &&
-      (filters.region === 'Todos' || row.region === filters.region) &&
-      (filters.zona === 'Todos' || row.zona === filters.zona) &&
-      (filters.status === 'Todos' || row.status === filters.status)
+      filterMatches(filters.month, row.monthLabel) &&
+      filterMatches(filters.area, row.area) &&
+      filterMatches(filters.responsable, row.responsable) &&
+      filterMatches(filters.subresponsable, row.subresponsable) &&
+      filterMatches(filters.vertical, row.vertical) &&
+      filterMatches(filters.medio, row.medio) &&
+      filterMatches(filters.region, row.region) &&
+      filterMatches(filters.zona, row.zona) &&
+      filterMatches(filters.status, row.status)
     ));
 
     const getValue = (row: CompareRow): string | number => {
@@ -1008,7 +1071,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     }));
   };
 
-  const updateFilter = (key: keyof typeof filters, value: string) => {
+  const updateFilter = (key: FilterKey, value: MultiFilterState) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
@@ -1280,15 +1343,15 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             </div>
 
             <div className="mb-4 grid gap-3 md:grid-cols-3 xl:grid-cols-9">
-              <FilterSelect label="Mes" value={filters.month} options={options.month} onChange={(value) => updateFilter('month', value)} />
-              <FilterSelect label="Área" value={filters.area} options={options.area} onChange={(value) => updateFilter('area', value)} />
-              <FilterSelect label="Responsable" value={filters.responsable} options={options.responsable} onChange={(value) => updateFilter('responsable', value)} />
-              <FilterSelect label="Subresponsable" value={filters.subresponsable} options={options.subresponsable} onChange={(value) => updateFilter('subresponsable', value)} />
-              <FilterSelect label="Vertical" value={filters.vertical} options={options.vertical} onChange={(value) => updateFilter('vertical', value)} />
-              <FilterSelect label="Medio" value={filters.medio} options={options.medio} onChange={(value) => updateFilter('medio', value)} />
-              <FilterSelect label="Región" value={filters.region} options={options.region} onChange={(value) => updateFilter('region', value)} />
-              <FilterSelect label="Zona" value={filters.zona} options={options.zona} onChange={(value) => updateFilter('zona', value)} />
-              <FilterSelect label="Estado" value={filters.status} options={options.status} onChange={(value) => updateFilter('status', value as StatusFilter)} />
+              <MultiFilterSelect label="Mes" value={filters.month} options={options.month} onChange={(value) => updateFilter('month', value)} />
+              <MultiFilterSelect label="Área" value={filters.area} options={options.area} onChange={(value) => updateFilter('area', value)} />
+              <MultiFilterSelect label="Responsable" value={filters.responsable} options={options.responsable} onChange={(value) => updateFilter('responsable', value)} />
+              <MultiFilterSelect label="Subresponsable" value={filters.subresponsable} options={options.subresponsable} onChange={(value) => updateFilter('subresponsable', value)} />
+              <MultiFilterSelect label="Vertical" value={filters.vertical} options={options.vertical} onChange={(value) => updateFilter('vertical', value)} />
+              <MultiFilterSelect label="Medio" value={filters.medio} options={options.medio} onChange={(value) => updateFilter('medio', value)} />
+              <MultiFilterSelect label="Región" value={filters.region} options={options.region} onChange={(value) => updateFilter('region', value)} />
+              <MultiFilterSelect label="Zona" value={filters.zona} options={options.zona} onChange={(value) => updateFilter('zona', value)} />
+              <MultiFilterSelect label="Estado" value={filters.status} options={options.status} onChange={(value) => updateFilter('status', value)} />
             </div>
 
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
