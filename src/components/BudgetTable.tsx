@@ -40,6 +40,40 @@ function formatDateHeader(dateValue: string): string {
   return `${day}/${month}/${year}`;
 }
 
+function normalizeMatchPart(value: unknown): string {
+  return String(value ?? '').replace(/\u00a0/g, ' ').trim().toLowerCase();
+}
+
+const EXPORT_VERTICAL_ID_BY_NAME: Record<string, string> = {
+  'fútbol emotion': '1',
+  'futbol emotion': '1',
+  'football emotion': '1',
+  'basketball emotion': '2',
+  'the pitch': '6',
+  'running emotion': '7',
+  'ekinsports.com': '7',
+  'rcd mallorca': '101',
+  'sd huesca': '102',
+  'nàstic de tarragona': '103',
+  'nastic de tarragona': '103',
+  'real zaragoza': '104',
+  'real federación andaluza de fútbol': '105',
+  'real federacion andaluza de futbol': '105',
+  'real club deportivo a coruña': '106',
+  'real club deportivo a coruna': '106',
+  'kings league españa': '1001',
+  'kings league espana': '1001',
+  'kings league italia': '1002',
+  'kings league francia': '1003',
+  'kings league alemania': '1004',
+};
+
+function getExportVerticalId(line: BudgetLineDaily): string {
+  const id = String(line.id_vertical || '').trim();
+  if (id) return id;
+  return EXPORT_VERTICAL_ID_BY_NAME[normalizeMatchPart(line.vertical)] || String(line.vertical || '').trim();
+}
+
 function getNoBudgetReason(dateValue: string): string {
   const holidayName = getHolidayName(dateValue);
   if (holidayName) return `Sin budget: festivo Zaragoza - ${holidayName}`;
@@ -59,7 +93,7 @@ function formatZonaForMatch(zona: string): string {
 
 function getExportIndexKey(line: BudgetLineDaily): string {
   return [
-    line.id_vertical || line.vertical,
+    getExportVerticalId(line),
     line.medio_venta,
     formatZonaForMatch(line.zona),
     line.cod_mercado || line.pais,
@@ -211,7 +245,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
       const key = getExportIndexKey(line);
       const existing = rowsByKey.get(key);
       const row = existing || {
-        idVertical: line.id_vertical || line.vertical,
+        idVertical: getExportVerticalId(line),
         nombre: line.medio_venta,
         zona: formatZonaForMatch(line.zona),
         codMercado: line.cod_mercado || line.pais,
