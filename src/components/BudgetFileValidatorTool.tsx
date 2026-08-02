@@ -16,6 +16,7 @@ interface WideLine {
   zona: string;
   codMercado: string;
   values: Map<string, any>;
+  cells: Map<string, string>;
 }
 
 interface CogsIssue {
@@ -23,6 +24,7 @@ interface CogsIssue {
   type: string;
   line: string;
   date?: string;
+  cell?: string;
   facturacion?: number | null;
   cogs?: number | null;
   expected?: number | null;
@@ -62,6 +64,8 @@ interface BudgetDiffIssue {
   key: string;
   line: string;
   date?: string;
+  leftCell?: string;
+  rightCell?: string;
   leftValue: number;
   rightValue: number;
   diff: number;
@@ -95,7 +99,7 @@ interface CombinedBudgetDiffSummary {
   summaries: BudgetDiffSummary[];
 }
 
-const MONEY_TOLERANCE = 0.05;
+const DEFAULT_MONEY_TOLERANCE = 0.2;
 const RATE_TOLERANCE = 0.001;
 
 function normalizeText(value: unknown): string {
@@ -164,6 +168,17 @@ function numericValue(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function excelColumnName(index: number): string {
+  let current = index + 1;
+  let name = '';
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    current = Math.floor((current - 1) / 26);
+  }
+  return name;
+}
+
 function findWideHeaderIndex(rows: any[][]): number {
   return rows.findIndex((row) => {
     const normalized = row.map((cell) => normalizeHeader(cell));
@@ -209,7 +224,7 @@ function parseWideSheet(rows: any[][], fyStartYear: number): Map<string, WideLin
     ));
   const lines = new Map<string, WideLine>();
 
-  rows.slice(headerIndex + 1).forEach((row) => {
+  rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
     const idVertical = String(row[0] ?? '').trim();
     const nombre = String(row[1] ?? '').trim();
     const zona = String(row[2] ?? '').trim();
@@ -218,8 +233,13 @@ function parseWideSheet(rows: any[][], fyStartYear: number): Map<string, WideLin
     if (!key.replace(/\|/g, '')) return;
 
     const values = new Map<string, any>();
-    dateColumns.forEach(({ index, date }) => values.set(date, row[index] ?? null));
-    lines.set(key, { key, idVertical, nombre, zona, codMercado, values });
+    const cells = new Map<string, string>();
+    const rowNumber = headerIndex + 2 + rowOffset;
+    dateColumns.forEach(({ index, date }) => {
+      values.set(date, row[index] ?? null);
+      cells.set(date, `${excelColumnName(index)}${rowNumber}`);
+    });
+    lines.set(key, { key, idVertical, nombre, zona, codMercado, values, cells });
   });
 
   return lines;
@@ -247,7 +267,7 @@ function parseWideSheetForDates(rows: any[][], dates: string[]): Map<string, Wid
     .filter((item): item is { index: number; date: string } => !!item.date && wantedDates.has(item.date));
   const lines = new Map<string, WideLine>();
 
-  rows.slice(headerIndex + 1).forEach((row) => {
+  rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
     const idVertical = String(row[0] ?? '').trim();
     const nombre = String(row[1] ?? '').trim();
     const zona = String(row[2] ?? '').trim();
@@ -256,8 +276,13 @@ function parseWideSheetForDates(rows: any[][], dates: string[]): Map<string, Wid
     if (!key.replace(/\|/g, '')) return;
 
     const values = new Map<string, any>();
-    dateColumns.forEach(({ index, date }) => values.set(date, row[index] ?? null));
-    lines.set(key, { key, idVertical, nombre, zona, codMercado, values });
+    const cells = new Map<string, string>();
+    const rowNumber = headerIndex + 2 + rowOffset;
+    dateColumns.forEach(({ index, date }) => {
+      values.set(date, row[index] ?? null);
+      cells.set(date, `${excelColumnName(index)}${rowNumber}`);
+    });
+    lines.set(key, { key, idVertical, nombre, zona, codMercado, values, cells });
   });
 
   return lines;
@@ -285,7 +310,7 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number): CogsValidation | null {
+function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number, tolerance: number): CogsValidation | null {
   if (!workbook) return null;
 
   const factSheet = findFacturacionSheet(workbook);
@@ -343,20 +368,20 @@ function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number): Cog
 
       if (factBlank && !cogsBlank) {
         lineIssues += 1;
-        issues.push({ key: `${key}|${date}|blank-fact`, type: 'COGS con facturación vacía', line: lineLabel, date, facturacion: null, cogs });
+        issues.push({ key: `${key}|${date}|blank-fact`, type: 'COGS con facturación vacía', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: null, cogs });
         return;
       }
 
       if (!factBlank && cogsBlank) {
         lineIssues += 1;
-        issues.push({ key: `${key}|${date}|blank-cogs`, type: 'Facturación con COGS vacío', line: lineLabel, date, facturacion: fact, cogs: null });
+        issues.push({ key: `${key}|${date}|blank-cogs`, type: 'Facturación con COGS vacío', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: fact, cogs: null });
         return;
       }
 
       if (!fact || fact === 0) {
-        if (Math.abs(cogs || 0) > MONEY_TOLERANCE) {
+        if (Math.abs(cogs || 0) > tolerance) {
           lineIssues += 1;
-          issues.push({ key: `${key}|${date}|zero-fact`, type: 'Facturación 0 con COGS distinto de 0', line: lineLabel, date, facturacion: fact, cogs });
+          issues.push({ key: `${key}|${date}|zero-fact`, type: 'Facturación 0 con COGS distinto de 0', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: fact, cogs });
         }
         return;
       }
@@ -375,10 +400,10 @@ function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number): Cog
         const expected = fact * cogsRate;
         const diff = cogs - expected;
         const ratio = cogs / fact;
-        if (Math.abs(diff) > MONEY_TOLERANCE && Math.abs(ratio - cogsRate) > RATE_TOLERANCE) {
+        if (Math.abs(diff) > tolerance && Math.abs(ratio - cogsRate) > RATE_TOLERANCE) {
           lineIssues += 1;
           if (issues.length < 250) {
-            issues.push({ key: `${key}|${date}|rate`, type: 'COGS no mantiene el porcentaje de la línea', line: lineLabel, date, facturacion: fact, cogs, expected, diff, ratio });
+            issues.push({ key: `${key}|${date}|rate`, type: 'COGS no mantiene el porcentaje de la línea', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: fact, cogs, expected, diff, ratio });
           }
         }
       });
@@ -416,13 +441,13 @@ function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number): Cog
   };
 }
 
-function validateCogsAllFiscalYears(workbook: WorkbookUpload | null): CogsValidation | null {
+function validateCogsAllFiscalYears(workbook: WorkbookUpload | null, tolerance: number): CogsValidation | null {
   if (!workbook) return null;
   const years = getFiscalYearsInWorkbook(workbook);
-  if (years.length === 0) return validateCogs(workbook, new Date().getFullYear());
+  if (years.length === 0) return validateCogs(workbook, new Date().getFullYear(), tolerance);
 
   const validations = years
-    .map((year) => ({ year, validation: validateCogs(workbook, year) }))
+    .map((year) => ({ year, validation: validateCogs(workbook, year, tolerance) }))
     .filter((item): item is { year: number; validation: CogsValidation } => !!item.validation);
 
   if (validations.length === 0) return null;
@@ -449,7 +474,8 @@ function compareWideValues(
   label: string,
   leftSheet: { name: string; rows: any[][] } | null,
   rightSheet: { name: string; rows: any[][] } | null,
-  dates: string[]
+  dates: string[],
+  tolerance: number
 ): BudgetDiffSummary {
   if (!leftSheet || !rightSheet) {
     return {
@@ -475,6 +501,7 @@ function compareWideValues(
   let totalLeft = 0;
   let totalRight = 0;
   let checkedCells = 0;
+  let issueCount = 0;
 
   keys.forEach((key) => {
     const leftLine = leftLines.get(key);
@@ -485,31 +512,45 @@ function compareWideValues(
     const lineLabel = [line.idVertical, line.nombre, line.zona, line.codMercado].filter(Boolean).join(' · ');
     let leftTotal = 0;
     let rightTotal = 0;
+    let significantDiff = 0;
     let absDiff = 0;
 
     dates.forEach((date) => {
       const leftValue = numericValue(leftLine?.values.get(date)) || 0;
       const rightValue = numericValue(rightLine?.values.get(date)) || 0;
       const diff = rightValue - leftValue;
-      if (Math.abs(leftValue) > MONEY_TOLERANCE || Math.abs(rightValue) > MONEY_TOLERANCE) checkedCells += 1;
+      if (Math.abs(leftValue) > tolerance || Math.abs(rightValue) > tolerance) checkedCells += 1;
       leftTotal += leftValue;
       rightTotal += rightValue;
-      absDiff += Math.abs(diff);
-      if (Math.abs(diff) > MONEY_TOLERANCE && issues.length < 250) {
-        issues.push({ key: `${label}|${key}|${date}`, line: lineLabel, date, leftValue, rightValue, diff });
+
+      if (Math.abs(diff) > tolerance) {
+        issueCount += 1;
+        significantDiff += diff;
+        absDiff += Math.abs(diff);
+        if (issues.length < 250) {
+          issues.push({
+            key: `${label}|${key}|${date}`,
+            line: lineLabel,
+            date,
+            leftCell: leftLine?.cells.get(date),
+            rightCell: rightLine?.cells.get(date),
+            leftValue,
+            rightValue,
+            diff,
+          });
+        }
       }
     });
 
-    const diff = rightTotal - leftTotal;
     totalLeft += leftTotal;
     totalRight += rightTotal;
-    if (Math.abs(diff) > MONEY_TOLERANCE || absDiff > MONEY_TOLERANCE) {
-      lineDiffs.push({ key: `${label}|${key}`, line: lineLabel, leftTotal, rightTotal, diff, absDiff });
+    if (absDiff > tolerance) {
+      lineDiffs.push({ key: `${label}|${key}`, line: lineLabel, leftTotal, rightTotal, diff: significantDiff, absDiff });
     }
   });
 
   return {
-    ok: lineDiffs.length === 0,
+    ok: issueCount === 0,
     sheetLeft: leftSheet.name,
     sheetRight: rightSheet.name,
     label,
@@ -517,13 +558,12 @@ function compareWideValues(
     totalRight,
     diff: totalRight - totalLeft,
     checkedCells,
-    issueCount: issues.length,
+    issueCount,
     lines: lineDiffs.sort((a, b) => b.absDiff - a.absDiff).slice(0, 30),
     issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
   };
 }
-
-function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUpload | null): CombinedBudgetDiffSummary | null {
+function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUpload | null, tolerance: number): CombinedBudgetDiffSummary | null {
   if (!left || !right) return null;
 
   const factRight = findFacturacionSheet(right);
@@ -531,8 +571,8 @@ function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUplo
   const factDates = factRight ? getWideSheetDates(factRight.rows) : [];
   const cogsDates = cogsRight ? getWideSheetDates(cogsRight.rows) : [];
   const summaries = [
-    compareWideValues('Facturación', findFacturacionSheet(left), factRight, factDates),
-    compareWideValues('COGS', findCogsSheet(left), cogsRight, cogsDates),
+    compareWideValues('Facturación', findFacturacionSheet(left), factRight, factDates, tolerance),
+    compareWideValues('COGS', findCogsSheet(left), cogsRight, cogsDates, tolerance),
   ];
 
   return { ok: summaries.every((summary) => summary.ok), summaries };
@@ -551,9 +591,10 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const [leftWorkbook, setLeftWorkbook] = useState<WorkbookUpload | null>(null);
   const [rightWorkbook, setRightWorkbook] = useState<WorkbookUpload | null>(null);
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
+  const [moneyTolerance, setMoneyTolerance] = useState(DEFAULT_MONEY_TOLERANCE);
 
-  const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook), [leftWorkbook, rightWorkbook]);
-  const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook), [leftWorkbook]);
+  const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
+  const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
     const workbook = { sheets, fileName };
@@ -605,6 +646,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Tipo</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celda</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Esperado</th>
@@ -617,6 +659,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                         <td className="px-3 py-2 text-[var(--danger)]">{issue.type}</td>
                         <td className="px-3 py-2 font-medium">{issue.line}</td>
                         <td className="px-3 py-2">{displayDate(issue.date)}</td>
+                        <td className="px-3 py-2 font-mono">{issue.cell || '-'}</td>
                         <td className="px-3 py-2 text-right font-mono">{issue.facturacion === undefined || issue.facturacion === null ? '-' : formatCurrency(issue.facturacion)}</td>
                         <td className="px-3 py-2 text-right font-mono">{issue.cogs === undefined || issue.cogs === null ? '-' : formatCurrency(issue.cogs)}</td>
                         <td className="px-3 py-2 text-right font-mono">{issue.expected === undefined || issue.expected === null ? '-' : formatCurrency(issue.expected)}</td>
@@ -669,7 +712,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
         <div>
           <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Diferencias cuantitativas</p>
           <h3 className="mt-1 text-lg font-semibold">{title}</h3>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">Compara importes FY de la hoja de facturación, línea a línea y día a día.</p>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">Compara importes línea a línea y día a día. Solo marca incidencias cuando la diferencia por celda supera el umbral.</p>
         </div>
         {summary && <StatusPill ok={summary.ok} />}
       </div>
@@ -688,14 +731,20 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
               <p className="mt-1 text-lg font-semibold">{formatCurrency(summary.totalRight)}</p>
             </div>
             <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Diferencia</p>
-              <p className={`mt-1 text-lg font-semibold ${Math.abs(summary.diff) <= MONEY_TOLERANCE ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(summary.diff)}</p>
+              <p className="text-xs text-[var(--text-secondary)]">Diferencia total</p>
+              <p className={`mt-1 text-lg font-semibold ${Math.abs(summary.diff) <= moneyTolerance ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(summary.diff)}</p>
             </div>
             <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Celdas con diferencia</p>
+              <p className="text-xs text-[var(--text-secondary)]">Celdas &gt; umbral</p>
               <p className="mt-1 text-lg font-semibold">{summary.issueCount.toLocaleString('de-DE')}</p>
             </div>
           </div>
+
+          {summary.issueCount === 0 && Math.abs(summary.diff) > 0 && (
+            <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm text-[var(--text-secondary)]">
+              No hay celdas por encima del umbral. La diferencia total viene de redondeos pequeños acumulados.
+            </p>
+          )}
 
           {summary.lines.length > 0 && (
             <div className="rounded-md border border-[var(--border)]">
@@ -707,8 +756,8 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. absoluta</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. neta &gt; umbral</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Suma dif. &gt; umbral</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -717,7 +766,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                         <td className="px-3 py-2 font-medium">{line.line}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.leftTotal)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.rightTotal)}</td>
-                        <td className={`px-3 py-2 text-right font-mono ${Math.abs(line.diff) > MONEY_TOLERANCE ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{formatCurrency(line.diff)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${Math.abs(line.diff) > moneyTolerance ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{formatCurrency(line.diff)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.absDiff)}</td>
                       </tr>
                     ))}
@@ -736,6 +785,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                     <tr>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celdas</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
@@ -746,6 +796,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                       <tr key={issue.key} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2 font-medium">{issue.line}</td>
                         <td className="px-3 py-2">{displayDate(issue.date)}</td>
+                        <td className="px-3 py-2 font-mono">{[issue.leftCell, issue.rightCell].filter(Boolean).join(' / ') || '-'}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.leftValue)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.rightValue)}</td>
                         <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(issue.diff)}</td>
@@ -802,6 +853,17 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <p className="mt-1 text-sm text-[var(--text-secondary)]">Flujo de revisión: igualdad de archivos, validación COGS y comparación cargado vs previsto.</p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs text-[var(--text-secondary)]">Umbral €</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={moneyTolerance}
+                onChange={(event) => setMoneyTolerance(Math.max(0, Number(event.target.value) || 0))}
+                className="h-9 w-28 rounded-md border border-[var(--border)] bg-white px-3 text-right text-sm outline-none focus:border-[var(--text-primary)]"
+              />
+            </label>
             <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
               {[
                 [1, '1 · Archivos'],
