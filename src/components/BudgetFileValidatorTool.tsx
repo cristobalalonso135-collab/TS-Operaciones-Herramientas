@@ -117,10 +117,50 @@ interface BudgetDiffSummary {
 interface CombinedBudgetDiffSummary {
   ok: boolean;
   summaries: BudgetDiffSummary[];
+  mode?: 'daily' | 'monthly-plan';
+}
+
+interface ValueEntry {
+  line: string;
+  value: number;
+  cell?: string;
 }
 
 const DEFAULT_MONEY_TOLERANCE = 0.2;
 const RATE_TOLERANCE = 0.001;
+const MONTHS_ES = [
+  ['abril', 4],
+  ['mayo', 5],
+  ['junio', 6],
+  ['julio', 7],
+  ['agosto', 8],
+  ['septiembre', 9],
+  ['setiembre', 9],
+  ['octubre', 10],
+  ['noviembre', 11],
+  ['diciembre', 12],
+  ['enero', 1],
+  ['febrero', 2],
+  ['marzo', 3],
+] as const;
+
+const VERTICAL_ID_BY_NAME: Record<string, string> = {
+  'futbol emotion': '1',
+  'football emotion': '1',
+  'basketball emotion': '2',
+  'the pitch': '6',
+  'running emotion': '7',
+  'rcd mallorca': '101',
+  'sd huesca': '102',
+  'nastic de tarragona': '103',
+  'real zaragoza': '104',
+  'real federacion andaluza de futbol': '105',
+  'real club deportivo a coruna': '106',
+  'kings league espana': '1001',
+  'kings league italia': '1002',
+  'kings league francia': '1003',
+  'kings league alemania': '1004',
+};
 
 function normalizeText(value: unknown): string {
   return String(value ?? '')
@@ -197,6 +237,51 @@ function excelColumnName(index: number): string {
     current = Math.floor((current - 1) / 26);
   }
   return name;
+}
+
+function normalizeCountryCode(value: unknown): string {
+  const text = normalizeText(value).replace(/\./g, '');
+  if (!text) return '';
+  if (['es', 'esp', 'espana', 'spain'].includes(text)) return 'ES';
+  if (['fr', 'fra', 'francia', 'france'].includes(text)) return 'FR';
+  if (['it', 'ita', 'italia', 'italy'].includes(text)) return 'IT';
+  if (['pt', 'prt', 'portugal'].includes(text)) return 'PT';
+  if (['de', 'deu', 'ale', 'alemania', 'germany'].includes(text)) return 'DE';
+  return String(value ?? '').trim().toUpperCase();
+}
+
+function normalizeZoneForCompare(value: unknown): string {
+  return normalizeText(value)
+    .replace(/^zona\s+/, '')
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeVerticalId(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  const normalized = normalizeText(raw);
+  return VERTICAL_ID_BY_NAME[normalized] || raw;
+}
+
+function monthStartFromLabel(value: unknown, fyStartYear: number): string | null {
+  const text = normalizeText(value);
+  const found = MONTHS_ES.find(([name]) => text.includes(name));
+  if (!found) return null;
+  const month = found[1];
+  const year = month >= 4 ? fyStartYear : fyStartYear + 1;
+  return `${year}-${String(month).padStart(2, '0')}-01`;
+}
+
+function detectFiscalStartYear(workbook: WorkbookUpload, fallback = 2026): number {
+  for (const rows of Object.values(workbook.sheets)) {
+    for (const row of rows.slice(0, 12)) {
+      for (const cell of row) {
+        const text = String(cell ?? '');
+        const match = text.match(/(20\d{2})\s*\/\s*(?:20)?\d{2}/);
+        if (match) return Number(match[1]);
+      }
+    }
+  }
+  return fallback;
 }
 
 function findWideHeaderIndex(rows: any[][]): number {
@@ -321,6 +406,175 @@ function getFiscalYearsInWorkbook(workbook: WorkbookUpload | null): number[] {
     const month = parseInt(date.slice(5, 7), 10);
     return month >= 4 ? year : year - 1;
   }))).sort((a, b) => a - b);
+}
+
+function findMonthlyPlanSheet(workbook: WorkbookUpload): { name: string; rows: any[][]; headerIndex: number } | null {
+  for (const [name, rows] of Object.entries(workbook.sheets)) {
+    const headerIndex = rows.findIndex((row) => {
+      const headers = row.map(normalizeHeader);
+      return (
+        headers.some((header) => header.includes('mes')) &&
+        headers.includes('vertical') &&
+        headers.some((header) => header.includes('medio')) &&
+        headers.includes('importe') &&
+        headers.some((header) => header.includes('margen bruto'))
+      );
+    });
+    if (headerIndex >= 0) return { name, rows, headerIndex };
+  }
+  return null;
+}
+
+function plannedColumn(headers: string[], aliases: string[]): number {
+  return headers.findIndex((header) => aliases.some((alias) => header === normalizeHeader(alias) || header.includes(normalizeHeader(alias))));
+}
+
+function plannedMonthlyValues(workbook: WorkbookUpload): { facturacion: Map<string, ValueEntry>; cogs: Map<string, ValueEntry>; sheetName: string; fyStartYear: number } | null {
+  const sheet = findMonthlyPlanSheet(workbook);
+  if (!sheet) return null;
+
+  const fyStartYear = detectFiscalStartYear(workbook);
+  const headers = sheet.rows[sheet.headerIndex].map(normalizeHeader);
+  const colMap = {
+    month: plannedColumn(headers, ['# mes', 'mes']),
+    vertical: plannedColumn(headers, ['vertical']),
+    medio: plannedColumn(headers, ['medio de venta', 'medio']),
+    country: plannedColumn(headers, ['pais', 'país']),
+    zone: plannedColumn(headers, ['zona']),
+    amount: plannedColumn(headers, ['importe', 'budget']),
+    margin: plannedColumn(headers, ['margen bruto']),
+  };
+
+  if (Object.values(colMap).some((index) => index < 0)) return null;
+
+  const facturacion = new Map<string, ValueEntry>();
+  const cogs = new Map<string, ValueEntry>();
+
+  sheet.rows.slice(sheet.headerIndex + 1).forEach((row, rowOffset) => {
+    const monthStart = monthStartFromLabel(row[colMap.month], fyStartYear);
+    if (!monthStart) return;
+
+    const amount = numericValue(row[colMap.amount]);
+    if (amount === null) return;
+
+    const margin = numericValue(row[colMap.margin]) || 0;
+    const verticalId = normalizeVerticalId(row[colMap.vertical]);
+    const medio = String(row[colMap.medio] ?? '').trim();
+    const zone = normalizeZoneForCompare(row[colMap.zone]);
+    const country = normalizeCountryCode(row[colMap.country]);
+    const key = lineKey([verticalId, medio, zone, country, monthStart]);
+    const line = [row[colMap.vertical], medio, row[colMap.zone], country, displayDate(monthStart)].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
+    const amountCell = `${excelColumnName(colMap.amount)}${sheet.headerIndex + 2 + rowOffset}`;
+    const marginCell = `${excelColumnName(colMap.margin)}${sheet.headerIndex + 2 + rowOffset}`;
+
+    const currentFact = facturacion.get(key);
+    facturacion.set(key, {
+      line,
+      value: (currentFact?.value || 0) + amount,
+      cell: currentFact?.cell ? `${currentFact.cell}, ${amountCell}` : amountCell,
+    });
+
+    const cogsValue = amount - margin;
+    const currentCogs = cogs.get(key);
+    cogs.set(key, {
+      line,
+      value: (currentCogs?.value || 0) + cogsValue,
+      cell: currentCogs?.cell ? `${currentCogs.cell}, ${amountCell}/${marginCell}` : `${amountCell}/${marginCell}`,
+    });
+  });
+
+  return { facturacion, cogs, sheetName: sheet.name, fyStartYear };
+}
+
+function loadedMonthlyValues(sheet: { name: string; rows: any[][] } | null, fyStartYear: number): Map<string, ValueEntry> {
+  if (!sheet) return new Map();
+  const lines = parseWideSheet(sheet.rows, fyStartYear);
+  const values = new Map<string, ValueEntry>();
+
+  lines.forEach((line) => {
+    line.values.forEach((rawValue, date) => {
+      const value = numericValue(rawValue);
+      if (value === null) return;
+      const monthStart = `${date.slice(0, 7)}-01`;
+      const key = lineKey([line.idVertical, line.nombre, normalizeZoneForCompare(line.zona), normalizeCountryCode(line.codMercado), monthStart]);
+      const label = [line.idVertical, line.nombre, line.zona, line.codMercado, displayDate(monthStart)].filter(Boolean).join(' · ');
+      const existing = values.get(key);
+      values.set(key, {
+        line: existing?.line || label,
+        value: (existing?.value || 0) + value,
+        cell: existing?.cell || line.cells.get(date),
+      });
+    });
+  });
+
+  return values;
+}
+
+function compareValueMaps(
+  label: string,
+  leftValues: Map<string, ValueEntry>,
+  rightValues: Map<string, ValueEntry>,
+  sheetLeft: string | null,
+  sheetRight: string | null,
+  tolerance: number
+): BudgetDiffSummary {
+  const keys = Array.from(new Set([...Array.from(leftValues.keys()), ...Array.from(rightValues.keys())]));
+  const lineDiffs: BudgetDiffLine[] = [];
+  const issues: BudgetDiffIssue[] = [];
+  let totalLeft = 0;
+  let totalRight = 0;
+  let checkedCells = 0;
+  let issueCount = 0;
+
+  keys.forEach((key) => {
+    const left = leftValues.get(key);
+    const right = rightValues.get(key);
+    const leftValue = left?.value || 0;
+    const rightValue = right?.value || 0;
+    const diff = rightValue - leftValue;
+    const line = right?.line || left?.line || key;
+    const keyParts = key.split('|');
+    const date = keyParts[keyParts.length - 1];
+
+    totalLeft += leftValue;
+    totalRight += rightValue;
+    if (Math.abs(leftValue) > tolerance || Math.abs(rightValue) > tolerance) checkedCells += 1;
+    if (Math.abs(diff) <= tolerance) return;
+
+    issueCount += 1;
+    lineDiffs.push({ key: `${label}|${key}`, line, leftTotal: leftValue, rightTotal: rightValue, diff, absDiff: Math.abs(diff) });
+    if (issues.length < 250) {
+      issues.push({ key: `${label}|${key}`, line, date, leftCell: left?.cell, rightCell: right?.cell, leftValue, rightValue, diff });
+    }
+  });
+
+  return {
+    ok: issueCount === 0,
+    sheetLeft,
+    sheetRight,
+    label,
+    totalLeft,
+    totalRight,
+    diff: totalRight - totalLeft,
+    checkedCells,
+    issueCount,
+    lines: lineDiffs.sort((a, b) => b.absDiff - a.absDiff).slice(0, 30),
+    issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
+  };
+}
+
+function compareLoadedToMonthlyPlan(left: WorkbookUpload, right: WorkbookUpload, tolerance: number): CombinedBudgetDiffSummary | null {
+  const plan = plannedMonthlyValues(right);
+  if (!plan) return null;
+
+  const factSheet = findFacturacionSheet(left);
+  const cogsSheet = findCogsSheet(left);
+  const summaries = [
+    compareValueMaps('Facturación mensual', loadedMonthlyValues(factSheet, plan.fyStartYear), plan.facturacion, factSheet?.name || null, plan.sheetName, tolerance),
+    compareValueMaps('COGS mensual', loadedMonthlyValues(cogsSheet, plan.fyStartYear), plan.cogs, cogsSheet?.name || null, plan.sheetName, tolerance),
+  ];
+
+  return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'monthly-plan' };
 }
 
 function median(values: number[]): number | null {
@@ -704,8 +958,13 @@ function compareWideValues(
     issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
   };
 }
-function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUpload | null, tolerance: number): CombinedBudgetDiffSummary | null {
+function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUpload | null, tolerance: number, allowMonthlyPlan = false): CombinedBudgetDiffSummary | null {
   if (!left || !right) return null;
+
+  if (allowMonthlyPlan) {
+    const monthlyPlanComparison = compareLoadedToMonthlyPlan(left, right, tolerance);
+    if (monthlyPlanComparison) return monthlyPlanComparison;
+  }
 
   const factRight = findFacturacionSheet(right);
   const cogsRight = findCogsSheet(right);
@@ -716,7 +975,7 @@ function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUplo
     compareWideValues('COGS', findCogsSheet(left), cogsRight, cogsDates, tolerance),
   ];
 
-  return { ok: summaries.every((summary) => summary.ok), summaries };
+  return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'daily' };
 }
 
 function StatusPill({ ok }: { ok: boolean }) {
@@ -735,6 +994,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const [moneyTolerance, setMoneyTolerance] = useState(DEFAULT_MONEY_TOLERANCE);
 
   const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
+  const loadedVsPlannedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance, true), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
   const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
 
@@ -1053,7 +1313,9 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Comparación</p>
             <h3 className="mt-1 text-lg font-semibold">{title}</h3>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Compara Facturación y COGS usando únicamente las fechas existentes en el segundo archivo.
+              {summary?.mode === 'monthly-plan'
+                ? 'Compara el cargado diario contra el previsto mensual. Facturación usa Importe y COGS usa Importe menos Margen Bruto.'
+                : 'Compara Facturación y COGS usando únicamente las fechas existentes en el segundo archivo.'}
             </p>
           </div>
           {summary && <StatusPill ok={summary.ok} />}
@@ -1067,7 +1329,6 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
       )}
     </div>
   );
-
   return (
     <div className="space-y-6">
       <button
@@ -1144,7 +1405,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
 
       {activeStep === 2 && renderCogsValidation('Archivo a validar', leftWorkbook, leftCogs)}
 
-      {activeStep === 3 && renderCombinedBudgetDiff('Budget cargado vs budget previsto', combinedDiff)}
+      {activeStep === 3 && renderCombinedBudgetDiff('Budget cargado vs budget previsto', loadedVsPlannedDiff)}
     </div>
   );
 }
