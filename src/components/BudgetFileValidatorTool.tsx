@@ -1173,36 +1173,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             </div>
           )}
 
-          <div className="rounded-md border border-[var(--border)]">
-            <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">Líneas con más incidencias</div>
-            <div className="max-h-64 overflow-auto">
-              <table className="w-full min-w-[820px] border-collapse text-xs">
-                <thead className="bg-white text-left text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS %</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Checks</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Incidencias</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {validation.lines.map((line) => (
-                    <tr key={line.key} className="border-b border-[var(--border)]">
-                      <td className="px-3 py-2 font-medium">{line.line}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatPercent(line.cogsRate)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.facturacion)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.cogs)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{line.checks.toLocaleString('de-DE')}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${line.issues > 0 ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{line.issues.toLocaleString('de-DE')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+         </div>
       )}
     </section>
   );
