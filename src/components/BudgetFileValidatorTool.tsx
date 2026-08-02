@@ -731,7 +731,7 @@ function fiscalYearFromDate(date: string): number {
   return month >= 4 ? year : year - 1;
 }
 
-function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number): CogsCorrectionSummary | null {
+function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number, fiscalYears?: number[]): CogsCorrectionSummary | null {
   if (!workbook) return null;
 
   const factSheet = findFacturacionSheet(workbook);
@@ -756,7 +756,10 @@ function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number)
 
   const cogsDateColumns = cogsHeader
     .map((cell, index) => ({ index, date: formatDateKey(cell) }))
-    .filter((item): item is { index: number; date: string } => !!item.date && factDateColumns.has(item.date));
+    .filter((item): item is { index: number; date: string } => {
+      if (!item.date || !factDateColumns.has(item.date)) return false;
+      return !fiscalYears?.length || fiscalYears.includes(fiscalYearFromDate(item.date));
+    });
 
   const factRows = new Map<string, any[]>();
   factSheet.rows.slice(factHeaderIndex + 1).forEach((row) => {
@@ -984,9 +987,9 @@ function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number, tole
   };
 }
 
-function validateCogsAllFiscalYears(workbook: WorkbookUpload | null, tolerance: number): CogsValidation | null {
+function validateCogsAllFiscalYears(workbook: WorkbookUpload | null, tolerance: number, fiscalYears?: number[]): CogsValidation | null {
   if (!workbook) return null;
-  const years = getFiscalYearsInWorkbook(workbook);
+  const years = fiscalYears?.length ? fiscalYears : getFiscalYearsInWorkbook(workbook);
   if (years.length === 0) return validateCogs(workbook, new Date().getFullYear(), tolerance);
 
   const validations = years
@@ -1172,13 +1175,15 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const [rightWorkbook, setRightWorkbook] = useState<WorkbookUpload | null>(null);
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
   const [moneyTolerance, setMoneyTolerance] = useState(DEFAULT_MONEY_TOLERANCE);
+  const [cogsBaseFiscalYear, setCogsBaseFiscalYear] = useState(2025);
   const [lineSort, setLineSort] = useState<{ key: DiffLineSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
   const [issueSort, setIssueSort] = useState<{ key: DiffIssueSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
+  const cogsFiscalYears = useMemo(() => [cogsBaseFiscalYear, cogsBaseFiscalYear + 1], [cogsBaseFiscalYear]);
 
   const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const loadedVsPlannedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance, true), [leftWorkbook, rightWorkbook, moneyTolerance]);
-  const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
-  const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
+  const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance, cogsFiscalYears), [leftWorkbook, moneyTolerance, cogsFiscalYears]);
+  const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance, cogsFiscalYears), [leftWorkbook, moneyTolerance, cogsFiscalYears]);
   const monthlyFacturacionCorrection = useMemo(() => buildMonthlyFacturacionCorrection(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
@@ -1270,7 +1275,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 <div>
                   <p className="text-sm font-semibold">COGS corregido</p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Facturación vacía deja COGS vacío, facturación 0 deja COGS 0 y el resto recalcula con el porcentaje de cada línea.
+                    Facturación vacía deja COGS vacío, facturación 0 deja COGS 0 y el resto recalcula con el porcentaje de cada línea dentro de su FY.
                   </p>
                 </div>
                 <button
@@ -1642,6 +1647,19 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <p className="mt-1 text-sm text-[var(--text-secondary)]">Flujo de revisión: igualdad de archivos, validación COGS y comparación cargado vs previsto.</p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
+            {activeStep === 2 && (
+              <label className="block">
+                <span className="mb-1 block text-xs text-[var(--text-secondary)]">Validar desde FY</span>
+                <input
+                  type="number"
+                  min="2020"
+                  step="1"
+                  value={cogsBaseFiscalYear}
+                  onChange={(event) => setCogsBaseFiscalYear(Number(event.target.value) || 2025)}
+                  className="h-9 w-28 rounded-md border border-[var(--border)] bg-white px-3 text-right text-sm outline-none focus:border-[var(--text-primary)]"
+                />
+              </label>
+            )}
             <label className="block">
               <span className="mb-1 block text-xs text-[var(--text-secondary)]">Umbral €</span>
               <input
@@ -1698,7 +1716,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
 
       {activeStep === 1 && renderCombinedBudgetDiff('Archivo 1 vs archivo 2', combinedDiff)}
 
-      {activeStep === 2 && renderCogsValidation('Archivo a validar', leftWorkbook, leftCogs)}
+      {activeStep === 2 && renderCogsValidation(`Archivo a validar · FY ${cogsBaseFiscalYear}/${String(cogsBaseFiscalYear + 1).slice(-2)} y FY ${cogsBaseFiscalYear + 1}/${String(cogsBaseFiscalYear + 2).slice(-2)}`, leftWorkbook, leftCogs)}
 
       {activeStep === 3 && renderCombinedBudgetDiff('Budget cargado vs budget previsto', loadedVsPlannedDiff)}
     </div>
