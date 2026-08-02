@@ -232,10 +232,11 @@ function normalizeLineForComparison(line: ParsedLine, area: string): ParsedLine 
   }
 
   if (normalizedArea === 'b2b') {
+    const isFrance = normalizeCountry(line.region, line.zona) === 'francia';
     return {
       ...line,
-      region: normalizeCountry(line.region, line.zona) === 'francia' ? 'FR' : 'Sin país',
-      zona: '',
+      region: isFrance ? 'FR' : 'Sin país',
+      zona: isFrance ? 'Francia' : '',
     };
   }
 
