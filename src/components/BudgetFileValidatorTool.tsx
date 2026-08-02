@@ -2,28 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
-import { AlertTriangle, ArrowLeft, CheckCircle2, FileSpreadsheet, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, XCircle } from 'lucide-react';
 
 interface WorkbookUpload {
   fileName: string;
   sheets: Record<string, any[][]>;
-}
-
-interface ExactSheetResult {
-  sheetName: string;
-  status: 'ok' | 'missing-left' | 'missing-right' | 'different';
-  leftRows: number;
-  rightRows: number;
-  leftCols: number;
-  rightCols: number;
-  differentCells: number;
-  samples: string[];
-}
-
-interface ExactCompareSummary {
-  same: boolean;
-  totalDifferentCells: number;
-  sheets: ExactSheetResult[];
 }
 
 interface WideLine {
@@ -97,6 +80,7 @@ interface BudgetDiffSummary {
   ok: boolean;
   sheetLeft: string | null;
   sheetRight: string | null;
+  label: string;
   totalLeft: number;
   totalRight: number;
   diff: number;
@@ -106,7 +90,11 @@ interface BudgetDiffSummary {
   issues: BudgetDiffIssue[];
 }
 
-const FIXED_COLUMNS = 4;
+interface CombinedBudgetDiffSummary {
+  ok: boolean;
+  summaries: BudgetDiffSummary[];
+}
+
 const MONEY_TOLERANCE = 0.05;
 const RATE_TOLERANCE = 0.001;
 
@@ -162,14 +150,6 @@ function displayDate(dateKey?: string): string {
   if (!dateKey) return '';
   const [year, month, day] = dateKey.split('-');
   return `${day}/${month}/${year}`;
-}
-
-function comparableCell(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '';
-  const dateKey = formatDateKey(value);
-  if (dateKey) return `date:${dateKey}`;
-  if (typeof value === 'number') return `num:${Math.round(value * 1000000) / 1000000}`;
-  return `text:${String(value).replace(/\u00a0/g, ' ').trim()}`;
 }
 
 function numericValue(value: unknown): number | null {
@@ -245,49 +225,57 @@ function parseWideSheet(rows: any[][], fyStartYear: number): Map<string, WideLin
   return lines;
 }
 
-function compareWorkbooks(left: WorkbookUpload | null, right: WorkbookUpload | null): ExactCompareSummary | null {
-  if (!left || !right) return null;
+function getWideSheetDates(rows: any[][]): string[] {
+  const headerIndex = findWideHeaderIndex(rows);
+  if (headerIndex < 0) return [];
 
-  const sheetNames = Array.from(new Set([...Object.keys(left.sheets), ...Object.keys(right.sheets)]));
-  const sheets = sheetNames.map((sheetName): ExactSheetResult => {
-    const leftRows = left.sheets[sheetName];
-    const rightRows = right.sheets[sheetName];
-    if (!leftRows) return { sheetName, status: 'missing-left', leftRows: 0, rightRows: rightRows?.length || 0, leftCols: 0, rightCols: Math.max(0, ...(rightRows || []).map((row) => row.length)), differentCells: 0, samples: [] };
-    if (!rightRows) return { sheetName, status: 'missing-right', leftRows: leftRows.length, rightRows: 0, leftCols: Math.max(0, ...leftRows.map((row) => row.length)), rightCols: 0, differentCells: 0, samples: [] };
+  return Array.from(new Set(
+    rows[headerIndex]
+      .map(formatDateKey)
+      .filter((date): date is string => !!date)
+  )).sort();
+}
 
-    const rowCount = Math.max(leftRows.length, rightRows.length);
-    const colCount = Math.max(0, ...leftRows.map((row) => row.length), ...rightRows.map((row) => row.length));
-    const samples: string[] = [];
-    let differentCells = 0;
+function parseWideSheetForDates(rows: any[][], dates: string[]): Map<string, WideLine> {
+  const headerIndex = findWideHeaderIndex(rows);
+  if (headerIndex < 0) return new Map();
 
-    for (let row = 0; row < rowCount; row += 1) {
-      for (let col = 0; col < colCount; col += 1) {
-        const leftValue = comparableCell(leftRows[row]?.[col]);
-        const rightValue = comparableCell(rightRows[row]?.[col]);
-        if (leftValue === rightValue) continue;
-        differentCells += 1;
-        if (samples.length < 6) samples.push(`${sheetName}!${row + 1}:${col + 1}`);
-      }
-    }
+  const header = rows[headerIndex];
+  const wantedDates = new Set(dates);
+  const dateColumns = header
+    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
+    .filter((item): item is { index: number; date: string } => !!item.date && wantedDates.has(item.date));
+  const lines = new Map<string, WideLine>();
 
-    return {
-      sheetName,
-      status: differentCells === 0 ? 'ok' : 'different',
-      leftRows: leftRows.length,
-      rightRows: rightRows.length,
-      leftCols: Math.max(0, ...leftRows.map((row) => row.length)),
-      rightCols: Math.max(0, ...rightRows.map((row) => row.length)),
-      differentCells,
-      samples,
-    };
+  rows.slice(headerIndex + 1).forEach((row) => {
+    const idVertical = String(row[0] ?? '').trim();
+    const nombre = String(row[1] ?? '').trim();
+    const zona = String(row[2] ?? '').trim();
+    const codMercado = String(row[3] ?? '').trim();
+    const key = lineKey([idVertical, nombre, zona, codMercado]);
+    if (!key.replace(/\|/g, '')) return;
+
+    const values = new Map<string, any>();
+    dateColumns.forEach(({ index, date }) => values.set(date, row[index] ?? null));
+    lines.set(key, { key, idVertical, nombre, zona, codMercado, values });
   });
 
-  const totalDifferentCells = sheets.reduce((sum, sheet) => sum + sheet.differentCells + (sheet.status === 'ok' ? 0 : sheet.status === 'different' ? 0 : 1), 0);
-  return {
-    same: sheets.every((sheet) => sheet.status === 'ok'),
-    totalDifferentCells,
-    sheets,
-  };
+  return lines;
+}
+
+function getFiscalYearsInWorkbook(workbook: WorkbookUpload | null): number[] {
+  if (!workbook) return [];
+  const dates = new Set<string>();
+  const fact = findFacturacionSheet(workbook);
+  const cogs = findCogsSheet(workbook);
+  if (fact) getWideSheetDates(fact.rows).forEach((date) => dates.add(date));
+  if (cogs) getWideSheetDates(cogs.rows).forEach((date) => dates.add(date));
+
+  return Array.from(new Set(Array.from(dates).map((date) => {
+    const year = parseInt(date.slice(0, 4), 10);
+    const month = parseInt(date.slice(5, 7), 10);
+    return month >= 4 ? year : year - 1;
+  }))).sort((a, b) => a - b);
 }
 
 function median(values: number[]): number | null {
@@ -428,28 +416,59 @@ function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number): Cog
   };
 }
 
-function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload | null, fyStartYear: number): BudgetDiffSummary | null {
-  if (!left || !right) return null;
+function validateCogsAllFiscalYears(workbook: WorkbookUpload | null): CogsValidation | null {
+  if (!workbook) return null;
+  const years = getFiscalYearsInWorkbook(workbook);
+  if (years.length === 0) return validateCogs(workbook, new Date().getFullYear());
 
-  const leftSheet = findFacturacionSheet(left);
-  const rightSheet = findFacturacionSheet(right);
+  const validations = years
+    .map((year) => ({ year, validation: validateCogs(workbook, year) }))
+    .filter((item): item is { year: number; validation: CogsValidation } => !!item.validation);
+
+  if (validations.length === 0) return null;
+
+  return {
+    ok: validations.every((item) => item.validation.ok),
+    sheetFacturacion: validations[0].validation.sheetFacturacion,
+    sheetCogs: validations[0].validation.sheetCogs,
+    checkedCells: validations.reduce((sum, item) => sum + item.validation.checkedCells, 0),
+    issueCount: validations.reduce((sum, item) => sum + item.validation.issueCount, 0),
+    totalFacturacion: validations.reduce((sum, item) => sum + item.validation.totalFacturacion, 0),
+    totalCogs: validations.reduce((sum, item) => sum + item.validation.totalCogs, 0),
+    lines: validations
+      .flatMap((item) => item.validation.lines.map((line) => ({ ...line, key: `${item.year}|${line.key}`, line: `FY ${item.year}/${String(item.year + 1).slice(-2)} · ${line.line}` })))
+      .sort((a, b) => b.issues - a.issues || Math.abs(b.cogs) - Math.abs(a.cogs))
+      .slice(0, 30),
+    issues: validations
+      .flatMap((item) => item.validation.issues.map((issue) => ({ ...issue, key: `${item.year}|${issue.key}`, line: `FY ${item.year}/${String(item.year + 1).slice(-2)} · ${issue.line}` })))
+      .slice(0, 120),
+  };
+}
+
+function compareWideValues(
+  label: string,
+  leftSheet: { name: string; rows: any[][] } | null,
+  rightSheet: { name: string; rows: any[][] } | null,
+  dates: string[]
+): BudgetDiffSummary {
   if (!leftSheet || !rightSheet) {
     return {
       ok: false,
       sheetLeft: leftSheet?.name || null,
       sheetRight: rightSheet?.name || null,
+      label,
       totalLeft: 0,
       totalRight: 0,
       diff: 0,
       checkedCells: 0,
       issueCount: 1,
       lines: [],
-      issues: [{ key: 'missing-sheet', line: 'No encuentro hoja de facturación con formato ancho', leftValue: 0, rightValue: 0, diff: 0 }],
+      issues: [{ key: `${label}|missing-sheet`, line: `No encuentro hoja ${label} con formato ancho`, leftValue: 0, rightValue: 0, diff: 0 }],
     };
   }
 
-  const leftLines = parseWideSheet(leftSheet.rows, fyStartYear);
-  const rightLines = parseWideSheet(rightSheet.rows, fyStartYear);
+  const leftLines = parseWideSheetForDates(leftSheet.rows, dates);
+  const rightLines = parseWideSheetForDates(rightSheet.rows, dates);
   const keys = Array.from(new Set([...Array.from(leftLines.keys()), ...Array.from(rightLines.keys())]));
   const lineDiffs: BudgetDiffLine[] = [];
   const issues: BudgetDiffIssue[] = [];
@@ -464,10 +483,6 @@ function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload 
     if (!line) return;
 
     const lineLabel = [line.idVertical, line.nombre, line.zona, line.codMercado].filter(Boolean).join(' · ');
-    const dates = Array.from(new Set([
-      ...Array.from(leftLine?.values.keys() || []),
-      ...Array.from(rightLine?.values.keys() || []),
-    ])).sort();
     let leftTotal = 0;
     let rightTotal = 0;
     let absDiff = 0;
@@ -481,7 +496,7 @@ function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload 
       rightTotal += rightValue;
       absDiff += Math.abs(diff);
       if (Math.abs(diff) > MONEY_TOLERANCE && issues.length < 250) {
-        issues.push({ key: `${key}|${date}`, line: lineLabel, date, leftValue, rightValue, diff });
+        issues.push({ key: `${label}|${key}|${date}`, line: lineLabel, date, leftValue, rightValue, diff });
       }
     });
 
@@ -489,7 +504,7 @@ function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload 
     totalLeft += leftTotal;
     totalRight += rightTotal;
     if (Math.abs(diff) > MONEY_TOLERANCE || absDiff > MONEY_TOLERANCE) {
-      lineDiffs.push({ key, line: lineLabel, leftTotal, rightTotal, diff, absDiff });
+      lineDiffs.push({ key: `${label}|${key}`, line: lineLabel, leftTotal, rightTotal, diff, absDiff });
     }
   });
 
@@ -497,6 +512,7 @@ function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload 
     ok: lineDiffs.length === 0,
     sheetLeft: leftSheet.name,
     sheetRight: rightSheet.name,
+    label,
     totalLeft,
     totalRight,
     diff: totalRight - totalLeft,
@@ -505,6 +521,21 @@ function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload 
     lines: lineDiffs.sort((a, b) => b.absDiff - a.absDiff).slice(0, 30),
     issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
   };
+}
+
+function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUpload | null): CombinedBudgetDiffSummary | null {
+  if (!left || !right) return null;
+
+  const factRight = findFacturacionSheet(right);
+  const cogsRight = findCogsSheet(right);
+  const factDates = factRight ? getWideSheetDates(factRight.rows) : [];
+  const cogsDates = cogsRight ? getWideSheetDates(cogsRight.rows) : [];
+  const summaries = [
+    compareWideValues('Facturación', findFacturacionSheet(left), factRight, factDates),
+    compareWideValues('COGS', findCogsSheet(left), cogsRight, cogsDates),
+  ];
+
+  return { ok: summaries.every((summary) => summary.ok), summaries };
 }
 
 function StatusPill({ ok }: { ok: boolean }) {
@@ -519,12 +550,10 @@ function StatusPill({ ok }: { ok: boolean }) {
 export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorToolProps) {
   const [leftWorkbook, setLeftWorkbook] = useState<WorkbookUpload | null>(null);
   const [rightWorkbook, setRightWorkbook] = useState<WorkbookUpload | null>(null);
-  const [fyStartYear, setFyStartYear] = useState(2025);
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
 
-  const exactSummary = useMemo(() => compareWorkbooks(leftWorkbook, rightWorkbook), [leftWorkbook, rightWorkbook]);
-  const budgetDiff = useMemo(() => compareBudgetValues(leftWorkbook, rightWorkbook, fyStartYear), [leftWorkbook, rightWorkbook, fyStartYear]);
-  const leftCogs = useMemo(() => validateCogs(leftWorkbook, fyStartYear), [leftWorkbook, fyStartYear]);
+  const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook), [leftWorkbook, rightWorkbook]);
+  const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook), [leftWorkbook]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
     const workbook = { sheets, fileName };
@@ -732,6 +761,29 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     </section>
   );
 
+  const renderCombinedBudgetDiff = (title: string, summary: CombinedBudgetDiffSummary | null) => (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Comparación</p>
+            <h3 className="mt-1 text-lg font-semibold">{title}</h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              Compara Facturación y COGS usando únicamente las fechas existentes en el segundo archivo.
+            </p>
+          </div>
+          {summary && <StatusPill ok={summary.ok} />}
+        </div>
+      </section>
+
+      {!summary ? (
+        <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4 text-sm text-[var(--text-secondary)]">Carga los dos archivos para comparar Facturación y COGS.</p>
+      ) : (
+        summary.summaries.map((item) => renderBudgetDiff(item.label, item))
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <button
@@ -766,15 +818,6 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 </button>
               ))}
             </div>
-            <label className="space-y-1">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">FY desde abril</span>
-              <input
-                type="number"
-                value={fyStartYear}
-                onChange={(event) => setFyStartYear(parseInt(event.target.value, 10) || 2025)}
-                className="h-10 w-32 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm outline-none focus:border-[var(--accent)]"
-              />
-            </label>
           </div>
         </div>
       </section>
@@ -802,68 +845,11 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
         )}
       </section>
 
-      {activeStep === 1 && (
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Comparación exacta</p>
-            <h3 className="mt-1 text-lg font-semibold">Archivo 1 vs archivo 2</h3>
-          </div>
-          {exactSummary && <StatusPill ok={exactSummary.same} />}
-        </div>
-
-        {!exactSummary ? (
-          <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm text-[var(--text-secondary)]">Carga los dos archivos para compararlos.</p>
-        ) : exactSummary.same ? (
-          <p className="rounded-md border border-green-200 bg-[var(--success-soft)] p-3 text-sm font-medium text-[var(--success)]">
-            Los dos libros son exactamente iguales con la normalización de fechas y valores de la app.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              <AlertTriangle className="h-4 w-4" />
-              Hay diferencias entre los libros. Revisa hojas, dimensiones y primeras celdas distintas.
-            </div>
-            <div className="overflow-auto">
-              <table className="w-full min-w-[780px] border-collapse text-sm">
-                <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
-                  <tr>
-                    <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Hoja</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Estado</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Filas 1</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Filas 2</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Cols 1</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Cols 2</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Celdas distintas</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Ejemplos</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {exactSummary.sheets.map((sheet) => (
-                    <tr key={sheet.sheetName} className="border-b border-[var(--border)]">
-                      <td className="px-3 py-2 font-medium">{sheet.sheetName}</td>
-                      <td className="px-3 py-2">{sheet.status}</td>
-                      <td className="px-3 py-2 text-right font-mono">{sheet.leftRows}</td>
-                      <td className="px-3 py-2 text-right font-mono">{sheet.rightRows}</td>
-                      <td className="px-3 py-2 text-right font-mono">{sheet.leftCols}</td>
-                      <td className="px-3 py-2 text-right font-mono">{sheet.rightCols}</td>
-                      <td className="px-3 py-2 text-right font-mono">{sheet.differentCells.toLocaleString('de-DE')}</td>
-                      <td className="px-3 py-2 text-xs text-[var(--text-secondary)]">{sheet.samples.join(', ')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </section>
-      )}
-
-      {activeStep === 1 && renderBudgetDiff('Principales diferencias entre Archivo 1 y Archivo 2', budgetDiff)}
+      {activeStep === 1 && renderCombinedBudgetDiff('Archivo 1 vs archivo 2', combinedDiff)}
 
       {activeStep === 2 && renderCogsValidation('Archivo a validar', leftWorkbook, leftCogs)}
 
-      {activeStep === 3 && renderBudgetDiff('Budget cargado vs budget previsto', budgetDiff)}
+      {activeStep === 3 && renderCombinedBudgetDiff('Budget cargado vs budget previsto', combinedDiff)}
     </div>
   );
 }
