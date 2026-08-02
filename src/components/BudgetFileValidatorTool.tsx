@@ -74,6 +74,26 @@ interface CogsCorrectionSummary {
   skippedLines: string[];
 }
 
+interface MonthlyFacturacionCorrectionChange {
+  key: string;
+  line: string;
+  month: string;
+  current: number;
+  expected: number;
+  diff: number;
+  action: string;
+}
+
+interface MonthlyFacturacionCorrectionSummary {
+  ok: boolean;
+  sheetName: string | null;
+  rows: any[][];
+  changeCount: number;
+  changes: MonthlyFacturacionCorrectionChange[];
+  skippedLines: string[];
+  fyStartYear?: number;
+}
+
 interface BudgetFileValidatorToolProps {
   onBack: () => void;
 }
@@ -577,6 +597,120 @@ function compareLoadedToMonthlyPlan(left: WorkbookUpload, right: WorkbookUpload,
   return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'monthly-plan', fyStartYear: plan.fyStartYear };
 }
 
+function buildMonthlyFacturacionCorrection(
+  left: WorkbookUpload | null,
+  right: WorkbookUpload | null,
+  tolerance: number
+): MonthlyFacturacionCorrectionSummary | null {
+  if (!left || !right) return null;
+
+  const plan = plannedMonthlyValues(right);
+  const factSheet = findFacturacionSheet(left);
+  if (!plan || !factSheet) return null;
+
+  const headerIndex = findWideHeaderIndex(factSheet.rows);
+  if (headerIndex < 0) return null;
+
+  const fyStart = `${plan.fyStartYear}-04-01`;
+  const fyEnd = `${plan.fyStartYear + 1}-03-31`;
+  const header = factSheet.rows[headerIndex];
+  const dateColumns = header
+    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
+    .filter((item): item is { index: number; date: string } => !!item.date && item.date >= fyStart && item.date <= fyEnd);
+  const columnsByMonth = new Map<string, Array<{ index: number; date: string }>>();
+  dateColumns.forEach((column) => {
+    const monthStart = `${column.date.slice(0, 7)}-01`;
+    const existing = columnsByMonth.get(monthStart) || [];
+    existing.push(column);
+    columnsByMonth.set(monthStart, existing);
+  });
+
+  const correctedRows = factSheet.rows.map((row) => [...row]);
+  const changes: MonthlyFacturacionCorrectionChange[] = [];
+  const skippedLines: string[] = [];
+  const seenKeys = new Set<string>();
+  let changeCount = 0;
+
+  factSheet.rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
+    const rowIndex = headerIndex + 1 + rowOffset;
+    const idVertical = String(row[0] ?? '').trim();
+    const nombre = String(row[1] ?? '').trim();
+    const zona = String(row[2] ?? '').trim();
+    const codMercado = String(row[3] ?? '').trim();
+    if (!lineKey([idVertical, nombre, zona, codMercado]).replace(/\|/g, '')) return;
+
+    columnsByMonth.forEach((columns, monthStart) => {
+      const key = lineKey([idVertical, nombre, normalizeZoneForCompare(zona), normalizeCountryCode(codMercado), monthStart]);
+      const target = plan.facturacion.get(key)?.value || 0;
+      const numericColumns = columns
+        .map((column) => ({ ...column, value: numericValue(row[column.index]) }))
+        .filter((column): column is { index: number; date: string; value: number } => column.value !== null);
+      const current = numericColumns.reduce((sum, column) => sum + column.value, 0);
+      const diff = target - current;
+
+      if (Math.abs(current) > tolerance || Math.abs(target) > tolerance) seenKeys.add(key);
+      if (Math.abs(diff) <= tolerance) return;
+
+      const line = [idVertical, nombre, zona, codMercado, displayDate(monthStart)].filter(Boolean).join(' · ');
+
+      if (numericColumns.length === 0 && Math.abs(target) > tolerance) {
+        skippedLines.push(`${line}: sin reparto diario en el cargado`);
+        return;
+      }
+
+      if (Math.abs(target) <= tolerance) {
+        numericColumns.forEach((column) => {
+          correctedRows[rowIndex][column.index] = null;
+        });
+        changeCount += 1;
+        if (changes.length < 120) {
+          changes.push({ key, line, month: monthStart, current, expected: 0, diff: -current, action: 'Vaciar mes' });
+        }
+        return;
+      }
+
+      if (Math.abs(current) <= tolerance) {
+        skippedLines.push(`${line}: total actual 0, no puedo escalar reparto diario`);
+        return;
+      }
+
+      const factor = target / current;
+      let roundedTotal = 0;
+      numericColumns.forEach((column) => {
+        const nextValue = roundCurrency(column.value * factor);
+        correctedRows[rowIndex][column.index] = nextValue;
+        roundedTotal += nextValue;
+      });
+
+      const adjustment = roundCurrency(target - roundedTotal);
+      if (Math.abs(adjustment) > 0 && numericColumns.length > 0) {
+        const lastColumn = numericColumns[numericColumns.length - 1];
+        correctedRows[rowIndex][lastColumn.index] = roundCurrency((numericValue(correctedRows[rowIndex][lastColumn.index]) || 0) + adjustment);
+      }
+
+      changeCount += 1;
+      if (changes.length < 120) {
+        changes.push({ key, line, month: monthStart, current, expected: target, diff, action: 'Escalar reparto diario' });
+      }
+    });
+  });
+
+  plan.facturacion.forEach((target, key) => {
+    if (seenKeys.has(key) || Math.abs(target.value) <= tolerance) return;
+    skippedLines.push(`${target.line}: no existe línea equivalente en el cargado`);
+  });
+
+  return {
+    ok: skippedLines.length === 0,
+    sheetName: factSheet.name,
+    rows: correctedRows,
+    changeCount,
+    changes,
+    skippedLines: Array.from(new Set(skippedLines)).slice(0, 80),
+    fyStartYear: plan.fyStartYear,
+  };
+}
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -1001,6 +1135,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const loadedVsPlannedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance, true), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
   const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
+  const monthlyFacturacionCorrection = useMemo(() => buildMonthlyFacturacionCorrection(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
     const workbook = { sheets, fileName };
@@ -1015,6 +1150,15 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(cogsCorrection.rows), 'COGS');
     const baseName = leftWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
     XLSX.writeFile(workbook, `${baseName}_COGS_corregido.xlsx`);
+  };
+
+  const downloadCorrectedMonthlyFacturacion = async () => {
+    if (!leftWorkbook || !monthlyFacturacionCorrection || monthlyFacturacionCorrection.rows.length === 0) return;
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(monthlyFacturacionCorrection.rows), 'Hoja1');
+    const baseName = leftWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_facturacion_corregida_FY_${monthlyFacturacionCorrection.fyStartYear || ''}.xlsx`);
   };
 
   const renderCogsValidation = (title: string, workbook: WorkbookUpload | null, validation: CogsValidation | null) => (
@@ -1307,7 +1451,88 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
         ) : summary.error ? (
           <p className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger)]">{summary.error}</p>
         ) : (
-          summary.summaries.map((item) => renderBudgetDiff(item.label, item))
+          <>
+            {summary.mode === 'monthly-plan' && monthlyFacturacionCorrection && (
+              <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold">Facturación corregida</p>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                      Escala el reparto diario del cargado para que cada línea y mes cuadre con el previsto. Si el previsto no tiene esa línea/mes, limpia el mes.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={downloadCorrectedMonthlyFacturacion}
+                    disabled={!monthlyFacturacionCorrection.rows.length}
+                    className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar facturación corregida
+                  </button>
+                </div>
+                <div className="grid gap-3 border-b border-[var(--border)] p-3 md:grid-cols-3">
+                  <div>
+                    <p className="text-xs text-[var(--text-secondary)]">Cambios propuestos</p>
+                    <p className="mt-1 text-lg font-semibold">{monthlyFacturacionCorrection.changeCount.toLocaleString('de-DE')}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--text-secondary)]">Hoja origen</p>
+                    <p className="mt-1 text-sm font-medium">{monthlyFacturacionCorrection.sheetName || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-[var(--text-secondary)]">Líneas sin corregir</p>
+                    <p className={`mt-1 text-lg font-semibold ${monthlyFacturacionCorrection.skippedLines.length ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                      {monthlyFacturacionCorrection.skippedLines.length.toLocaleString('de-DE')}
+                    </p>
+                  </div>
+                </div>
+
+                {monthlyFacturacionCorrection.changes.length > 0 ? (
+                  <div className="max-h-72 overflow-auto">
+                    <table className="w-full min-w-[980px] border-collapse text-xs">
+                      <thead className="bg-white text-left text-[var(--text-secondary)]">
+                        <tr>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Acción</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Actual</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Objetivo</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {monthlyFacturacionCorrection.changes.map((change) => (
+                          <tr key={change.key} className="border-b border-[var(--border)]">
+                            <td className="px-3 py-2 font-medium">{change.line}</td>
+                            <td className="px-3 py-2">{displayDate(change.month)}</td>
+                            <td className="px-3 py-2">{change.action}</td>
+                            <td className="px-3 py-2 text-right font-mono">{formatCurrency(change.current)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-[var(--success)]">{formatCurrency(change.expected)}</td>
+                            <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(change.diff)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="p-3 text-sm text-[var(--text-secondary)]">No hay cambios por encima del umbral.</p>
+                )}
+
+                {monthlyFacturacionCorrection.skippedLines.length > 0 && (
+                  <div className="border-t border-[var(--border)] p-3">
+                    <p className="text-xs font-semibold text-[var(--danger)]">Líneas que no puedo corregir automáticamente</p>
+                    <div className="mt-2 grid gap-1 text-xs text-[var(--text-secondary)] md:grid-cols-2">
+                      {monthlyFacturacionCorrection.skippedLines.slice(0, 20).map((line) => (
+                        <p key={line} className="rounded bg-[var(--bg-soft)] px-2 py-1">{line}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+            {summary.summaries.map((item) => renderBudgetDiff(item.label, item))}
+          </>
         )}
       </div>
     );
