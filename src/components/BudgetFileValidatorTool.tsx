@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
-import { ArrowLeft, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Download, XCircle } from 'lucide-react';
 
 interface WorkbookUpload {
   fileName: string;
@@ -52,6 +52,26 @@ interface CogsValidation {
   totalCogs: number;
   lines: CogsLineSummary[];
   issues: CogsIssue[];
+}
+
+interface CogsCorrectionChange {
+  key: string;
+  line: string;
+  date: string;
+  cell: string;
+  current: number | null;
+  expected: number | null;
+  facturacion: number | null;
+  cogsRate: number | null;
+}
+
+interface CogsCorrectionSummary {
+  ok: boolean;
+  sheetName: string | null;
+  rows: any[][];
+  changeCount: number;
+  changes: CogsCorrectionChange[];
+  skippedLines: string[];
 }
 
 interface BudgetFileValidatorToolProps {
@@ -308,6 +328,127 @@ function median(values: number[]): number | null {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function roundCurrency(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number): CogsCorrectionSummary | null {
+  if (!workbook) return null;
+
+  const factSheet = findFacturacionSheet(workbook);
+  const cogsSheet = findCogsSheet(workbook);
+  if (!factSheet || !cogsSheet) {
+    return { ok: false, sheetName: cogsSheet?.name || null, rows: [], changeCount: 0, changes: [], skippedLines: ['No encuentro Hoja1 o COGS con formato ancho.'] };
+  }
+
+  const factHeaderIndex = findWideHeaderIndex(factSheet.rows);
+  const cogsHeaderIndex = findWideHeaderIndex(cogsSheet.rows);
+  if (factHeaderIndex < 0 || cogsHeaderIndex < 0) {
+    return { ok: false, sheetName: cogsSheet.name, rows: [], changeCount: 0, changes: [], skippedLines: ['No encuentro cabeceras válidas.'] };
+  }
+
+  const factHeader = factSheet.rows[factHeaderIndex];
+  const cogsHeader = cogsSheet.rows[cogsHeaderIndex];
+  const factDateColumns = new Map<string, number>();
+  factHeader.forEach((cell, index) => {
+    const date = formatDateKey(cell);
+    if (date) factDateColumns.set(date, index);
+  });
+
+  const cogsDateColumns = cogsHeader
+    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
+    .filter((item): item is { index: number; date: string } => !!item.date && factDateColumns.has(item.date));
+
+  const factRows = new Map<string, any[]>();
+  factSheet.rows.slice(factHeaderIndex + 1).forEach((row) => {
+    const key = lineKey([row[0], row[1], row[2], row[3]]);
+    if (key.replace(/\|/g, '')) factRows.set(key, row);
+  });
+
+  const correctedRows = cogsSheet.rows.map((row) => [...row]);
+  const changes: CogsCorrectionChange[] = [];
+  const skippedLines: string[] = [];
+  let changeCount = 0;
+
+  cogsSheet.rows.slice(cogsHeaderIndex + 1).forEach((cogsRow, rowOffset) => {
+    const rowIndex = cogsHeaderIndex + 1 + rowOffset;
+    const key = lineKey([cogsRow[0], cogsRow[1], cogsRow[2], cogsRow[3]]);
+    if (!key.replace(/\|/g, '')) return;
+
+    const factRow = factRows.get(key);
+    const lineLabel = [cogsRow[0], cogsRow[1], cogsRow[2], cogsRow[3]].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
+    if (!factRow) {
+      skippedLines.push(`${lineLabel}: sin línea de facturación`);
+      return;
+    }
+
+    const ratios: number[] = [];
+    cogsDateColumns.forEach(({ index, date }) => {
+      const factIndex = factDateColumns.get(date);
+      if (factIndex === undefined) return;
+      const fact = numericValue(factRow[factIndex]);
+      const cogs = numericValue(cogsRow[index]);
+      if (fact !== null && fact !== 0 && cogs !== null) ratios.push(cogs / fact);
+    });
+
+    const cogsRate = median(ratios);
+    let skippedByRate = false;
+
+    cogsDateColumns.forEach(({ index, date }) => {
+      const factIndex = factDateColumns.get(date);
+      if (factIndex === undefined) return;
+      const fact = numericValue(factRow[factIndex]);
+      const current = numericValue(cogsRow[index]);
+      let expected: number | null = null;
+      let shouldEvaluate = true;
+
+      if (fact === null) {
+        expected = null;
+      } else if (fact === 0) {
+        expected = 0;
+      } else if (cogsRate !== null) {
+        expected = roundCurrency(fact * cogsRate);
+      } else {
+        shouldEvaluate = false;
+        skippedByRate = true;
+      }
+
+      if (!shouldEvaluate) return;
+
+      const changed = expected === null
+        ? current !== null
+        : current === null || Math.abs(current - expected) > tolerance;
+      if (!changed) return;
+
+      correctedRows[rowIndex][index] = expected === null ? '' : expected;
+      changeCount += 1;
+      if (changes.length < 150) {
+        changes.push({
+          key: `${key}|${date}`,
+          line: lineLabel,
+          date,
+          cell: `${excelColumnName(index)}${rowIndex + 1}`,
+          current,
+          expected,
+          facturacion: fact,
+          cogsRate,
+        });
+      }
+    });
+
+    if (skippedByRate) skippedLines.push(`${lineLabel}: sin porcentaje COGS inferible`);
+  });
+
+  return {
+    ok: skippedLines.length === 0,
+    sheetName: cogsSheet.name,
+    rows: correctedRows,
+    changeCount,
+    changes,
+    skippedLines: Array.from(new Set(skippedLines)).slice(0, 80),
+  };
 }
 
 function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number, tolerance: number): CogsValidation | null {
@@ -595,11 +736,21 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
 
   const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
+  const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
     const workbook = { sheets, fileName };
     if (side === 'left') setLeftWorkbook(workbook);
     else setRightWorkbook(workbook);
+  };
+
+  const downloadCorrectedCogs = async () => {
+    if (!leftWorkbook || !cogsCorrection || cogsCorrection.rows.length === 0) return;
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(cogsCorrection.rows), 'COGS');
+    const baseName = leftWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_COGS_corregido.xlsx`);
   };
 
   const renderCogsValidation = (title: string, workbook: WorkbookUpload | null, validation: CogsValidation | null) => (
@@ -635,6 +786,88 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
               <p className="mt-1 text-lg font-semibold">{formatCurrency(validation.totalCogs)}</p>
             </div>
           </div>
+
+          {cogsCorrection && (
+            <div className="rounded-md border border-[var(--border)]">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3">
+                <div>
+                  <p className="text-sm font-semibold">COGS corregido</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    Facturación vacía deja COGS vacío, facturación 0 deja COGS 0 y el resto recalcula con el porcentaje de cada línea.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={downloadCorrectedCogs}
+                  disabled={!cogsCorrection.rows.length}
+                  className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" />
+                  Descargar COGS bueno
+                </button>
+              </div>
+              <div className="grid gap-3 border-b border-[var(--border)] p-3 md:grid-cols-3">
+                <div>
+                  <p className="text-xs text-[var(--text-secondary)]">Cambios propuestos</p>
+                  <p className="mt-1 text-lg font-semibold">{cogsCorrection.changeCount.toLocaleString('de-DE')}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-[var(--text-secondary)]">Hoja origen</p>
+                  <p className="mt-1 text-sm font-medium">{cogsCorrection.sheetName || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-[var(--text-secondary)]">Líneas sin corregir</p>
+                  <p className={`mt-1 text-lg font-semibold ${cogsCorrection.skippedLines.length ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                    {cogsCorrection.skippedLines.length.toLocaleString('de-DE')}
+                  </p>
+                </div>
+              </div>
+
+              {cogsCorrection.changes.length > 0 ? (
+                <div className="max-h-72 overflow-auto">
+                  <table className="w-full min-w-[1040px] border-collapse text-xs">
+                    <thead className="bg-white text-left text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celda</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS actual</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS bueno</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cogsCorrection.changes.map((change) => (
+                        <tr key={change.key} className="border-b border-[var(--border)]">
+                          <td className="px-3 py-2 font-medium">{change.line}</td>
+                          <td className="px-3 py-2">{displayDate(change.date)}</td>
+                          <td className="px-3 py-2 font-mono">{change.cell}</td>
+                          <td className="px-3 py-2 text-right font-mono">{change.facturacion === null ? '-' : formatCurrency(change.facturacion)}</td>
+                          <td className="px-3 py-2 text-right font-mono">{change.current === null ? '-' : formatCurrency(change.current)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-[var(--success)]">{change.expected === null ? 'Vacío' : formatCurrency(change.expected)}</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatPercent(change.cogsRate)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="p-3 text-sm text-[var(--text-secondary)]">No hay cambios por encima del umbral.</p>
+              )}
+
+              {cogsCorrection.skippedLines.length > 0 && (
+                <div className="border-t border-[var(--border)] p-3">
+                  <p className="text-xs font-semibold text-[var(--danger)]">Líneas que no puedo corregir automáticamente</p>
+                  <div className="mt-2 grid gap-1 text-xs text-[var(--text-secondary)] md:grid-cols-2">
+                    {cogsCorrection.skippedLines.slice(0, 20).map((line) => (
+                      <p key={line} className="rounded bg-[var(--bg-soft)] px-2 py-1">{line}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {validation.issues.length > 0 && (
             <div className="rounded-md border border-[var(--border)]">
