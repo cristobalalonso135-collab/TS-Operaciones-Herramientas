@@ -118,6 +118,8 @@ interface CombinedBudgetDiffSummary {
   ok: boolean;
   summaries: BudgetDiffSummary[];
   mode?: 'daily' | 'monthly-plan';
+  fyStartYear?: number;
+  error?: string;
 }
 
 interface ValueEntry {
@@ -574,7 +576,7 @@ function compareLoadedToMonthlyPlan(left: WorkbookUpload, right: WorkbookUpload,
     compareValueMaps('COGS mensual', loadedMonthlyValues(cogsSheet, plan.fyStartYear), plan.cogs, cogsSheet?.name || null, plan.sheetName, tolerance),
   ];
 
-  return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'monthly-plan' };
+  return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'monthly-plan', fyStartYear: plan.fyStartYear };
 }
 
 function median(values: number[]): number | null {
@@ -964,6 +966,12 @@ function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUplo
   if (allowMonthlyPlan) {
     const monthlyPlanComparison = compareLoadedToMonthlyPlan(left, right, tolerance);
     if (monthlyPlanComparison) return monthlyPlanComparison;
+    return {
+      ok: false,
+      summaries: [],
+      mode: 'monthly-plan',
+      error: 'No detecto el formato mensual previsto en el segundo archivo. Necesito columnas # Mes, Vertical, Medio de Venta, País, Zona, Importe y Margen Bruto.',
+    };
   }
 
   const factRight = findFacturacionSheet(right);
@@ -1250,7 +1258,6 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. neta &gt; umbral</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Suma dif. &gt; umbral</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1260,7 +1267,6 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.leftTotal)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.rightTotal)}</td>
                         <td className={`px-3 py-2 text-right font-mono ${Math.abs(line.diff) > moneyTolerance ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{formatCurrency(line.diff)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.absDiff)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1271,13 +1277,15 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
 
           {summary.issues.length > 0 && (
             <div className="rounded-md border border-[var(--border)]">
-              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">Mayores diferencias por fecha</div>
+              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
+                {summary.label.includes('mensual') ? 'Mayores diferencias por mes' : 'Mayores diferencias por fecha'}
+              </div>
               <div className="max-h-72 overflow-auto">
                 <table className="w-full min-w-[880px] border-collapse text-xs">
                   <thead className="bg-white text-left text-[var(--text-secondary)]">
                     <tr>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">{summary.label.includes('mensual') ? 'Mes' : 'Fecha'}</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celdas</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
                       <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
@@ -1305,30 +1313,38 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     </section>
   );
 
-  const renderCombinedBudgetDiff = (title: string, summary: CombinedBudgetDiffSummary | null) => (
-    <div className="space-y-4">
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Comparación</p>
-            <h3 className="mt-1 text-lg font-semibold">{title}</h3>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {summary?.mode === 'monthly-plan'
-                ? 'Compara el cargado diario contra el previsto mensual. Facturación usa Importe y COGS usa Importe menos Margen Bruto.'
-                : 'Compara Facturación y COGS usando únicamente las fechas existentes en el segundo archivo.'}
-            </p>
-          </div>
-          {summary && <StatusPill ok={summary.ok} />}
-        </div>
-      </section>
+  const renderCombinedBudgetDiff = (title: string, summary: CombinedBudgetDiffSummary | null) => {
+    const fyLabel = summary?.fyStartYear
+      ? `FY abril ${summary.fyStartYear} - marzo ${summary.fyStartYear + 1}`
+      : null;
 
-      {!summary ? (
-        <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4 text-sm text-[var(--text-secondary)]">Carga los dos archivos para comparar Facturación y COGS.</p>
-      ) : (
-        summary.summaries.map((item) => renderBudgetDiff(item.label, item))
-      )}
-    </div>
-  );
+    return (
+      <div className="space-y-4">
+        <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Comparación</p>
+              <h3 className="mt-1 text-lg font-semibold">{title}</h3>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                {summary?.mode === 'monthly-plan'
+                  ? `Compara por mes el cargado diario contra el previsto mensual${fyLabel ? ` (${fyLabel})` : ''}. Facturación usa Importe y COGS usa Importe menos Margen Bruto.`
+                  : 'Compara Facturación y COGS usando únicamente las fechas existentes en el segundo archivo.'}
+              </p>
+            </div>
+            {summary && <StatusPill ok={summary.ok} />}
+          </div>
+        </section>
+
+        {!summary ? (
+          <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4 text-sm text-[var(--text-secondary)]">Carga los dos archivos para comparar Facturación y COGS.</p>
+        ) : summary.error ? (
+          <p className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger)]">{summary.error}</p>
+        ) : (
+          summary.summaries.map((item) => renderBudgetDiff(item.label, item))
+        )}
+      </div>
+    );
+  };
   return (
     <div className="space-y-6">
       <button
