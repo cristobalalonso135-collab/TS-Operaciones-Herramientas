@@ -73,6 +73,39 @@ interface BudgetFileValidatorToolProps {
   onBack: () => void;
 }
 
+type ValidatorStep = 1 | 2 | 3;
+
+interface BudgetDiffIssue {
+  key: string;
+  line: string;
+  date?: string;
+  leftValue: number;
+  rightValue: number;
+  diff: number;
+}
+
+interface BudgetDiffLine {
+  key: string;
+  line: string;
+  leftTotal: number;
+  rightTotal: number;
+  diff: number;
+  absDiff: number;
+}
+
+interface BudgetDiffSummary {
+  ok: boolean;
+  sheetLeft: string | null;
+  sheetRight: string | null;
+  totalLeft: number;
+  totalRight: number;
+  diff: number;
+  checkedCells: number;
+  issueCount: number;
+  lines: BudgetDiffLine[];
+  issues: BudgetDiffIssue[];
+}
+
 const FIXED_COLUMNS = 4;
 const MONEY_TOLERANCE = 0.05;
 const RATE_TOLERANCE = 0.001;
@@ -395,6 +428,85 @@ function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number): Cog
   };
 }
 
+function compareBudgetValues(left: WorkbookUpload | null, right: WorkbookUpload | null, fyStartYear: number): BudgetDiffSummary | null {
+  if (!left || !right) return null;
+
+  const leftSheet = findFacturacionSheet(left);
+  const rightSheet = findFacturacionSheet(right);
+  if (!leftSheet || !rightSheet) {
+    return {
+      ok: false,
+      sheetLeft: leftSheet?.name || null,
+      sheetRight: rightSheet?.name || null,
+      totalLeft: 0,
+      totalRight: 0,
+      diff: 0,
+      checkedCells: 0,
+      issueCount: 1,
+      lines: [],
+      issues: [{ key: 'missing-sheet', line: 'No encuentro hoja de facturación con formato ancho', leftValue: 0, rightValue: 0, diff: 0 }],
+    };
+  }
+
+  const leftLines = parseWideSheet(leftSheet.rows, fyStartYear);
+  const rightLines = parseWideSheet(rightSheet.rows, fyStartYear);
+  const keys = Array.from(new Set([...Array.from(leftLines.keys()), ...Array.from(rightLines.keys())]));
+  const lineDiffs: BudgetDiffLine[] = [];
+  const issues: BudgetDiffIssue[] = [];
+  let totalLeft = 0;
+  let totalRight = 0;
+  let checkedCells = 0;
+
+  keys.forEach((key) => {
+    const leftLine = leftLines.get(key);
+    const rightLine = rightLines.get(key);
+    const line = leftLine || rightLine;
+    if (!line) return;
+
+    const lineLabel = [line.idVertical, line.nombre, line.zona, line.codMercado].filter(Boolean).join(' · ');
+    const dates = Array.from(new Set([
+      ...Array.from(leftLine?.values.keys() || []),
+      ...Array.from(rightLine?.values.keys() || []),
+    ])).sort();
+    let leftTotal = 0;
+    let rightTotal = 0;
+    let absDiff = 0;
+
+    dates.forEach((date) => {
+      const leftValue = numericValue(leftLine?.values.get(date)) || 0;
+      const rightValue = numericValue(rightLine?.values.get(date)) || 0;
+      const diff = rightValue - leftValue;
+      if (Math.abs(leftValue) > MONEY_TOLERANCE || Math.abs(rightValue) > MONEY_TOLERANCE) checkedCells += 1;
+      leftTotal += leftValue;
+      rightTotal += rightValue;
+      absDiff += Math.abs(diff);
+      if (Math.abs(diff) > MONEY_TOLERANCE && issues.length < 250) {
+        issues.push({ key: `${key}|${date}`, line: lineLabel, date, leftValue, rightValue, diff });
+      }
+    });
+
+    const diff = rightTotal - leftTotal;
+    totalLeft += leftTotal;
+    totalRight += rightTotal;
+    if (Math.abs(diff) > MONEY_TOLERANCE || absDiff > MONEY_TOLERANCE) {
+      lineDiffs.push({ key, line: lineLabel, leftTotal, rightTotal, diff, absDiff });
+    }
+  });
+
+  return {
+    ok: lineDiffs.length === 0,
+    sheetLeft: leftSheet.name,
+    sheetRight: rightSheet.name,
+    totalLeft,
+    totalRight,
+    diff: totalRight - totalLeft,
+    checkedCells,
+    issueCount: issues.length,
+    lines: lineDiffs.sort((a, b) => b.absDiff - a.absDiff).slice(0, 30),
+    issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
+  };
+}
+
 function StatusPill({ ok }: { ok: boolean }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${ok ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
@@ -408,10 +520,11 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const [leftWorkbook, setLeftWorkbook] = useState<WorkbookUpload | null>(null);
   const [rightWorkbook, setRightWorkbook] = useState<WorkbookUpload | null>(null);
   const [fyStartYear, setFyStartYear] = useState(2025);
+  const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
 
   const exactSummary = useMemo(() => compareWorkbooks(leftWorkbook, rightWorkbook), [leftWorkbook, rightWorkbook]);
+  const budgetDiff = useMemo(() => compareBudgetValues(leftWorkbook, rightWorkbook, fyStartYear), [leftWorkbook, rightWorkbook, fyStartYear]);
   const leftCogs = useMemo(() => validateCogs(leftWorkbook, fyStartYear), [leftWorkbook, fyStartYear]);
-  const rightCogs = useMemo(() => validateCogs(rightWorkbook, fyStartYear), [rightWorkbook, fyStartYear]);
 
   const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
     const workbook = { sheets, fileName };
@@ -521,6 +634,104 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     </section>
   );
 
+  const renderBudgetDiff = (title: string, summary: BudgetDiffSummary | null) => (
+    <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Diferencias cuantitativas</p>
+          <h3 className="mt-1 text-lg font-semibold">{title}</h3>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">Compara importes FY de la hoja de facturación, línea a línea y día a día.</p>
+        </div>
+        {summary && <StatusPill ok={summary.ok} />}
+      </div>
+
+      {!summary ? (
+        <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm text-[var(--text-secondary)]">Carga los dos archivos para ver diferencias cuantitativas.</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+              <p className="text-xs text-[var(--text-secondary)]">Archivo 1</p>
+              <p className="mt-1 text-lg font-semibold">{formatCurrency(summary.totalLeft)}</p>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+              <p className="text-xs text-[var(--text-secondary)]">Archivo 2</p>
+              <p className="mt-1 text-lg font-semibold">{formatCurrency(summary.totalRight)}</p>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+              <p className="text-xs text-[var(--text-secondary)]">Diferencia</p>
+              <p className={`mt-1 text-lg font-semibold ${Math.abs(summary.diff) <= MONEY_TOLERANCE ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(summary.diff)}</p>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+              <p className="text-xs text-[var(--text-secondary)]">Celdas con diferencia</p>
+              <p className="mt-1 text-lg font-semibold">{summary.issueCount.toLocaleString('de-DE')}</p>
+            </div>
+          </div>
+
+          {summary.lines.length > 0 && (
+            <div className="rounded-md border border-[var(--border)]">
+              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">Principales diferencias por línea</div>
+              <div className="max-h-72 overflow-auto">
+                <table className="w-full min-w-[860px] border-collapse text-xs">
+                  <thead className="bg-white text-left text-[var(--text-secondary)]">
+                    <tr>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. absoluta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.lines.map((line) => (
+                      <tr key={line.key} className="border-b border-[var(--border)]">
+                        <td className="px-3 py-2 font-medium">{line.line}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.leftTotal)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.rightTotal)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${Math.abs(line.diff) > MONEY_TOLERANCE ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{formatCurrency(line.diff)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.absDiff)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {summary.issues.length > 0 && (
+            <div className="rounded-md border border-[var(--border)]">
+              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">Mayores diferencias por fecha</div>
+              <div className="max-h-72 overflow-auto">
+                <table className="w-full min-w-[880px] border-collapse text-xs">
+                  <thead className="bg-white text-left text-[var(--text-secondary)]">
+                    <tr>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.issues.map((issue) => (
+                      <tr key={issue.key} className="border-b border-[var(--border)]">
+                        <td className="px-3 py-2 font-medium">{issue.line}</td>
+                        <td className="px-3 py-2">{displayDate(issue.date)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.leftValue)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.rightValue)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(issue.diff)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div className="space-y-6">
       <button
@@ -536,17 +747,35 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Validador budget</h2>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Compara dos libros y revisa que COGS mantenga el mismo porcentaje por línea dentro del FY.</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">Flujo de revisión: igualdad de archivos, validación COGS y comparación cargado vs previsto.</p>
           </div>
-          <label className="space-y-1">
-            <span className="text-xs font-medium text-[var(--text-secondary)]">FY desde abril</span>
-            <input
-              type="number"
-              value={fyStartYear}
-              onChange={(event) => setFyStartYear(parseInt(event.target.value, 10) || 2025)}
-              className="h-10 w-32 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm outline-none focus:border-[var(--accent)]"
-            />
-          </label>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
+              {[
+                [1, '1 · Archivos'],
+                [2, '2 · COGS'],
+                [3, '3 · Cargado vs previsto'],
+              ].map(([step, label]) => (
+                <button
+                  key={step}
+                  type="button"
+                  onClick={() => setActiveStep(step as ValidatorStep)}
+                  className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeStep === step ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <label className="space-y-1">
+              <span className="text-xs font-medium text-[var(--text-secondary)]">FY desde abril</span>
+              <input
+                type="number"
+                value={fyStartYear}
+                onChange={(event) => setFyStartYear(parseInt(event.target.value, 10) || 2025)}
+                className="h-10 w-32 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm outline-none focus:border-[var(--accent)]"
+              />
+            </label>
+          </div>
         </div>
       </section>
 
@@ -554,23 +783,26 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="validator-left-file"
-            label="Archivo 1"
+            label={activeStep === 2 ? 'Archivo a validar' : activeStep === 3 ? 'Budget cargado' : 'Archivo 1'}
             onFileLoaded={() => {}}
             onWorkbookLoaded={handleLoad('left')}
           />
           {leftWorkbook && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {leftWorkbook.fileName}</p>}
         </div>
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-          <FileUpload
-            inputId="validator-right-file"
-            label="Archivo 2"
-            onFileLoaded={() => {}}
-            onWorkbookLoaded={handleLoad('right')}
-          />
-          {rightWorkbook && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {rightWorkbook.fileName}</p>}
-        </div>
+        {activeStep !== 2 && (
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+            <FileUpload
+              inputId="validator-right-file"
+              label={activeStep === 3 ? 'Budget previsto' : 'Archivo 2'}
+              onFileLoaded={() => {}}
+              onWorkbookLoaded={handleLoad('right')}
+            />
+            {rightWorkbook && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {rightWorkbook.fileName}</p>}
+          </div>
+        )}
       </section>
 
+      {activeStep === 1 && (
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -625,11 +857,13 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
           </div>
         )}
       </section>
+      )}
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        {renderCogsValidation('Archivo 1', leftWorkbook, leftCogs)}
-        {renderCogsValidation('Archivo 2', rightWorkbook, rightCogs)}
-      </section>
+      {activeStep === 1 && renderBudgetDiff('Principales diferencias entre Archivo 1 y Archivo 2', budgetDiff)}
+
+      {activeStep === 2 && renderCogsValidation('Archivo a validar', leftWorkbook, leftCogs)}
+
+      {activeStep === 3 && renderBudgetDiff('Budget cargado vs budget previsto', budgetDiff)}
     </div>
   );
 }
