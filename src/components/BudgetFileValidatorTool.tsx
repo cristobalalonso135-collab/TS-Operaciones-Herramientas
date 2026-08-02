@@ -241,6 +241,13 @@ function displayDate(dateKey?: string): string {
   return `${day}/${month}/${year}`;
 }
 
+function displayMonth(dateKey?: string): string {
+  if (!dateKey) return '';
+  const [year, month] = dateKey.split('-');
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
+  return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
 function numericValue(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -488,7 +495,7 @@ function plannedMonthlyValues(workbook: WorkbookUpload): { facturacion: Map<stri
     const zone = normalizeZoneForCompare(row[colMap.zone]);
     const country = normalizeCountryCode(row[colMap.country]);
     const key = lineKey([verticalId, medio, zone, country, monthStart]);
-    const line = [row[colMap.vertical], medio, row[colMap.zone], country, displayDate(monthStart)].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
+    const line = [row[colMap.vertical], medio, row[colMap.zone], country, displayMonth(monthStart)].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
     const amountCell = `${excelColumnName(colMap.amount)}${sheet.headerIndex + 2 + rowOffset}`;
     const marginCell = `${excelColumnName(colMap.margin)}${sheet.headerIndex + 2 + rowOffset}`;
 
@@ -522,7 +529,7 @@ function loadedMonthlyValues(sheet: { name: string; rows: any[][] } | null, fySt
       if (value === null) return;
       const monthStart = `${date.slice(0, 7)}-01`;
       const key = lineKey([line.idVertical, line.nombre, normalizeZoneForCompare(line.zona), normalizeCountryCode(line.codMercado), monthStart]);
-      const label = [line.idVertical, line.nombre, line.zona, line.codMercado, displayDate(monthStart)].filter(Boolean).join(' · ');
+      const label = [line.idVertical, line.nombre, line.zona, line.codMercado, displayMonth(monthStart)].filter(Boolean).join(' · ');
       const existing = values.get(key);
       values.set(key, {
         line: existing?.line || label,
@@ -654,7 +661,7 @@ function buildMonthlyFacturacionCorrection(
       if (Math.abs(current) > tolerance || Math.abs(target) > tolerance) seenKeys.add(key);
       if (Math.abs(diff) <= tolerance) return;
 
-      const line = [idVertical, nombre, zona, codMercado, displayDate(monthStart)].filter(Boolean).join(' · ');
+      const line = [idVertical, nombre, zona, codMercado, displayMonth(monthStart)].filter(Boolean).join(' · ');
 
       if (numericColumns.length === 0 && Math.abs(target) > tolerance) {
         skippedLines.push(`${line}: sin reparto diario en el cargado`);
@@ -1499,7 +1506,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                     {sortedDiffIssues(summary.issues).map((issue) => (
                       <tr key={issue.key} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2 font-medium">{issue.line}</td>
-                        <td className="px-3 py-2">{displayDate(issue.date)}</td>
+                        <td className="px-3 py-2">{summary.label.includes('mensual') ? displayMonth(issue.date) : displayDate(issue.date)}</td>
                         <td className="px-3 py-2 font-mono">{[issue.leftCell, issue.rightCell].filter(Boolean).join(' / ') || '-'}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.leftValue)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.rightValue)}</td>
@@ -1597,7 +1604,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                         {monthlyFacturacionCorrection.changes.map((change) => (
                           <tr key={change.key} className="border-b border-[var(--border)]">
                             <td className="px-3 py-2 font-medium">{change.line}</td>
-                            <td className="px-3 py-2">{displayDate(change.month)}</td>
+                            <td className="px-3 py-2">{displayMonth(change.month)}</td>
                             <td className="px-3 py-2">{change.action}</td>
                             <td className="px-3 py-2 text-right font-mono">{formatCurrency(change.current)}</td>
                             <td className="px-3 py-2 text-right font-mono text-[var(--success)]">{formatCurrency(change.expected)}</td>
