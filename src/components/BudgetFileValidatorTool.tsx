@@ -99,6 +99,9 @@ interface BudgetFileValidatorToolProps {
 }
 
 type ValidatorStep = 1 | 2 | 3;
+type DiffLineSortKey = 'line' | 'left' | 'right' | 'diff';
+type DiffIssueSortKey = 'line' | 'date' | 'left' | 'right' | 'diff';
+type SortDirection = 'asc' | 'desc';
 
 interface BudgetDiffIssue {
   key: string;
@@ -722,6 +725,12 @@ function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function fiscalYearFromDate(date: string): number {
+  const year = parseInt(date.slice(0, 4), 10);
+  const month = parseInt(date.slice(5, 7), 10);
+  return month >= 4 ? year : year - 1;
+}
+
 function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number): CogsCorrectionSummary | null {
   if (!workbook) return null;
 
@@ -772,16 +781,20 @@ function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number)
       return;
     }
 
-    const ratios: number[] = [];
+    const ratiosByFiscalYear = new Map<number, number[]>();
     cogsDateColumns.forEach(({ index, date }) => {
       const factIndex = factDateColumns.get(date);
       if (factIndex === undefined) return;
       const fact = numericValue(factRow[factIndex]);
       const cogs = numericValue(cogsRow[index]);
-      if (fact !== null && fact !== 0 && cogs !== null) ratios.push(cogs / fact);
+      if (fact !== null && fact !== 0 && cogs !== null) {
+        const fy = fiscalYearFromDate(date);
+        const ratios = ratiosByFiscalYear.get(fy) || [];
+        ratios.push(cogs / fact);
+        ratiosByFiscalYear.set(fy, ratios);
+      }
     });
 
-    const cogsRate = median(ratios);
     let skippedByRate = false;
 
     cogsDateColumns.forEach(({ index, date }) => {
@@ -789,6 +802,7 @@ function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number)
       if (factIndex === undefined) return;
       const fact = numericValue(factRow[factIndex]);
       const current = numericValue(cogsRow[index]);
+      const cogsRate = median(ratiosByFiscalYear.get(fiscalYearFromDate(date)) || []);
       let expected: number | null = null;
       let shouldEvaluate = true;
 
@@ -1125,11 +1139,41 @@ function StatusPill({ ok }: { ok: boolean }) {
   );
 }
 
+function SortHeader<T extends string>({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  sortKey: T;
+  activeKey: T;
+  direction: SortDirection;
+  onSort: (key: T) => void;
+  align?: 'left' | 'right';
+}) {
+  const isActive = activeKey === sortKey;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`inline-flex w-full items-center gap-1 ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'} font-medium transition hover:text-[var(--text-primary)]`}
+    >
+      {label}
+      <span className="text-[10px] text-[var(--text-muted)]">{isActive ? (direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+    </button>
+  );
+}
+
 export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorToolProps) {
   const [leftWorkbook, setLeftWorkbook] = useState<WorkbookUpload | null>(null);
   const [rightWorkbook, setRightWorkbook] = useState<WorkbookUpload | null>(null);
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
   const [moneyTolerance, setMoneyTolerance] = useState(DEFAULT_MONEY_TOLERANCE);
+  const [lineSort, setLineSort] = useState<{ key: DiffLineSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
+  const [issueSort, setIssueSort] = useState<{ key: DiffIssueSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
 
   const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
   const loadedVsPlannedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance, true), [leftWorkbook, rightWorkbook, moneyTolerance]);
@@ -1141,6 +1185,14 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     const workbook = { sheets, fileName };
     if (side === 'left') setLeftWorkbook(workbook);
     else setRightWorkbook(workbook);
+  };
+
+  const updateLineSort = (key: DiffLineSortKey) => {
+    setLineSort((prev) => ({ key, direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc' }));
+  };
+
+  const updateIssueSort = (key: DiffIssueSortKey) => {
+    setIssueSort((prev) => ({ key, direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc' }));
   };
 
   const downloadCorrectedCogs = async () => {
@@ -1160,6 +1212,23 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     const baseName = leftWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
     XLSX.writeFile(workbook, `${baseName}_facturacion_corregida_FY_${monthlyFacturacionCorrection.fyStartYear || ''}.xlsx`);
   };
+
+  const sortedDiffLines = (lines: BudgetDiffLine[]) => [...lines].sort((a, b) => {
+    const direction = lineSort.direction === 'asc' ? 1 : -1;
+    if (lineSort.key === 'line') return a.line.localeCompare(b.line, 'es') * direction;
+    if (lineSort.key === 'left') return (a.leftTotal - b.leftTotal) * direction;
+    if (lineSort.key === 'right') return (a.rightTotal - b.rightTotal) * direction;
+    return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
+  });
+
+  const sortedDiffIssues = (issues: BudgetDiffIssue[]) => [...issues].sort((a, b) => {
+    const direction = issueSort.direction === 'asc' ? 1 : -1;
+    if (issueSort.key === 'line') return a.line.localeCompare(b.line, 'es') * direction;
+    if (issueSort.key === 'date') return String(a.date || '').localeCompare(String(b.date || '')) * direction;
+    if (issueSort.key === 'left') return (a.leftValue - b.leftValue) * direction;
+    if (issueSort.key === 'right') return (a.rightValue - b.rightValue) * direction;
+    return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
+  });
 
   const renderCogsValidation = (title: string, workbook: WorkbookUpload | null, validation: CogsValidation | null) => (
     <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -1365,14 +1434,22 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 <table className="w-full min-w-[860px] border-collapse text-xs">
                   <thead className="bg-white text-left text-[var(--text-secondary)]">
                     <tr>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. neta &gt; umbral</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                        <SortHeader label="Línea" sortKey="line" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} />
+                      </th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                        <SortHeader label="Archivo 1" sortKey="left" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} align="right" />
+                      </th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                        <SortHeader label="Archivo 2" sortKey="right" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} align="right" />
+                      </th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                        <SortHeader label="Dif. neta &gt; umbral" sortKey="diff" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} align="right" />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {summary.lines.map((line) => (
+                    {sortedDiffLines(summary.lines).map((line) => (
                       <tr key={line.key} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2 font-medium">{line.line}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.leftTotal)}</td>
@@ -1395,16 +1472,26 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 <table className="w-full min-w-[880px] border-collapse text-xs">
                   <thead className="bg-white text-left text-[var(--text-secondary)]">
                     <tr>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">{summary.label.includes('mensual') ? 'Mes' : 'Fecha'}</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                        <SortHeader label="Línea" sortKey="line" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} />
+                      </th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                        <SortHeader label={summary.label.includes('mensual') ? 'Mes' : 'Fecha'} sortKey="date" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} />
+                      </th>
                       <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celdas</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 1</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Archivo 2</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                        <SortHeader label="Archivo 1" sortKey="left" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} align="right" />
+                      </th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                        <SortHeader label="Archivo 2" sortKey="right" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} align="right" />
+                      </th>
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                        <SortHeader label="Diferencia" sortKey="diff" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} align="right" />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {summary.issues.map((issue) => (
+                    {sortedDiffIssues(summary.issues).map((issue) => (
                       <tr key={issue.key} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2 font-medium">{issue.line}</td>
                         <td className="px-3 py-2">{displayDate(issue.date)}</td>
