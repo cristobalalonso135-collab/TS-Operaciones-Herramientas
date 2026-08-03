@@ -12,11 +12,9 @@ type CompareView = 'tabla' | 'resumen' | 'barras' | 'lineas' | 'operaciones' | '
 type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
 type SummaryGroupKey = Exclude<ChartGroupKey, 'total'> | 'none';
 type ComparatorTab = 'analisis' | 'reglas';
-type FilterMode = 'include' | 'exclude';
 type FilterKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'status';
 
 interface MultiFilterState {
-  mode: FilterMode;
   values: string[];
 }
 
@@ -423,18 +421,44 @@ function barWidth(value: number, maxValue: number): number {
   return Math.max(1, Math.min(100, (Math.abs(value) / maxValue) * 100));
 }
 
-function uniqueOptions(rows: CompareRow[], getter: (row: CompareRow) => string): string[] {
-  return Array.from(new Set(rows.map(getter).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es'));
-}
-
-function createFilter(mode: FilterMode = 'include', values: string[] = []): MultiFilterState {
-  return { mode, values };
+function createFilter(values: string[] = []): MultiFilterState {
+  return { values };
 }
 
 function filterMatches(filter: MultiFilterState, value: string): boolean {
-  if (filter.values.length === 0) return true;
-  const selected = filter.values.includes(value);
-  return filter.mode === 'include' ? selected : !selected;
+  return filter.values.length === 0 || filter.values.includes(value);
+}
+
+function getFilterValue(row: CompareRow, key: FilterKey): string {
+  if (key === 'month') return row.monthLabel;
+  if (key === 'area') return row.area;
+  if (key === 'responsable') return row.responsable;
+  if (key === 'subresponsable') return row.subresponsable;
+  if (key === 'vertical') return row.vertical;
+  if (key === 'medio') return row.medio;
+  if (key === 'region') return row.region;
+  if (key === 'zona') return row.zona;
+  return row.status;
+}
+
+function optionsForFilter(rows: CompareRow[], filters: CompareFilters, key: FilterKey): string[] {
+  const scopedRows = rows.filter((row) => (
+    (Object.keys(filters) as FilterKey[]).every((filterKey) => (
+      filterKey === key || filterMatches(filters[filterKey], getFilterValue(row, filterKey))
+    ))
+  ));
+  const values = Array.from(new Set(scopedRows.map((row) => getFilterValue(row, key)).filter(Boolean)));
+
+  if (key === 'month') {
+    return values.sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99));
+  }
+
+  if (key === 'status') {
+    const statusOrder: CompareStatus[] = ['OK', 'Revisar', 'Variación alta', 'Base cero', 'Solo budget', 'Solo facturación', 'Sin área'];
+    return statusOrder.filter((status) => values.includes(status));
+  }
+
+  return values.sort((a, b) => a.localeCompare(b, 'es'));
 }
 
 function getChartGroup(row: CompareRow, groupBy: ChartGroupKey): { label: string; order: number } {
@@ -778,7 +802,10 @@ interface MultiFilterSelectProps {
 function MultiFilterSelect({ label, value, options, onChange }: MultiFilterSelectProps) {
   const summary = value.values.length === 0
     ? 'Todos'
-    : `${value.mode === 'include' ? 'Incluye' : 'Excluye'} ${value.values.length}`;
+    : value.values.length === 1
+      ? value.values[0]
+      : `${value.values.length} seleccionados`;
+  const visibleOptions = Array.from(new Set([...value.values, ...options]));
 
   const toggleValue = (option: string) => {
     const values = value.values.includes(option)
@@ -796,31 +823,17 @@ function MultiFilterSelect({ label, value, options, onChange }: MultiFilterSelec
           <span className="text-xs text-[var(--text-muted)]">▾</span>
         </summary>
         <div className="absolute z-30 mt-1 w-72 rounded-md border border-[var(--border)] bg-white p-2 shadow-lg">
-          <div className="mb-2 grid grid-cols-2 gap-1">
-            <button
-              type="button"
-              onClick={() => onChange({ ...value, mode: 'include' })}
-              className={`rounded px-2 py-1.5 text-xs font-medium ${value.mode === 'include' ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}
-            >
-              Incluir
-            </button>
-            <button
-              type="button"
-              onClick={() => onChange({ ...value, mode: 'exclude' })}
-              className={`rounded px-2 py-1.5 text-xs font-medium ${value.mode === 'exclude' ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}
-            >
-              Excluir
-            </button>
-          </div>
           <button
             type="button"
-            onClick={() => onChange(createFilter(value.mode))}
+            onClick={() => onChange(createFilter())}
             className="mb-2 w-full rounded border border-[var(--border)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)]"
           >
             Limpiar selección
           </button>
           <div className="max-h-64 space-y-1 overflow-auto pr-1">
-            {options.map((option) => (
+            {visibleOptions.length === 0 ? (
+              <div className="px-2 py-3 text-sm text-[var(--text-muted)]">Sin opciones disponibles</div>
+            ) : visibleOptions.map((option) => (
               <label key={option} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-[var(--bg-soft)]">
                 <input
                   type="checkbox"
@@ -1124,16 +1137,16 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   }, [monthlyAnomalies, monthlyRows, totals.pct]);
 
   const options = useMemo(() => ({
-    month: Array.from(new Set(comparisonRows.map((row) => row.monthLabel))).sort((a, b) => (MONTH_ORDER.get(a) ?? 99) - (MONTH_ORDER.get(b) ?? 99)),
-    area: uniqueOptions(comparisonRows, (row) => row.area),
-    responsable: uniqueOptions(comparisonRows, (row) => row.responsable),
-    subresponsable: uniqueOptions(comparisonRows, (row) => row.subresponsable),
-    vertical: uniqueOptions(comparisonRows, (row) => row.vertical),
-    medio: uniqueOptions(comparisonRows, (row) => row.medio),
-    region: uniqueOptions(comparisonRows, (row) => row.region),
-    zona: uniqueOptions(comparisonRows, (row) => row.zona),
-    status: ['OK', 'Revisar', 'Variación alta', 'Base cero', 'Solo budget', 'Solo facturación', 'Sin área'] as CompareStatus[],
-  }), [comparisonRows]);
+    month: optionsForFilter(comparisonRows, filters, 'month'),
+    area: optionsForFilter(comparisonRows, filters, 'area'),
+    responsable: optionsForFilter(comparisonRows, filters, 'responsable'),
+    subresponsable: optionsForFilter(comparisonRows, filters, 'subresponsable'),
+    vertical: optionsForFilter(comparisonRows, filters, 'vertical'),
+    medio: optionsForFilter(comparisonRows, filters, 'medio'),
+    region: optionsForFilter(comparisonRows, filters, 'region'),
+    zona: optionsForFilter(comparisonRows, filters, 'zona'),
+    status: optionsForFilter(comparisonRows, filters, 'status'),
+  }), [comparisonRows, filters]);
 
   const updateSort = (key: SortKey) => {
     setSort((prev) => ({
