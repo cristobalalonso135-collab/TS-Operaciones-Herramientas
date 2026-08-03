@@ -8,6 +8,7 @@ type SourceKind = 'budget' | 'facturacion';
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
+type GenericSortKey = string;
 type CompareView = 'tabla' | 'resumen' | 'barras' | 'lineas' | 'operaciones' | 'pendientes';
 type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
 type SummaryGroupKey = Exclude<ChartGroupKey, 'total'> | 'none';
@@ -429,6 +430,17 @@ function filterMatches(filter: MultiFilterState, value: string): boolean {
   return filter.values.length === 0 || filter.values.includes(value);
 }
 
+function compareSortable(left: string | number | null, right: string | number | null, direction: SortDirection): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+
+  const result = typeof left === 'number' && typeof right === 'number'
+    ? left - right
+    : String(left).localeCompare(String(right), 'es');
+  return direction === 'asc' ? result : -result;
+}
+
 function getFilterValue(row: CompareRow, key: FilterKey): string {
   if (key === 'month') return row.monthLabel;
   if (key === 'area') return row.area;
@@ -480,12 +492,12 @@ function getSummaryGroupValue(row: CompareRow, groupBy: SummaryGroupKey): { labe
 
 function summaryGroupTitle(groupBy: SummaryGroupKey): string {
   if (groupBy === 'month') return 'Mes';
-  if (groupBy === 'area') return 'Area';
+  if (groupBy === 'area') return 'Área';
   if (groupBy === 'responsable') return 'Responsable';
   if (groupBy === 'subresponsable') return 'Subresponsable';
   if (groupBy === 'vertical') return 'Vertical';
   if (groupBy === 'medio') return 'Medio';
-  if (groupBy === 'region') return 'Region';
+  if (groupBy === 'region') return 'Región';
   if (groupBy === 'zona') return 'Zona';
   return 'Sin nivel';
 }
@@ -525,7 +537,7 @@ function buildSummaryRows(rows: CompareRow[], levels: SummaryGroupKey[]): Summar
   rows.forEach((row) => {
     const groups = activeLevels.length > 0
       ? activeLevels.map((level) => getSummaryGroupValue(row, level))
-      : [{ label: 'Total seleccion', order: 0 }];
+      : [{ label: 'Total selección', order: 0 }];
     const key = groups.map((group) => group.label).join('||');
     const existing = grouped.get(key) || {
       key,
@@ -879,6 +891,34 @@ function SortButton({
   );
 }
 
+function GenericSortButton({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  sortKey: GenericSortKey;
+  sort: { key: GenericSortKey; direction: SortDirection };
+  onSort: (key: GenericSortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sort.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort.direction === 'asc' ? ArrowUp : ArrowDown;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`inline-flex w-full items-center gap-1 text-xs font-medium ${align === 'right' ? 'justify-end' : 'justify-start'} ${active ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+    >
+      {label}
+      <Icon className="h-3 w-3" />
+    </button>
+  );
+}
+
 export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [budgetLines, setBudgetLines] = useState<ParsedLine[]>([]);
   const [facturacionLines, setFacturacionLines] = useState<ParsedLine[]>([]);
@@ -904,6 +944,9 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     status: createFilter(),
   });
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
+  const [summarySort, setSummarySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'absDiff', direction: 'desc' });
+  const [anomalySort, setAnomalySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'deviation', direction: 'desc' });
+  const [issueSort, setIssueSort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'budget', direction: 'desc' });
 
   const handleLoad = (kind: SourceKind) => (rows: any[][], fileName: string) => {
     try {
@@ -1040,9 +1083,47 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
   const chartRows = useMemo(() => buildChartRows(filteredRows, chartGroupBy), [chartGroupBy, filteredRows]);
   const summaryRows = useMemo(() => buildSummaryRows(filteredRows, summaryLevels), [filteredRows, summaryLevels]);
+  const sortedSummaryRows = useMemo(() => {
+    const valueForSort = (row: SummaryRow): string | number | null => {
+      if (summarySort.key.startsWith('level:')) {
+        const levelIndex = parseInt(summarySort.key.slice(6), 10);
+        return row.levels[levelIndex] || row.label;
+      }
+      if (summarySort.key === 'label') return row.label;
+      if (summarySort.key === 'rows') return row.rows;
+      if (summarySort.key === 'facturacion') return row.facturacion;
+      if (summarySort.key === 'budget') return row.budget;
+      if (summarySort.key === 'diff') return row.diff;
+      if (summarySort.key === 'pct') return row.pct;
+      return Math.abs(row.diff);
+    };
+
+    return [...summaryRows].sort((a, b) => {
+      const result = compareSortable(valueForSort(a), valueForSort(b), summarySort.direction);
+      if (result !== 0) return result;
+      return a.label.localeCompare(b.label, 'es');
+    });
+  }, [summaryRows, summarySort]);
   const monthlyRows = useMemo(() => buildChartRows(filteredRows, 'month'), [filteredRows]);
   const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
   const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
+  const sortedMonthlyAnomalies = useMemo(() => {
+    const valueForSort = (item: MonthlyAnomaly): string | number | null => {
+      if (anomalySort.key === 'month') return MONTH_ORDER.get(item.monthLabel) ?? 99;
+      if (anomalySort.key === 'line') return item.groupLabel;
+      if (anomalySort.key === 'groupPct') return item.groupPct;
+      if (anomalySort.key === 'monthPct') return item.monthPct;
+      if (anomalySort.key === 'budget') return item.budget;
+      if (anomalySort.key === 'facturacion') return item.facturacion;
+      return item.deviation;
+    };
+
+    return [...monthlyAnomalies].sort((a, b) => {
+      const result = compareSortable(valueForSort(a), valueForSort(b), anomalySort.direction);
+      if (result !== 0) return result;
+      return a.key.localeCompare(b.key, 'es');
+    });
+  }, [anomalySort, monthlyAnomalies]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
   const classificationIssues = useMemo<ClassificationIssue[]>(() => {
@@ -1101,6 +1182,28 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
       }))
       .sort((a, b) => Math.max(Math.abs(b.facturacion), Math.abs(b.budget)) - Math.max(Math.abs(a.facturacion), Math.abs(a.budget)));
   }, [filteredRows]);
+  const sortedClassificationIssues = useMemo(() => {
+    const valueForSort = (issue: ClassificationIssue): string | number => {
+      if (issueSort.key === 'issue') return issue.issues.join(', ');
+      if (issueSort.key === 'area') return issue.area;
+      if (issueSort.key === 'responsable') return issue.responsable;
+      if (issueSort.key === 'subresponsable') return issue.subresponsable;
+      if (issueSort.key === 'vertical') return issue.vertical;
+      if (issueSort.key === 'medio') return issue.medio;
+      if (issueSort.key === 'region') return issue.region;
+      if (issueSort.key === 'zona') return issue.zona;
+      if (issueSort.key === 'facturacion') return issue.facturacion;
+      if (issueSort.key === 'budget') return issue.budget;
+      if (issueSort.key === 'months') return issue.months[0] ? MONTH_ORDER.get(issue.months[0]) ?? 99 : 99;
+      return issue.rows;
+    };
+
+    return [...classificationIssues].sort((a, b) => {
+      const result = compareSortable(valueForSort(a), valueForSort(b), issueSort.direction);
+      if (result !== 0) return result;
+      return a.key.localeCompare(b.key, 'es');
+    });
+  }, [classificationIssues, issueSort]);
   const chartInsight = useMemo(() => {
     const rowsWithPct = chartRows.filter((row) => row.pct !== null && Number.isFinite(row.pct));
     if (rowsWithPct.length < 2) return 'Selecciona más de un grupo para valorar si el crecimiento es homogéneo.';
@@ -1150,6 +1253,27 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
   const updateSort = (key: SortKey) => {
     setSort((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }));
+  };
+
+  const updateSummarySort = (key: GenericSortKey) => {
+    setSummarySort((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }));
+  };
+
+  const updateAnomalySort = (key: GenericSortKey) => {
+    setAnomalySort((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }));
+  };
+
+  const updateIssueSort = (key: GenericSortKey) => {
+    setIssueSort((prev) => ({
       key,
       direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
     }));
@@ -1531,7 +1655,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                 <div className="border-b border-[var(--border)] p-4">
                   <p className="text-sm font-semibold">Resumen comparativo</p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Agrupa la selecciÃ³n con los niveles elegidos y ordena por mayor diferencia absoluta. Sirve para comparar mes contra mes, vertical contra vertical, medio contra medio o combinaciones.
+                    Agrupa la selección con los niveles elegidos. Sirve para comparar mes contra mes, vertical contra vertical, medio contra medio o combinaciones.
                   </p>
                 </div>
                 <div className="max-h-[620px] overflow-auto">
@@ -1540,21 +1664,23 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                       <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                         {summaryLevels.filter((level) => level !== 'none').map((level, index) => (
                           <th key={`${level}-${index}`} className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium">
-                            {summaryGroupTitle(level)}
+                            <GenericSortButton label={summaryGroupTitle(level)} sortKey={`level:${index}`} sort={summarySort} onSort={updateSummarySort} />
                           </th>
                         ))}
                         {summaryLevels.every((level) => level === 'none') && (
-                          <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium">SelecciÃ³n</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium">
+                            <GenericSortButton label="Selección" sortKey="label" sort={summarySort} onSort={updateSummarySort} />
+                          </th>
                         )}
-                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">LÃ­neas</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">FacturaciÃ³n</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Budget</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Diferencia</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">VariaciÃ³n</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Líneas" sortKey="rows" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Facturación" sortKey="facturacion" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Budget" sortKey="budget" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Diferencia" sortKey="absDiff" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Variación" sortKey="pct" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {summaryRows.map((row) => (
+                      {sortedSummaryRows.map((row) => (
                         <tr key={row.key} className="hover:bg-[var(--bg-primary)]">
                           {row.levels.map((level, index) => (
                             <td key={`${row.key}-${index}`} className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">
@@ -1739,16 +1865,16 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                       <table className="w-full min-w-[980px] border-separate border-spacing-0 text-xs">
                         <thead>
                           <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
-                            <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Mes</th>
-                            <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Línea</th>
-                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. línea</th>
-                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. mes</th>
-                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
-                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><GenericSortButton label="Mes" sortKey="month" sort={anomalySort} onSort={updateAnomalySort} /></th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><GenericSortButton label="Línea" sortKey="line" sort={anomalySort} onSort={updateAnomalySort} /></th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><GenericSortButton label="Crec. línea" sortKey="groupPct" sort={anomalySort} onSort={updateAnomalySort} align="right" /></th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><GenericSortButton label="Crec. mes" sortKey="monthPct" sort={anomalySort} onSort={updateAnomalySort} align="right" /></th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><GenericSortButton label="Budget" sortKey="budget" sort={anomalySort} onSort={updateAnomalySort} align="right" /></th>
+                            <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><GenericSortButton label="Facturación" sortKey="facturacion" sort={anomalySort} onSort={updateAnomalySort} align="right" /></th>
                           </tr>
                         </thead>
                         <tbody>
-                          {monthlyAnomalies.map((item) => (
+                          {sortedMonthlyAnomalies.map((item) => (
                             <tr key={item.key}>
                               <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{item.monthLabel}</td>
                               <td className="border-b border-[var(--border)] px-3 py-2">{item.groupLabel}</td>
@@ -1843,21 +1969,21 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                     <table className="w-full min-w-[1180px] border-collapse text-sm">
                       <thead className="sticky top-0 bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
                         <tr>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Pendiente</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Área</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Responsable</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Subresponsable</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Vertical</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Medio</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Región</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Zona</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Meses</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Pendiente" sortKey="issue" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Área" sortKey="area" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Responsable" sortKey="responsable" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Subresponsable" sortKey="subresponsable" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Vertical" sortKey="vertical" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Medio" sortKey="medio" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Región" sortKey="region" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Zona" sortKey="zona" sort={issueSort} onSort={updateIssueSort} /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><GenericSortButton label="Facturación" sortKey="facturacion" sort={issueSort} onSort={updateIssueSort} align="right" /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><GenericSortButton label="Budget" sortKey="budget" sort={issueSort} onSort={updateIssueSort} align="right" /></th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Meses" sortKey="months" sort={issueSort} onSort={updateIssueSort} /></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {classificationIssues.map((issue) => (
+                        {sortedClassificationIssues.map((issue) => (
                           <tr key={issue.key} className="border-b border-[var(--border)]">
                             <td className="px-3 py-2">
                               <div className="flex flex-wrap gap-1">
