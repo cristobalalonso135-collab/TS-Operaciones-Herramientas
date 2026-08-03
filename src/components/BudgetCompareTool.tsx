@@ -9,7 +9,7 @@ type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo 
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
 type GenericSortKey = string;
-type CompareView = 'tabla' | 'resumen' | 'barras' | 'lineas' | 'operaciones' | 'pendientes';
+type CompareView = 'tabla' | 'resumen' | 'barras' | 'lineas' | 'alertas' | 'operaciones' | 'pendientes';
 type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
 type SummaryGroupKey = Exclude<ChartGroupKey, 'total'> | 'none';
 type ComparatorTab = 'analisis' | 'reglas';
@@ -115,6 +115,23 @@ interface QualitySummary {
   editableRows: number;
   suggestions: QualitySuggestion[];
   operations: QualityOperation[];
+}
+
+interface StructuralAlert {
+  key: string;
+  type: string;
+  severity: 'Alta' | 'Media';
+  title: string;
+  groupLabel: string;
+  reason: string;
+  action: string;
+  facturacion: number;
+  budget: number;
+  diff: number;
+  pct: number | null;
+  selectionPct: number | null;
+  months: string[];
+  weight: number;
 }
 
 interface ClassificationIssue {
@@ -804,6 +821,105 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   };
 }
 
+function buildStructuralAlerts(rows: CompareRow[]): StructuralAlert[] {
+  const grouped = new Map<string, {
+    label: string;
+    area: string;
+    medio: string;
+    facturacion: number;
+    budget: number;
+    rows: CompareRow[];
+  }>();
+
+  rows.forEach((row) => {
+    const key = anomalyBaseKey(row);
+    const current = grouped.get(key) || {
+      label: anomalyLabel(row),
+      area: row.area,
+      medio: row.medio,
+      facturacion: 0,
+      budget: 0,
+      rows: [],
+    };
+    current.facturacion += row.facturacion;
+    current.budget += row.budget;
+    current.rows.push(row);
+    grouped.set(key, current);
+  });
+
+  const totalFacturacion = rows.reduce((sum, row) => sum + row.facturacion, 0);
+  const totalBudget = rows.reduce((sum, row) => sum + row.budget, 0);
+  const selectionPct = totalFacturacion !== 0 ? ((totalBudget - totalFacturacion) / Math.abs(totalFacturacion)) * 100 : null;
+  const alerts: StructuralAlert[] = [];
+
+  grouped.forEach((group, key) => {
+    const diff = group.budget - group.facturacion;
+    const pct = group.facturacion !== 0 ? (diff / Math.abs(group.facturacion)) * 100 : null;
+    const weight = Math.max(Math.abs(group.facturacion), Math.abs(group.budget), Math.abs(diff));
+    if (weight < 10000) return;
+
+    const months = group.rows
+      .filter((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)) >= 1000)
+      .sort((a, b) => Math.max(Math.abs(b.facturacion), Math.abs(b.budget)) - Math.max(Math.abs(a.facturacion), Math.abs(a.budget)))
+      .slice(0, 3)
+      .map((row) => row.monthLabel);
+    const isEquipacionesPro = normalizeText(group.medio).includes('equipaciones pro');
+    const hasNoBase = Math.abs(group.facturacion) < 1000 && Math.abs(group.budget) >= 10000;
+    const extremePct = pct !== null && Math.abs(pct) >= 150 && Math.abs(diff) >= 25000;
+    const farFromSelection = pct !== null && selectionPct !== null && Math.abs(pct - selectionPct) >= Math.max(80, Math.abs(selectionPct) * 1.5) && Math.abs(diff) >= 25000;
+    const volumeJump = Math.abs(diff) >= 100000 && (hasNoBase || extremePct || farFromSelection);
+
+    if (!(isEquipacionesPro || hasNoBase || extremePct || farFromSelection || volumeJump)) return;
+
+    let type = 'Supuesto de budget';
+    let title = 'Revisar supuesto de la línea';
+    let reason = `La línea crece ${formatPercent(pct)} frente al año anterior, con una diferencia de ${formatCurrency(diff)}.`;
+    let action = 'No lo trataría como movimiento entre meses: revisa si el objetivo anual de esta combinación es correcto antes de recolocar budget.';
+
+    if (isEquipacionesPro) {
+      type = 'Caso específico';
+      title = 'Equipaciones PRO (Elche)';
+      reason = `Esta combinación tiene ${formatCurrency(group.budget)} de budget frente a ${formatCurrency(group.facturacion)} de facturación histórica. Puede venir de arrastrar el budget anterior y no de la situación prevista.`;
+      action = 'Validar el supuesto anual de Equipaciones PRO antes de tocar meses. Si el escenario ha cambiado, ajustaría el total de la línea y después volvería a mirar Operaciones.';
+    } else if (hasNoBase) {
+      type = 'Budget sin base histórica';
+      title = 'Budget con histórico casi cero';
+      reason = `Hay ${formatCurrency(group.budget)} de budget con ${formatCurrency(group.facturacion)} de facturación histórica.`;
+      action = 'Revisar si es una línea nueva real o si el budget está asignado a una combinación equivocada.';
+    } else if (farFromSelection) {
+      type = 'Crecimiento fuera de tendencia';
+      title = 'Crecimiento muy distinto al filtro';
+      reason = `La línea crece ${formatPercent(pct)} mientras la selección filtrada crece ${formatPercent(selectionPct)}.`;
+      action = 'Comparar contra el responsable/medio/vertical filtrado. Si no hay explicación de negocio, revisaría el total anual.';
+    }
+
+    alerts.push({
+      key,
+      type,
+      severity: hasNoBase || volumeJump || isEquipacionesPro ? 'Alta' : 'Media',
+      title,
+      groupLabel: group.label,
+      reason,
+      action,
+      facturacion: group.facturacion,
+      budget: group.budget,
+      diff,
+      pct,
+      selectionPct,
+      months,
+      weight,
+    });
+  });
+
+  return alerts
+    .sort((a, b) => {
+      const severitySort = (a.severity === 'Alta' ? 0 : 1) - (b.severity === 'Alta' ? 0 : 1);
+      if (severitySort !== 0) return severitySort;
+      return b.weight - a.weight;
+    })
+    .slice(0, 12);
+}
+
 interface MultiFilterSelectProps {
   label: string;
   value: MultiFilterState;
@@ -1124,6 +1240,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
       return a.key.localeCompare(b.key, 'es');
     });
   }, [anomalySort, monthlyAnomalies]);
+  const structuralAlerts = useMemo(() => buildStructuralAlerts(filteredRows), [filteredRows]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
   const classificationIssues = useMemo<ClassificationIssue[]>(() => {
@@ -1538,6 +1655,13 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setActiveView('alertas')}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'alertas' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                  >
+                    Alertas
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setActiveView('operaciones')}
                     className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'operaciones' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
                   >
@@ -1553,7 +1677,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                 </div>
               </div>
               <p className="text-xs text-[var(--text-secondary)]">
-                Los filtros se combinan entre sí y recalculan totales, tabla, barras, líneas, operaciones y pendientes.
+                Los filtros se combinan entre sí y recalculan totales, tabla, barras, líneas, alertas, operaciones y pendientes.
               </p>
             </div>
 
@@ -1889,6 +2013,73 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {activeView === 'alertas' && (
+              <div className="rounded-md border border-[var(--border)] bg-white p-4">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold">Alertas de supuesto</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    Señala combinaciones donde el problema parece estar en el total anual o en la hipótesis de negocio, no en mover budget entre meses.
+                  </p>
+                </div>
+
+                {structuralAlerts.length === 0 ? (
+                  <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
+                    No veo alertas estructurales con los filtros actuales. Si una línea sigue preocupándote, acota por responsable, vertical o medio para revisarla con más detalle.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {structuralAlerts.map((alert, index) => (
+                      <div key={alert.key} className={`rounded-md border p-3 ${alert.severity === 'Alta' ? 'border-amber-200 bg-amber-50/70' : 'border-[var(--border)] bg-white'}`}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-semibold">Alerta {index + 1}: {alert.title}</p>
+                              <span className={`rounded px-2 py-1 text-[11px] font-semibold ${alert.severity === 'Alta' ? 'bg-amber-100 text-amber-800' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}>
+                                {alert.severity}
+                              </span>
+                              <span className="rounded bg-white px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)]">
+                                {alert.type}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">{alert.groupLabel}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-right text-xs md:grid-cols-4">
+                            <div className="rounded bg-white px-2 py-1">
+                              <p className="text-[var(--text-muted)]">Fact.</p>
+                              <p className="font-mono font-semibold">{formatCurrency(alert.facturacion)}</p>
+                            </div>
+                            <div className="rounded bg-white px-2 py-1">
+                              <p className="text-[var(--text-muted)]">Budget</p>
+                              <p className="font-mono font-semibold">{formatCurrency(alert.budget)}</p>
+                            </div>
+                            <div className="rounded bg-white px-2 py-1">
+                              <p className="text-[var(--text-muted)]">Dif.</p>
+                              <p className={`font-mono font-semibold ${alert.diff >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(alert.diff)}</p>
+                            </div>
+                            <div className="rounded bg-white px-2 py-1">
+                              <p className="text-[var(--text-muted)]">Crec.</p>
+                              <p className={`font-mono font-semibold ${(alert.pct ?? 0) >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatPercent(alert.pct)}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
+                          <p className="rounded bg-white px-2 py-1 text-[var(--text-secondary)]">
+                            <span className="font-semibold text-[var(--text-primary)]">Motivo:</span> {alert.reason}
+                          </p>
+                          <p className="rounded bg-white px-2 py-1 text-[var(--text-secondary)]">
+                            <span className="font-semibold text-[var(--text-primary)]">Qué haría:</span> {alert.action}
+                          </p>
+                          <p className="rounded bg-white px-2 py-1 text-[var(--text-secondary)]">
+                            <span className="font-semibold text-[var(--text-primary)]">Meses con más peso:</span> {alert.months.length ? alert.months.join(', ') : 'Sin concentración clara'}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
