@@ -123,6 +123,13 @@ interface StructuralAlert {
   severity: 'Alta' | 'Media';
   title: string;
   groupLabel: string;
+  area: string;
+  responsable: string;
+  subresponsable: string;
+  vertical: string;
+  medio: string;
+  region: string;
+  zona: string;
   reason: string;
   action: string;
   facturacion: number;
@@ -825,7 +832,12 @@ function buildStructuralAlerts(rows: CompareRow[]): StructuralAlert[] {
   const grouped = new Map<string, {
     label: string;
     area: string;
+    responsable: string;
+    subresponsable: string;
+    vertical: string;
     medio: string;
+    region: string;
+    zona: string;
     facturacion: number;
     budget: number;
     rows: CompareRow[];
@@ -836,7 +848,12 @@ function buildStructuralAlerts(rows: CompareRow[]): StructuralAlert[] {
     const current = grouped.get(key) || {
       label: anomalyLabel(row),
       area: row.area,
+      responsable: row.responsable,
+      subresponsable: row.subresponsable,
+      vertical: row.vertical,
       medio: row.medio,
+      region: row.region,
+      zona: row.zona,
       facturacion: 0,
       budget: 0,
       rows: [],
@@ -899,6 +916,13 @@ function buildStructuralAlerts(rows: CompareRow[]): StructuralAlert[] {
       severity: hasNoBase || volumeJump || isEquipacionesPro ? 'Alta' : 'Media',
       title,
       groupLabel: group.label,
+      area: group.area,
+      responsable: group.responsable,
+      subresponsable: group.subresponsable,
+      vertical: group.vertical,
+      medio: group.medio,
+      region: group.region,
+      zona: group.zona,
       reason,
       action,
       facturacion: group.facturacion,
@@ -1063,6 +1087,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [summarySort, setSummarySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
   const [anomalySort, setAnomalySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'deviation', direction: 'desc' });
   const [issueSort, setIssueSort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'budget', direction: 'desc' });
+  const [justifiedAlertKeys, setJustifiedAlertKeys] = useState<Set<string>>(() => new Set());
 
   const handleLoad = (kind: SourceKind) => (rows: any[][], fileName: string) => {
     try {
@@ -1241,6 +1266,9 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     });
   }, [anomalySort, monthlyAnomalies]);
   const structuralAlerts = useMemo(() => buildStructuralAlerts(filteredRows), [filteredRows]);
+  const visibleStructuralAlerts = useMemo(() => (
+    structuralAlerts.filter((alert) => !justifiedAlertKeys.has(alert.key))
+  ), [justifiedAlertKeys, structuralAlerts]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
   const classificationIssues = useMemo<ClassificationIssue[]>(() => {
@@ -1398,6 +1426,28 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
   const updateFilter = (key: FilterKey, value: MultiFilterState) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const justifyAlert = (key: string) => {
+    setJustifiedAlertKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  };
+
+  const inspectAlert = (alert: StructuralAlert) => {
+    setFilters((prev) => ({
+      ...prev,
+      area: alert.area ? createFilter([alert.area]) : createFilter(),
+      responsable: alert.responsable ? createFilter([alert.responsable]) : createFilter(),
+      subresponsable: alert.subresponsable ? createFilter([alert.subresponsable]) : createFilter(),
+      vertical: alert.vertical ? createFilter([alert.vertical]) : createFilter(),
+      medio: alert.medio ? createFilter([alert.medio]) : createFilter(),
+      region: alert.region ? createFilter([alert.region]) : createFilter(),
+      zona: alert.zona ? createFilter([alert.zona]) : createFilter(),
+    }));
+    setActiveView('tabla');
   };
 
   const handleExport = () => {
@@ -2030,20 +2080,33 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
             {activeView === 'alertas' && (
               <div className="rounded-md border border-[var(--border)] bg-white p-4">
-                <div className="mb-4">
-                  <p className="text-sm font-semibold">Alertas de supuesto</p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Señala combinaciones donde el problema parece estar en el total anual o en la hipótesis de negocio, no en mover budget entre meses.
-                  </p>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Alertas de supuesto</p>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                      Señala combinaciones donde el problema parece estar en el total anual o en la hipótesis de negocio, no en mover budget entre meses.
+                    </p>
+                  </div>
+                  {justifiedAlertKeys.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setJustifiedAlertKeys(new Set())}
+                      className="rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)]"
+                    >
+                      Restaurar justificadas ({justifiedAlertKeys.size})
+                    </button>
+                  )}
                 </div>
 
-                {structuralAlerts.length === 0 ? (
+                {visibleStructuralAlerts.length === 0 ? (
                   <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
-                    No veo alertas estructurales con los filtros actuales. Si una línea sigue preocupándote, acota por responsable, vertical o medio para revisarla con más detalle.
+                    {structuralAlerts.length === 0
+                      ? 'No veo alertas estructurales con los filtros actuales. Si una línea sigue preocupándote, acota por responsable, vertical o medio para revisarla con más detalle.'
+                      : 'Todas las alertas de esta selección están justificadas.'}
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {structuralAlerts.map((alert, index) => (
+                    {visibleStructuralAlerts.map((alert, index) => (
                       <div key={alert.key} className={`rounded-md border p-3 ${alert.severity === 'Alta' ? 'border-amber-200 bg-amber-50/70' : 'border-[var(--border)] bg-white'}`}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
@@ -2057,6 +2120,22 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                               </span>
                             </div>
                             <p className="mt-1 text-xs text-[var(--text-secondary)]">{alert.groupLabel}</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => inspectAlert(alert)}
+                                className="rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-medium transition hover:bg-[var(--bg-soft)]"
+                              >
+                                Ver detalle
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => justifyAlert(alert.key)}
+                                className="rounded-md bg-[var(--text-primary)] px-2.5 py-1.5 text-xs font-medium text-white transition hover:opacity-90"
+                              >
+                                Justificada
+                              </button>
+                            </div>
                           </div>
                           <div className="grid grid-cols-2 gap-2 text-right text-xs md:grid-cols-4">
                             <div className="rounded bg-white px-2 py-1">
