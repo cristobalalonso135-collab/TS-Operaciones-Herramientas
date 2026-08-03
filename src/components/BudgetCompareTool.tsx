@@ -8,8 +8,9 @@ type SourceKind = 'budget' | 'facturacion';
 type CompareStatus = 'OK' | 'Revisar' | 'Variación alta' | 'Base cero' | 'Solo budget' | 'Solo facturación' | 'Sin área';
 type SortDirection = 'asc' | 'desc';
 type SortKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'facturacion' | 'budget' | 'diff' | 'pct' | 'status';
-type CompareView = 'tabla' | 'barras' | 'lineas' | 'operaciones' | 'pendientes';
+type CompareView = 'tabla' | 'resumen' | 'barras' | 'lineas' | 'operaciones' | 'pendientes';
 type ChartGroupKey = 'total' | 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona';
+type SummaryGroupKey = Exclude<ChartGroupKey, 'total'> | 'none';
 type ComparatorTab = 'analisis' | 'reglas';
 type FilterMode = 'include' | 'exclude';
 type FilterKey = 'month' | 'area' | 'responsable' | 'subresponsable' | 'vertical' | 'medio' | 'region' | 'zona' | 'status';
@@ -58,6 +59,17 @@ interface ChartRow {
   budget: number;
   diff: number;
   pct: number | null;
+}
+
+interface SummaryRow {
+  key: string;
+  levels: string[];
+  label: string;
+  facturacion: number;
+  budget: number;
+  diff: number;
+  pct: number | null;
+  rows: number;
 }
 
 interface MonthlyAnomaly {
@@ -437,6 +449,23 @@ function getChartGroup(row: CompareRow, groupBy: ChartGroupKey): { label: string
   return { label: row.zona || 'Sin zona', order: 0 };
 }
 
+function getSummaryGroupValue(row: CompareRow, groupBy: SummaryGroupKey): { label: string; order: number } {
+  if (groupBy === 'none') return { label: '', order: 0 };
+  return getChartGroup(row, groupBy);
+}
+
+function summaryGroupTitle(groupBy: SummaryGroupKey): string {
+  if (groupBy === 'month') return 'Mes';
+  if (groupBy === 'area') return 'Area';
+  if (groupBy === 'responsable') return 'Responsable';
+  if (groupBy === 'subresponsable') return 'Subresponsable';
+  if (groupBy === 'vertical') return 'Vertical';
+  if (groupBy === 'medio') return 'Medio';
+  if (groupBy === 'region') return 'Region';
+  if (groupBy === 'zona') return 'Zona';
+  return 'Sin nivel';
+}
+
 function buildChartRows(rows: CompareRow[], groupBy: ChartGroupKey): ChartRow[] {
   const grouped = new Map<string, ChartRow>();
 
@@ -463,6 +492,46 @@ function buildChartRows(rows: CompareRow[], groupBy: ChartGroupKey): ChartRow[] 
       return { ...row, diff, pct };
     })
     .sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label, 'es'));
+}
+
+function buildSummaryRows(rows: CompareRow[], levels: SummaryGroupKey[]): SummaryRow[] {
+  const activeLevels = levels.filter((level) => level !== 'none');
+  const grouped = new Map<string, SummaryRow & { orderKey: string }>();
+
+  rows.forEach((row) => {
+    const groups = activeLevels.length > 0
+      ? activeLevels.map((level) => getSummaryGroupValue(row, level))
+      : [{ label: 'Total seleccion', order: 0 }];
+    const key = groups.map((group) => group.label).join('||');
+    const existing = grouped.get(key) || {
+      key,
+      levels: groups.map((group) => group.label),
+      label: groups.map((group) => group.label).join(' > '),
+      facturacion: 0,
+      budget: 0,
+      diff: 0,
+      pct: null,
+      rows: 0,
+      orderKey: groups.map((group) => String(group.order).padStart(3, '0')).join('|'),
+    };
+
+    existing.facturacion += row.facturacion;
+    existing.budget += row.budget;
+    existing.rows += 1;
+    grouped.set(key, existing);
+  });
+
+  return Array.from(grouped.values())
+    .map((row) => {
+      const diff = row.budget - row.facturacion;
+      const pct = row.facturacion !== 0 ? (diff / Math.abs(row.facturacion)) * 100 : null;
+      return { ...row, diff, pct };
+    })
+    .sort((a, b) => {
+      const diffSort = Math.abs(b.diff) - Math.abs(a.diff);
+      if (diffSort !== 0) return diffSort;
+      return a.orderKey.localeCompare(b.orderKey, 'es') || a.label.localeCompare(b.label, 'es');
+    });
 }
 
 function linePoints(rows: ChartRow[], getter: (row: ChartRow) => number, maxValue: number): string {
@@ -808,6 +877,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [activeTab, setActiveTab] = useState<ComparatorTab>('analisis');
   const [activeView, setActiveView] = useState<CompareView>('tabla');
   const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
+  const [summaryLevels, setSummaryLevels] = useState<SummaryGroupKey[]>(['vertical', 'medio', 'none']);
   const [lockedThroughIndex, setLockedThroughIndex] = useState(4);
   const [filters, setFilters] = useState<CompareFilters>({
     month: createFilter(),
@@ -956,6 +1026,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   }, [filteredRows]);
 
   const chartRows = useMemo(() => buildChartRows(filteredRows, chartGroupBy), [chartGroupBy, filteredRows]);
+  const summaryRows = useMemo(() => buildSummaryRows(filteredRows, summaryLevels), [filteredRows, summaryLevels]);
   const monthlyRows = useMemo(() => buildChartRows(filteredRows, 'month'), [filteredRows]);
   const lineMax = useMemo(() => Math.max(1, ...monthlyRows.map((row) => Math.max(Math.abs(row.facturacion), Math.abs(row.budget)))), [monthlyRows]);
   const monthlyAnomalies = useMemo(() => buildMonthlyAnomalies(filteredRows), [filteredRows]);
@@ -1308,6 +1379,13 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setActiveView('resumen')}
+                    className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'resumen' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
+                  >
+                    Resumen
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setActiveView('barras')}
                     className={`flex items-center gap-1 rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'barras' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
                   >
@@ -1356,6 +1434,34 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <div className="flex flex-wrap gap-3">
+                {activeView === 'resumen' && (
+                  <div className="flex flex-wrap gap-3">
+                    {summaryLevels.map((level, index) => (
+                      <label key={index} className="space-y-1">
+                        <span className="text-xs font-medium text-[var(--text-secondary)]">Nivel {index + 1}</span>
+                        <select
+                          value={level}
+                          onChange={(event) => {
+                            const next = [...summaryLevels];
+                            next[index] = event.target.value as SummaryGroupKey;
+                            setSummaryLevels(next);
+                          }}
+                          className="h-10 w-44 rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
+                        >
+                          <option value="none">Sin nivel</option>
+                          <option value="month">Mes</option>
+                          <option value="area">Area</option>
+                          <option value="responsable">Responsable</option>
+                          <option value="subresponsable">Subresponsable</option>
+                          <option value="vertical">Vertical</option>
+                          <option value="medio">Medio</option>
+                          <option value="region">Region</option>
+                          <option value="zona">Zona</option>
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                )}
                 {activeView === 'barras' && (
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Comparar por</span>
@@ -1406,6 +1512,57 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                 </button>
               )}
             </div>
+
+            {activeView === 'resumen' && (
+              <div className="rounded-md border border-[var(--border)] bg-white">
+                <div className="border-b border-[var(--border)] p-4">
+                  <p className="text-sm font-semibold">Resumen comparativo</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    Agrupa la selecciÃ³n con los niveles elegidos y ordena por mayor diferencia absoluta. Sirve para comparar mes contra mes, vertical contra vertical, medio contra medio o combinaciones.
+                  </p>
+                </div>
+                <div className="max-h-[620px] overflow-auto">
+                  <table className="w-full min-w-[980px] border-separate border-spacing-0 text-xs">
+                    <thead>
+                      <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+                        {summaryLevels.filter((level) => level !== 'none').map((level, index) => (
+                          <th key={`${level}-${index}`} className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium">
+                            {summaryGroupTitle(level)}
+                          </th>
+                        ))}
+                        {summaryLevels.every((level) => level === 'none') && (
+                          <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium">SelecciÃ³n</th>
+                        )}
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">LÃ­neas</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">FacturaciÃ³n</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Budget</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">Diferencia</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium">VariaciÃ³n</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summaryRows.map((row) => (
+                        <tr key={row.key} className="hover:bg-[var(--bg-primary)]">
+                          {row.levels.map((level, index) => (
+                            <td key={`${row.key}-${index}`} className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">
+                              {level}
+                            </td>
+                          ))}
+                          {row.levels.length === 0 && (
+                            <td className="border-b border-[var(--border)] px-3 py-2 whitespace-nowrap font-medium">{row.label}</td>
+                          )}
+                          <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{row.rows.toLocaleString('de-DE')}</td>
+                          <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(row.facturacion)}</td>
+                          <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatCurrency(row.budget)}</td>
+                          <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${row.diff >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(row.diff)}</td>
+                          <td className={`border-b border-[var(--border)] px-3 py-2 text-right font-mono ${(row.pct ?? 0) >= 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatPercent(row.pct)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {activeView === 'tabla' && (
               <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
