@@ -1060,7 +1060,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
     status: createFilter(),
   });
   const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
-  const [summarySort, setSummarySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'absDiff', direction: 'desc' });
+  const [summarySort, setSummarySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
   const [anomalySort, setAnomalySort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'deviation', direction: 'desc' });
   const [issueSort, setIssueSort] = useState<{ key: GenericSortKey; direction: SortDirection }>({ key: 'budget', direction: 'desc' });
 
@@ -1433,6 +1433,18 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
   return (
     <div className="space-y-6">
+      <style jsx global>{`
+        .budget-compare-table th {
+          min-width: 88px;
+          resize: horizontal;
+          overflow: auto;
+          cursor: col-resize;
+        }
+
+        .budget-compare-table th:first-child {
+          min-width: 140px;
+        }
+      `}</style>
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={onBack}
@@ -1783,7 +1795,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   </p>
                 </div>
                 <div className="max-h-[620px] overflow-auto">
-                  <table className="w-full min-w-[980px] border-separate border-spacing-0 text-xs">
+                  <table className="budget-compare-table w-full min-w-[980px] border-separate border-spacing-0 text-xs">
                     <thead>
                       <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                         {summaryLevels.filter((level) => level !== 'none').map((level, index) => (
@@ -1799,7 +1811,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                         <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Líneas" sortKey="rows" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
                         <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Facturación" sortKey="facturacion" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
                         <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Budget" sortKey="budget" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
-                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Diferencia" sortKey="absDiff" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
+                        <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Diferencia" sortKey="diff" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
                         <th className="border-b border-[var(--border)] px-3 py-2.5 text-right font-medium"><GenericSortButton label="Variación" sortKey="pct" sort={summarySort} onSort={updateSummarySort} align="right" /></th>
                       </tr>
                     </thead>
@@ -1829,7 +1841,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
 
             {activeView === 'tabla' && (
               <div className="max-h-[620px] overflow-auto rounded-md border border-[var(--border)]">
-                <table className="w-full min-w-[1480px] border-separate border-spacing-0 text-xs">
+                <table className="budget-compare-table w-full min-w-[1480px] border-separate border-spacing-0 text-xs">
                   <thead>
                     <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                       <th className="border-b border-[var(--border)] px-3 py-2.5 text-left font-medium"><SortButton label="Mes" sortKey="month" sort={sort} onSort={updateSort} /></th>
@@ -1986,7 +1998,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                     <p className="mt-3 text-xs font-medium text-[var(--success)]">No veo meses claramente fuera de la tendencia de su propia línea con los filtros actuales.</p>
                   ) : (
                     <div className="mt-3 overflow-x-auto rounded-md border border-[var(--border)] bg-white">
-                      <table className="w-full min-w-[980px] border-separate border-spacing-0 text-xs">
+                      <table className="budget-compare-table w-full min-w-[980px] border-separate border-spacing-0 text-xs">
                         <thead>
                           <tr className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                             <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><GenericSortButton label="Mes" sortKey="month" sort={anomalySort} onSort={updateAnomalySort} /></th>
@@ -2157,7 +2169,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                   </p>
                 ) : (
                   <div className="max-h-[520px] overflow-auto">
-                    <table className="w-full min-w-[1180px] border-collapse text-sm">
+                    <table className="budget-compare-table w-full min-w-[1180px] border-collapse text-sm">
                       <thead className="sticky top-0 bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
                         <tr>
                           <th className="border-b border-[var(--border)] px-3 py-2 font-medium"><GenericSortButton label="Pendiente" sortKey="issue" sort={issueSort} onSort={updateIssueSort} /></th>
