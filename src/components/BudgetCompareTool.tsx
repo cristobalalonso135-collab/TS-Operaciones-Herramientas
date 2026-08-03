@@ -940,8 +940,7 @@ function buildStructuralAlerts(rows: CompareRow[]): StructuralAlert[] {
       const severitySort = (a.severity === 'Alta' ? 0 : 1) - (b.severity === 'Alta' ? 0 : 1);
       if (severitySort !== 0) return severitySort;
       return b.weight - a.weight;
-    })
-    .slice(0, 12);
+    });
 }
 
 interface MultiFilterSelectProps {
@@ -1267,7 +1266,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   }, [anomalySort, monthlyAnomalies]);
   const structuralAlerts = useMemo(() => buildStructuralAlerts(filteredRows), [filteredRows]);
   const visibleStructuralAlerts = useMemo(() => (
-    structuralAlerts.filter((alert) => !justifiedAlertKeys.has(alert.key))
+    structuralAlerts.filter((alert) => !justifiedAlertKeys.has(alert.key)).slice(0, 12)
   ), [justifiedAlertKeys, structuralAlerts]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
