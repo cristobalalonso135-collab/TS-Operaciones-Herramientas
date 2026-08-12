@@ -71,6 +71,7 @@ interface CogsMonthMismatch {
   diff: number;
   instruction: string;
   status: 'ok' | 'mismatch' | 'solo-budget' | 'solo-diario';
+  fixable: boolean;
 }
 
 interface CogsDayIssue {
@@ -713,6 +714,23 @@ function buildCogsMonthMismatches(
     else if (planLine && !dailyLine) status = 'solo-budget';
     else if (Math.abs(diff) > CENTIMO) status = 'mismatch';
 
+    const hasFactDays = (dailyLine?.daysWithFact || 0) > 0 || Math.abs(dailyLine?.facturacion || 0) > CENTIMO;
+    const fixable = status !== 'ok'
+      && !!planLine
+      && planLine.cogsRate !== null
+      && hasFactDays;
+
+    let instruction = desfaseInstruction(diff);
+    if (status === 'solo-budget') {
+      instruction = 'Sin datos diarios de facturación/COGS para este mes: no se puede autoajustar';
+    } else if (status === 'solo-diario') {
+      instruction = 'Está en el diario y no en el budget general: no autoajusto sin % del budget';
+    } else if (status !== 'ok' && !fixable) {
+      instruction = 'Sin días de facturación en el diario para recalcular COGS';
+    } else if (status !== 'ok') {
+      instruction = `${desfaseInstruction(diff)}. Si lo marcas, recalculo COGS del mes con el % del budget (mismo día que facturación)`;
+    }
+
     return {
       key,
       line: planLine?.line || dailyLine?.line || key,
@@ -721,24 +739,22 @@ function buildCogsMonthMismatches(
       budget,
       diario,
       diff,
-      instruction: status === 'solo-budget'
-        ? 'Existe en budget general y no en diario'
-        : status === 'solo-diario'
-          ? 'Existe en diario (FY) y no en budget general'
-          : desfaseInstruction(diff),
+      instruction,
       status,
+      fixable,
     };
   }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.line.localeCompare(b.line, 'es'));
 }
 
-function buildCogsCorrectionFromPlan(
+function buildSelectedCogsCorrection(
   dailyWorkbook: WorkbookUpload,
   plan: Map<string, PlanMonthLine>,
+  selectedKeys: Set<string>,
   fyStartYear: number
 ): CogsCorrectionSummary | null {
   const factSheet = findFacturacionSheet(dailyWorkbook);
   const cogsSheet = findCogsSheet(dailyWorkbook);
-  if (!factSheet || !cogsSheet) return null;
+  if (!factSheet || !cogsSheet || selectedKeys.size === 0) return null;
 
   const factHeaderIndex = findWideHeaderIndex(factSheet.rows);
   const cogsHeaderIndex = findWideHeaderIndex(cogsSheet.rows);
@@ -776,11 +792,22 @@ function buildCogsCorrectionFromPlan(
   const correctedRows = cogsSheet.rows.map((row) => [...row]);
   const skippedLines: string[] = [];
   let changeCount = 0;
+  const selectedMonthsByLine = new Map<string, Set<string>>();
+  selectedKeys.forEach((key) => {
+    const monthStart = key.slice(key.lastIndexOf('|') + 1);
+    const baseKey = key.slice(0, key.lastIndexOf('|'));
+    const months = selectedMonthsByLine.get(baseKey) || new Set<string>();
+    months.add(monthStart);
+    selectedMonthsByLine.set(baseKey, months);
+  });
 
   cogsSheet.rows.slice(cogsHeaderIndex + 1).forEach((cogsRow, rowOffset) => {
     const rowIndex = cogsHeaderIndex + 1 + rowOffset;
     const baseKey = lineKey([cogsRow[0], cogsRow[1], normalizeZoneForCompare(cogsRow[2]), normalizeCountryCode(cogsRow[3])]);
     if (!baseKey.replace(/\|/g, '')) return;
+
+    const selectedMonths = selectedMonthsByLine.get(baseKey);
+    if (!selectedMonths || selectedMonths.size === 0) return;
 
     const factRow = factRows.get(baseKey);
     const label = [cogsRow[0], cogsRow[1], cogsRow[2], cogsRow[3]].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
@@ -791,16 +818,16 @@ function buildCogsCorrectionFromPlan(
     }
 
     const monthBuckets = new Map<string, Array<{ index: number; date: string; expected: number | null }>>();
-    let sawPlan = false;
 
     cogsDateColumns.forEach(({ index, date }) => {
+      const monthStart = `${date.slice(0, 7)}-01`;
+      if (!selectedMonths.has(monthStart)) return;
+
       const factIndex = factDateColumns.get(date);
       if (factIndex === undefined) return;
-      const monthStart = `${date.slice(0, 7)}-01`;
       const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
       if (!planLine || planLine.cogsRate === null) return;
 
-      sawPlan = true;
       const fact = numericValue(factRow[factIndex]);
       const expected = fact === null ? null : roundMoney(fact * planLine.cogsRate);
       const bucket = monthBuckets.get(monthStart) || [];
@@ -808,10 +835,12 @@ function buildCogsCorrectionFromPlan(
       monthBuckets.set(monthStart, bucket);
     });
 
-    if (!sawPlan) {
-      skippedLines.push(`${label}: sin % COGS en budget general para el FY`);
-      return;
-    }
+    selectedMonths.forEach((monthStart) => {
+      if (!monthBuckets.has(monthStart)) {
+        const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
+        skippedLines.push(`${label} · ${displayMonth(monthStart)}: ${planLine ? 'sin días de facturación' : 'sin % en budget'}`);
+      }
+    });
 
     monthBuckets.forEach((bucket, monthStart) => {
       const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
@@ -826,7 +855,6 @@ function buildCogsCorrectionFromPlan(
       }
 
       bucket.forEach((item) => {
-        if (!planByLineMonth.has(`${baseKey}|${monthStart}`)) return;
         const current = numericValue(correctedRows[rowIndex][item.index]);
         const next = item.expected;
         const changed = next === null ? current !== null : current === null || Math.abs(current - next) > CENTIMO;
@@ -864,8 +892,8 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const [onlyMismatches, setOnlyMismatches] = useState(true);
   const [onlyFixable, setOnlyFixable] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [selectedCogsKeys, setSelectedCogsKeys] = useState<Set<string>>(new Set());
   const [ignoredRest, setIgnoredRest] = useState(false);
-  const [monthFilter, setMonthFilter] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: FactSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
 
   const plan = useMemo(() => (planWorkbook ? buildPlanLines(planWorkbook) : null), [planWorkbook]);
@@ -879,16 +907,16 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     return buildFactMismatches(plan.lines, daily.months);
   }, [plan, daily]);
 
-  useEffect(() => {
-    setSelectedKeys(new Set());
-    setIgnoredRest(false);
-    setMonthFilter(null);
-  }, [factRows]);
-
   const cogsMonthRows = useMemo(() => {
     if (!plan || !daily) return [];
     return buildCogsMonthMismatches(plan.lines, daily.months);
   }, [plan, daily]);
+
+  useEffect(() => {
+    setSelectedKeys(new Set());
+    setSelectedCogsKeys(new Set());
+    setIgnoredRest(false);
+  }, [factRows, cogsMonthRows]);
 
   const mismatchRows = useMemo(() => factRows.filter((row) => row.status !== 'ok'), [factRows]);
   const factBadCount = mismatchRows.length;
@@ -903,76 +931,17 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const selectedCount = selectedKeys.size;
   const canGoToCogs = !plan || !daily || factSquared || ignoredRest;
 
-  const monthSummaries = useMemo(() => {
-    const map = new Map<string, {
-      monthStart: string;
-      monthLabel: string;
-      rows: number;
-      fixableRows: number;
-      selectedRows: number;
-      totalDiff: number;
-      selectedDiff: number;
-    }>();
-
-    mismatchRows.forEach((row) => {
-      const current = map.get(row.monthStart) || {
-        monthStart: row.monthStart,
-        monthLabel: row.monthLabel,
-        rows: 0,
-        fixableRows: 0,
-        selectedRows: 0,
-        totalDiff: 0,
-        selectedDiff: 0,
-      };
-      current.rows += 1;
-      current.totalDiff = roundMoney(current.totalDiff + row.diff);
-      if (row.fixable) current.fixableRows += 1;
-      if (selectedKeys.has(row.key)) {
-        current.selectedRows += 1;
-        current.selectedDiff = roundMoney(current.selectedDiff + row.diff);
-      }
-      map.set(row.monthStart, current);
-    });
-
-    return Array.from(map.values()).sort((a, b) => a.monthStart.localeCompare(b.monthStart));
-  }, [mismatchRows, selectedKeys]);
-
-  const selectMonthFixable = (monthStart: string) => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev);
-      mismatchRows
-        .filter((row) => row.monthStart === monthStart && row.fixable)
-        .forEach((row) => next.add(row.key));
-      return next;
-    });
-    setMonthFilter(monthStart);
-  };
-
-  const clearMonthSelection = (monthStart: string) => {
-    setSelectedKeys((prev) => {
-      const next = new Set(prev);
-      mismatchRows
-        .filter((row) => row.monthStart === monthStart)
-        .forEach((row) => next.delete(row.key));
-      return next;
-    });
-  };
-
-  const cogsMonthBad = cogsMonthRows.filter((row) => row.status !== 'ok');
+  const cogsMismatchRows = useMemo(() => cogsMonthRows.filter((row) => row.status !== 'ok'), [cogsMonthRows]);
+  const cogsFixableCount = cogsMismatchRows.filter((row) => row.fixable).length;
+  const selectedCogsCount = selectedCogsKeys.size;
   const dayIssues = daily?.dayIssues || [];
-  const cogsOk = cogsMonthBad.length === 0 && dayIssues.length === 0;
-
-  const cogsCorrection = useMemo(() => {
-    if (!dailyWorkbook || !plan) return null;
-    return buildCogsCorrectionFromPlan(dailyWorkbook, plan.lines, plan.fyStartYear);
-  }, [dailyWorkbook, plan]);
+  const cogsOk = cogsMismatchRows.length === 0 && dayIssues.length === 0;
 
   const filteredFactRows = useMemo(() => {
     const needle = normalizeText(query);
     let rows = factRows;
     if (onlyMismatches) rows = rows.filter((row) => row.status !== 'ok');
     if (onlyFixable) rows = rows.filter((row) => row.fixable);
-    if (monthFilter) rows = rows.filter((row) => row.monthStart === monthFilter);
     if (needle) rows = rows.filter((row) => normalizeText(row.line).includes(needle) || normalizeText(row.monthLabel).includes(needle));
 
     const direction = sort.direction === 'asc' ? 1 : -1;
@@ -983,7 +952,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
       if (sort.key === 'diario') return (a.diario - b.diario) * direction;
       return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
     });
-  }, [factRows, onlyMismatches, onlyFixable, monthFilter, query, sort]);
+  }, [factRows, onlyMismatches, onlyFixable, query, sort]);
 
   const visibleFixableKeys = useMemo(
     () => filteredFactRows.filter((row) => row.fixable).map((row) => row.key),
@@ -991,6 +960,23 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   );
 
   const allVisibleSelected = visibleFixableKeys.length > 0 && visibleFixableKeys.every((key) => selectedKeys.has(key));
+
+  const filteredCogsMonthRows = useMemo(() => {
+    const needle = normalizeText(query);
+    let rows = cogsMonthRows;
+    if (onlyMismatches) rows = rows.filter((row) => row.status !== 'ok');
+    if (onlyFixable) rows = rows.filter((row) => row.fixable);
+    if (needle) rows = rows.filter((row) => normalizeText(row.line).includes(needle) || normalizeText(row.monthLabel).includes(needle));
+    return rows;
+  }, [cogsMonthRows, onlyMismatches, onlyFixable, query]);
+
+  const visibleCogsFixableKeys = useMemo(
+    () => filteredCogsMonthRows.filter((row) => row.fixable).map((row) => row.key),
+    [filteredCogsMonthRows]
+  );
+
+  const allVisibleCogsSelected = visibleCogsFixableKeys.length > 0
+    && visibleCogsFixableKeys.every((key) => selectedCogsKeys.has(key));
 
   const toggleSelected = (key: string, fixable: boolean) => {
     if (!fixable) return;
@@ -1014,13 +1000,27 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     });
   };
 
-  const filteredCogsMonthRows = useMemo(() => {
-    const needle = normalizeText(query);
-    let rows = cogsMonthRows;
-    if (onlyMismatches) rows = rows.filter((row) => row.status !== 'ok');
-    if (needle) rows = rows.filter((row) => normalizeText(row.line).includes(needle) || normalizeText(row.monthLabel).includes(needle));
-    return rows;
-  }, [cogsMonthRows, onlyMismatches, query]);
+  const toggleCogsSelected = (key: string, fixable: boolean) => {
+    if (!fixable) return;
+    setSelectedCogsKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleSelectVisibleCogs = () => {
+    setSelectedCogsKeys((prev) => {
+      const next = new Set(prev);
+      if (allVisibleCogsSelected) {
+        visibleCogsFixableKeys.forEach((key) => next.delete(key));
+      } else {
+        visibleCogsFixableKeys.forEach((key) => next.add(key));
+      }
+      return next;
+    });
+  };
 
   const filteredDayIssues = useMemo(() => {
     const needle = normalizeText(query);
@@ -1096,12 +1096,36 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   };
 
   const downloadCorrectedCogs = async () => {
-    if (!dailyWorkbook || !cogsCorrection || cogsCorrection.rows.length === 0) return;
+    if (!dailyWorkbook || !plan || selectedCogsKeys.size === 0) return;
+    const correction = buildSelectedCogsCorrection(
+      dailyWorkbook,
+      plan.lines,
+      selectedCogsKeys,
+      plan.fyStartYear
+    );
+    if (!correction) return;
+
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(cogsCorrection.rows), 'COGS');
+    const cogsSheetName = correction.sheetName || findCogsSheet(dailyWorkbook)?.name || 'COGS';
+
+    Object.entries(dailyWorkbook.sheets).forEach(([name, rows]) => {
+      const sheetRows = name === cogsSheetName ? correction.rows : rows;
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetRows), name);
+    });
+
+    if (!dailyWorkbook.sheets[cogsSheetName]) {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(correction.rows), cogsSheetName);
+    }
+
     const baseName = dailyWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
-    XLSX.writeFile(workbook, `${baseName}_COGS_FY_${plan?.fyStartYear || ''}.xlsx`);
+    XLSX.writeFile(workbook, `${baseName}_cogs_ajustado.xlsx`);
+
+    if (correction.skippedLines.length > 0) {
+      window.alert(
+        `Archivo diario guardado. Ajusté ${correction.changeCount} celda(s) COGS.\nNo pude autoajustar ${correction.skippedLines.length}:\n- ${correction.skippedLines.slice(0, 8).join('\n- ')}`
+      );
+    }
   };
 
   const fyLabel = plan
@@ -1124,8 +1148,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Validador budget</h2>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              Eliges qué desfases autoajusto y te devuelvo el mismo archivo diario, solo con esas filas/meses cuadradas al budget.
-              El resto lo dejas igual o lo ignoras para pasar a COGS.
+              En facturación y en COGS marcas qué filas ajustar y te devuelvo el mismo archivo diario, solo con esas cambios.
             </p>
           </div>
           <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-1">
@@ -1249,7 +1272,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
               />
               Solo lo que no cuadra
             </label>
-            {activeStep === 1 && (
+            {(activeStep === 1 || activeStep === 2) && (
               <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
                 <input
                   type="checkbox"
@@ -1269,9 +1292,8 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                   <div className="max-w-2xl">
                     <h3 className="text-lg font-semibold">Paso 1 · Facturación</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      1) Mira el desfase por mes. 2) Marca las filas que quieres que ajuste.
-                      3) Descarga el mismo archivo diario: solo cambian esas filas/meses para cuadrar con el budget; el resto (otros años, COGS, líneas no marcadas) queda igual.
-                      4) Si lo demás lo harás a mano, ignora el resto y pasa a COGS.
+                      Marca las filas que quieres que ajuste y descarga el mismo archivo diario.
+                      Solo cambian esas filas/meses; el resto queda igual. Si lo demás lo harás a mano, ignora el resto y pasa a COGS.
                     </p>
                     <p className="mt-2 text-xs text-[var(--text-secondary)]">
                       Desfases: {factBadCount} · Autoajustables: {factFixableCount} · Sin diario: {factUnfixableCount} · Marcadas para autoajuste: {selectedCount}
@@ -1315,100 +1337,9 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 </div>
               </div>
 
-              {monthSummaries.length > 0 && (
-                <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-                  <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
-                    Desfase por mes · selecciona con cuidado si el mes mueve mucho
-                  </div>
-                  <div className="max-h-[280px] overflow-auto">
-                    <table className="w-full min-w-[920px] border-collapse text-sm">
-                      <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
-                        <tr>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Filas</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Desfase total</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Si marco ahora</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Me lo dejo yo</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Acciones</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {monthSummaries.map((month) => {
-                          const remaining = roundMoney(month.totalDiff - month.selectedDiff);
-                          const active = monthFilter === month.monthStart;
-                          return (
-                            <tr key={month.monthStart} className={`border-b border-[var(--border)] ${active ? 'bg-[var(--accent-soft)]' : ''}`}>
-                              <td className="px-3 py-2 capitalize font-medium">{month.monthLabel}</td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">{month.rows}</td>
-                              <td className={`px-3 py-2 text-right font-mono text-xs ${Math.abs(month.totalDiff) > CENTIMO ? 'text-[var(--danger)]' : ''}`}>
-                                {formatCurrency(month.totalDiff)}
-                              </td>
-                              <td className="px-3 py-2 text-right font-mono text-xs text-[var(--accent)]">
-                                {formatCurrency(month.selectedDiff)}
-                              </td>
-                              <td className="px-3 py-2 text-right font-mono text-xs">
-                                {formatCurrency(remaining)}
-                              </td>
-                              <td className="px-3 py-2">
-                                <div className="flex flex-wrap gap-2 text-xs">
-                                  <button
-                                    type="button"
-                                    onClick={() => setMonthFilter(active ? null : month.monthStart)}
-                                    className="rounded border border-[var(--border)] bg-white px-2 py-1 hover:bg-[var(--bg-soft)]"
-                                  >
-                                    {active ? 'Ver todos' : 'Ver filas'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => selectMonthFixable(month.monthStart)}
-                                    disabled={month.fixableRows === 0}
-                                    className="rounded border border-[var(--border)] bg-white px-2 py-1 hover:bg-[var(--bg-soft)] disabled:opacity-40"
-                                  >
-                                    Marcar autoajustables
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => clearMonthSelection(month.monthStart)}
-                                    disabled={month.selectedRows === 0}
-                                    className="rounded border border-[var(--border)] bg-white px-2 py-1 hover:bg-[var(--bg-soft)] disabled:opacity-40"
-                                  >
-                                    Desmarcar
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      <tfoot>
-                        <tr className="bg-[var(--bg-soft)] text-xs font-semibold">
-                          <td className="px-3 py-2">Total FY</td>
-                          <td className="px-3 py-2 text-right font-mono">{factBadCount}</td>
-                          <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(factTotalDiff)}</td>
-                          <td className="px-3 py-2 text-right font-mono text-[var(--accent)]">{formatCurrency(selectedDiff)}</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatCurrency(remainingDiff)}</td>
-                          <td className="px-3 py-2" />
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-              )}
-
               <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
-                  <p className="text-sm font-semibold">
-                    Filas sin match{monthFilter ? ` · ${displayMonth(monthFilter)}` : ''}
-                  </p>
-                  {monthFilter && (
-                    <button
-                      type="button"
-                      onClick={() => setMonthFilter(null)}
-                      className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                    >
-                      Quitar filtro de mes
-                    </button>
-                  )}
+                <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
+                  Filas sin match
                 </div>
                 <div className="max-h-[560px] overflow-auto">
                   <table className="w-full min-w-[1080px] border-collapse text-sm">
@@ -1496,14 +1427,29 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <section className="space-y-4">
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+                  <div className="max-w-2xl">
                     <h3 className="text-lg font-semibold">Paso 2 · COGS</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      El COGS mensual debe ser exactamente Importe − Margen del budget general.
-                      Además, cada día con facturación debe tener COGS el mismo día.
+                      Marca las filas/meses que quieres que ajuste. Te devuelvo el mismo archivo diario,
+                      recalculando solo esas COGS con el % del budget (mismo día que facturación). El resto no se toca.
+                    </p>
+                    <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                      Desfases: {cogsMismatchRows.length} · Autoajustables: {cogsFixableCount} · Marcadas: {selectedCogsCount}
+                      {dayIssues.length > 0 ? ` · Días desalineados: ${dayIssues.length}` : ''}
                     </p>
                   </div>
-                  <StatusBadge ok={cogsOk} label={cogsOk ? 'OK' : 'Hay incidencias'} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge ok={cogsOk} label={cogsOk ? 'OK' : 'Hay incidencias'} />
+                    <button
+                      type="button"
+                      onClick={downloadCorrectedCogs}
+                      disabled={selectedCogsCount === 0}
+                      className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Download className="h-4 w-4" />
+                      Descargar mismo archivo ajustado
+                    </button>
+                  </div>
                 </div>
                 {!factSquared && (
                   <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -1514,43 +1460,24 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 )}
               </div>
 
-              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold">COGS corregido (opcional)</p>
-                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                      Genera la hoja COGS del FY usando el % del budget general sobre la facturación diaria,
-                      con el mismo día y total mensual exacto. No toca años fuera del FY.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={downloadCorrectedCogs}
-                    disabled={!cogsCorrection || cogsCorrection.changeCount === 0}
-                    className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    <Download className="h-4 w-4" />
-                    Descargar COGS FY
-                  </button>
-                </div>
-                {cogsCorrection && (
-                  <p className="mt-3 text-xs text-[var(--text-secondary)]">
-                    Cambios propuestos: {cogsCorrection.changeCount.toLocaleString('de-DE')}
-                    {cogsCorrection.skippedLines.length > 0
-                      ? ` · ${cogsCorrection.skippedLines.length} líneas sin corregir`
-                      : ''}
-                  </p>
-                )}
-              </div>
-
               <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
                 <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
                   Totales mensuales COGS
                 </div>
-                <div className="max-h-[360px] overflow-auto">
-                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                <div className="max-h-[560px] overflow-auto">
+                  <table className="w-full min-w-[1080px] border-collapse text-sm">
                     <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
                       <tr>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleCogsSelected}
+                            onChange={toggleSelectVisibleCogs}
+                            disabled={visibleCogsFixableKeys.length === 0}
+                            className="h-4 w-4 rounded border-[var(--border)]"
+                            title="Seleccionar visibles autoajustables"
+                          />
+                        </th>
                         <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
                         <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
                         <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
@@ -1562,12 +1489,24 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                     <tbody>
                       {filteredCogsMonthRows.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-3 py-8 text-center text-[var(--text-secondary)]">
+                          <td colSpan={7} className="px-3 py-8 text-center text-[var(--text-secondary)]">
                             Totales mensuales de COGS cuadrados.
                           </td>
                         </tr>
                       ) : filteredCogsMonthRows.map((row) => (
-                        <tr key={row.key} className="border-b border-[var(--border)] align-top">
+                        <tr
+                          key={row.key}
+                          className={`border-b border-[var(--border)] align-top ${row.fixable ? '' : 'bg-[var(--bg-soft)]/70'}`}
+                        >
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedCogsKeys.has(row.key)}
+                              disabled={!row.fixable}
+                              onChange={() => toggleCogsSelected(row.key, row.fixable)}
+                              className="h-4 w-4 rounded border-[var(--border)] disabled:opacity-40"
+                            />
+                          </td>
                           <td className="px-3 py-2 font-medium">{row.line.replace(` · ${row.monthLabel}`, '')}</td>
                           <td className="px-3 py-2 capitalize">{row.monthLabel}</td>
                           <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.budget)}</td>
@@ -1587,7 +1526,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
                   Mismo día · facturación vs COGS ({filteredDayIssues.length})
                 </div>
-                <div className="max-h-[360px] overflow-auto">
+                <div className="max-h-[280px] overflow-auto">
                   <table className="w-full min-w-[980px] border-collapse text-sm">
                     <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
                       <tr>
