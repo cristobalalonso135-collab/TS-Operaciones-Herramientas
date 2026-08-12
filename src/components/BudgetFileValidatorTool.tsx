@@ -805,6 +805,30 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     }));
   };
 
+  const downloadFactListado = async () => {
+    if (filteredFactRows.length === 0) return;
+    const XLSX = await import('xlsx');
+    const rows = [
+      ['Línea', 'Mes', 'Mes (YYYY-MM)', 'Budget €', 'Diario €', 'Desfase €', 'Estado', 'Qué hacer'],
+      ...filteredFactRows.map((row) => [
+        row.line.replace(` · ${row.monthLabel}`, ''),
+        row.monthLabel,
+        row.monthStart.slice(0, 7),
+        roundMoney(row.budget),
+        roundMoney(row.diario),
+        roundMoney(row.diff),
+        row.status,
+        row.instruction,
+      ]),
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'Facturacion');
+    const baseName = (dailyWorkbook?.fileName || planWorkbook?.fileName || 'validador')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_desfases_facturacion_FY_${plan?.fyStartYear || ''}.xlsx`);
+  };
+
   const downloadCorrectedCogs = async () => {
     if (!dailyWorkbook || !cogsCorrection || cogsCorrection.rows.length === 0) return;
     const XLSX = await import('xlsx');
@@ -969,10 +993,21 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                       No reescribimos celdas: te digo el desfase del mes y tú eliges dónde meterlo.
                     </p>
                   </div>
-                  <StatusBadge
-                    ok={factSquared}
-                    label={`${factOkCount} OK · ${factBadCount} a corregir`}
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge
+                      ok={factSquared}
+                      label={`${factOkCount} OK · ${factBadCount} a corregir`}
+                    />
+                    <button
+                      type="button"
+                      onClick={downloadFactListado}
+                      disabled={filteredFactRows.length === 0}
+                      className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Download className="h-4 w-4" />
+                      Exportar listado
+                    </button>
+                  </div>
                 </div>
               </div>
 
