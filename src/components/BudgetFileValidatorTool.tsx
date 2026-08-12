@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import {
   ArrowLeft,
@@ -51,6 +51,14 @@ interface FactMismatch {
   diff: number;
   instruction: string;
   status: 'ok' | 'mismatch' | 'solo-budget' | 'solo-diario';
+  fixable: boolean;
+}
+
+interface FactCorrectionSummary {
+  rows: any[][];
+  sheetName: string;
+  appliedCount: number;
+  skipped: string[];
 }
 
 interface CogsMonthMismatch {
@@ -428,18 +436,18 @@ function buildDailyMonthTotals(
 
         dateColumns.forEach(({ index, date }) => {
           const value = numericValue(row[index]);
-          const monthStart = `${date.slice(0, 7)}-01`;
-          const key = `${baseKey}|${monthStart}`;
-          const month = ensureMonth(key, label, monthStart);
-          if (value !== null) {
-            month.facturacion += value;
-            month.daysWithFact += 1;
-          }
           factByLineDate.set(`${baseKey}|${date}`, {
             value,
             cell: `${excelColumnName(index)}${headerIndex + 2 + rowOffset}`,
             label,
           });
+          if (value === null) return;
+
+          const monthStart = `${date.slice(0, 7)}-01`;
+          const key = `${baseKey}|${monthStart}`;
+          const month = ensureMonth(key, label, monthStart);
+          month.facturacion += value;
+          month.daysWithFact += 1;
         });
       });
     }
@@ -466,18 +474,18 @@ function buildDailyMonthTotals(
 
         dateColumns.forEach(({ index, date }) => {
           const value = numericValue(row[index]);
-          const monthStart = `${date.slice(0, 7)}-01`;
-          const key = `${baseKey}|${monthStart}`;
-          const month = ensureMonth(key, label, monthStart);
-          if (value !== null) {
-            month.cogs += value;
-            month.daysWithCogs += 1;
-          }
           cogsByLineDate.set(`${baseKey}|${date}`, {
             value,
             cell: `${excelColumnName(index)}${headerIndex + 2 + rowOffset}`,
             label,
           });
+          if (value === null) return;
+
+          const monthStart = `${date.slice(0, 7)}-01`;
+          const key = `${baseKey}|${monthStart}`;
+          const month = ensureMonth(key, label, monthStart);
+          month.cogs += value;
+          month.daysWithCogs += 1;
         });
       });
     }
@@ -551,6 +559,21 @@ function buildFactMismatches(
     else if (planLine && !dailyLine) status = 'solo-budget';
     else if (Math.abs(diff) > CENTIMO) status = 'mismatch';
 
+    const fixable = status === 'mismatch'
+      ? Math.abs(diario) > CENTIMO
+      : status === 'solo-diario';
+
+    let instruction = desfaseInstruction(diff);
+    if (status === 'solo-budget') {
+      instruction = 'Sin datos en el diario para este mes: no se puede autoajustar (falta la línea o no hay días rellenos)';
+    } else if (status === 'solo-diario') {
+      instruction = 'Está en el diario y no en el budget general: si lo marcas, se vacía ese mes en el diario';
+    } else if (status === 'mismatch' && Math.abs(diario) <= CENTIMO) {
+      instruction = `Budget ${formatCurrency(budget)} y diario 0: no se puede escalar; hay que repartir a mano`;
+    } else if (status === 'mismatch') {
+      instruction = `${desfaseInstruction(diff)}. Si lo marcas, se escala el mes en el diario al céntimo`;
+    }
+
     return {
       key,
       line: planLine?.line || dailyLine?.line || key,
@@ -559,14 +582,117 @@ function buildFactMismatches(
       budget,
       diario,
       diff,
-      instruction: status === 'solo-budget'
-        ? 'Existe en budget general y no en diario'
-        : status === 'solo-diario'
-          ? 'Existe en diario (FY) y no en budget general'
-          : desfaseInstruction(diff),
+      instruction,
       status,
+      fixable,
     };
   }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.line.localeCompare(b.line, 'es'));
+}
+
+function buildSelectedFacturacionCorrection(
+  dailyWorkbook: WorkbookUpload,
+  plan: Map<string, PlanMonthLine>,
+  selectedKeys: Set<string>,
+  fyStartYear: number
+): FactCorrectionSummary | null {
+  const factSheet = findFacturacionSheet(dailyWorkbook);
+  if (!factSheet || selectedKeys.size === 0) return null;
+
+  const headerIndex = findWideHeaderIndex(factSheet.rows);
+  if (headerIndex < 0) return null;
+
+  const fyStart = `${fyStartYear}-04-01`;
+  const fyEnd = `${fyStartYear + 1}-03-31`;
+  const header = factSheet.rows[headerIndex];
+  const dateColumns = header
+    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
+    .filter((item): item is { index: number; date: string } => (
+      !!item.date && item.date >= fyStart && item.date <= fyEnd
+    ));
+
+  const columnsByMonth = new Map<string, Array<{ index: number; date: string }>>();
+  dateColumns.forEach((column) => {
+    const monthStart = `${column.date.slice(0, 7)}-01`;
+    const existing = columnsByMonth.get(monthStart) || [];
+    existing.push(column);
+    columnsByMonth.set(monthStart, existing);
+  });
+
+  const correctedRows = factSheet.rows.map((row) => [...row]);
+  const skipped: string[] = [];
+  let appliedCount = 0;
+
+  factSheet.rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
+    const rowIndex = headerIndex + 1 + rowOffset;
+    const idVertical = String(row[0] ?? '').trim();
+    const nombre = String(row[1] ?? '').trim();
+    const zona = String(row[2] ?? '').trim();
+    const codMercado = String(row[3] ?? '').trim();
+    const baseKey = lineKey([idVertical, nombre, normalizeZoneForCompare(zona), normalizeCountryCode(codMercado)]);
+    if (!baseKey.replace(/\|/g, '')) return;
+
+    columnsByMonth.forEach((columns, monthStart) => {
+      const key = `${baseKey}|${monthStart}`;
+      if (!selectedKeys.has(key)) return;
+
+      const target = plan.get(key)?.facturacion ?? 0;
+      const numericColumns = columns
+        .map((column) => ({ ...column, value: numericValue(row[column.index]) }))
+        .filter((column): column is { index: number; date: string; value: number } => column.value !== null);
+      const current = roundMoney(numericColumns.reduce((sum, column) => sum + column.value, 0));
+      const label = [idVertical, nombre, zona, codMercado, displayMonth(monthStart)].filter(Boolean).join(' · ');
+
+      if (Math.abs(target) <= CENTIMO) {
+        numericColumns.forEach((column) => {
+          correctedRows[rowIndex][column.index] = null;
+        });
+        appliedCount += 1;
+        return;
+      }
+
+      if (numericColumns.length === 0 || Math.abs(current) <= CENTIMO) {
+        skipped.push(`${label}: sin reparto diario para escalar`);
+        return;
+      }
+
+      const factor = target / current;
+      let roundedTotal = 0;
+      numericColumns.forEach((column) => {
+        const nextValue = roundMoney(column.value * factor);
+        correctedRows[rowIndex][column.index] = nextValue;
+        roundedTotal += nextValue;
+      });
+
+      const adjustment = roundMoney(target - roundedTotal);
+      if (Math.abs(adjustment) > 0) {
+        const lastColumn = numericColumns[numericColumns.length - 1];
+        correctedRows[rowIndex][lastColumn.index] = roundMoney(
+          (numericValue(correctedRows[rowIndex][lastColumn.index]) || 0) + adjustment
+        );
+      }
+
+      appliedCount += 1;
+    });
+  });
+
+  selectedKeys.forEach((key) => {
+    const planLine = plan.get(key);
+    if (!planLine) return;
+    const baseKey = key.slice(0, key.lastIndexOf('|'));
+    const existsInDaily = factSheet.rows.slice(headerIndex + 1).some((row) => (
+      lineKey([row[0], row[1], normalizeZoneForCompare(row[2]), normalizeCountryCode(row[3])]) === baseKey
+    ));
+    if (!existsInDaily && Math.abs(planLine.facturacion) > CENTIMO) {
+      skipped.push(`${planLine.line}: no existe en el diario`);
+    }
+  });
+
+  return {
+    rows: correctedRows,
+    sheetName: factSheet.name,
+    appliedCount,
+    skipped: Array.from(new Set(skipped)).slice(0, 80),
+  };
 }
 
 function buildCogsMonthMismatches(
@@ -736,6 +862,10 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
   const [query, setQuery] = useState('');
   const [onlyMismatches, setOnlyMismatches] = useState(true);
+  const [onlyFixable, setOnlyFixable] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [ignoredRest, setIgnoredRest] = useState(false);
+  const [monthFilter, setMonthFilter] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: FactSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
 
   const plan = useMemo(() => (planWorkbook ? buildPlanLines(planWorkbook) : null), [planWorkbook]);
@@ -749,15 +879,84 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     return buildFactMismatches(plan.lines, daily.months);
   }, [plan, daily]);
 
+  useEffect(() => {
+    setSelectedKeys(new Set());
+    setIgnoredRest(false);
+    setMonthFilter(null);
+  }, [factRows]);
+
   const cogsMonthRows = useMemo(() => {
     if (!plan || !daily) return [];
     return buildCogsMonthMismatches(plan.lines, daily.months);
   }, [plan, daily]);
 
-  const factOkCount = factRows.filter((row) => row.status === 'ok').length;
-  const factBadCount = factRows.length - factOkCount;
-  const factTotalDiff = roundMoney(factRows.reduce((sum, row) => sum + row.diff, 0));
+  const mismatchRows = useMemo(() => factRows.filter((row) => row.status !== 'ok'), [factRows]);
+  const factBadCount = mismatchRows.length;
+  const factFixableCount = factRows.filter((row) => row.fixable).length;
+  const factUnfixableCount = mismatchRows.filter((row) => !row.fixable).length;
+  const factTotalDiff = roundMoney(mismatchRows.reduce((sum, row) => sum + row.diff, 0));
+  const selectedDiff = roundMoney(
+    mismatchRows.filter((row) => selectedKeys.has(row.key)).reduce((sum, row) => sum + row.diff, 0)
+  );
+  const remainingDiff = roundMoney(factTotalDiff - selectedDiff);
   const factSquared = factRows.length > 0 && factBadCount === 0;
+  const selectedCount = selectedKeys.size;
+  const canGoToCogs = !plan || !daily || factSquared || ignoredRest;
+
+  const monthSummaries = useMemo(() => {
+    const map = new Map<string, {
+      monthStart: string;
+      monthLabel: string;
+      rows: number;
+      fixableRows: number;
+      selectedRows: number;
+      totalDiff: number;
+      selectedDiff: number;
+    }>();
+
+    mismatchRows.forEach((row) => {
+      const current = map.get(row.monthStart) || {
+        monthStart: row.monthStart,
+        monthLabel: row.monthLabel,
+        rows: 0,
+        fixableRows: 0,
+        selectedRows: 0,
+        totalDiff: 0,
+        selectedDiff: 0,
+      };
+      current.rows += 1;
+      current.totalDiff = roundMoney(current.totalDiff + row.diff);
+      if (row.fixable) current.fixableRows += 1;
+      if (selectedKeys.has(row.key)) {
+        current.selectedRows += 1;
+        current.selectedDiff = roundMoney(current.selectedDiff + row.diff);
+      }
+      map.set(row.monthStart, current);
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.monthStart.localeCompare(b.monthStart));
+  }, [mismatchRows, selectedKeys]);
+
+  const selectMonthFixable = (monthStart: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      mismatchRows
+        .filter((row) => row.monthStart === monthStart && row.fixable)
+        .forEach((row) => next.add(row.key));
+      return next;
+    });
+    setMonthFilter(monthStart);
+  };
+
+  const clearMonthSelection = (monthStart: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      mismatchRows
+        .filter((row) => row.monthStart === monthStart)
+        .forEach((row) => next.delete(row.key));
+      return next;
+    });
+  };
 
   const cogsMonthBad = cogsMonthRows.filter((row) => row.status !== 'ok');
   const dayIssues = daily?.dayIssues || [];
@@ -772,6 +971,8 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     const needle = normalizeText(query);
     let rows = factRows;
     if (onlyMismatches) rows = rows.filter((row) => row.status !== 'ok');
+    if (onlyFixable) rows = rows.filter((row) => row.fixable);
+    if (monthFilter) rows = rows.filter((row) => row.monthStart === monthFilter);
     if (needle) rows = rows.filter((row) => normalizeText(row.line).includes(needle) || normalizeText(row.monthLabel).includes(needle));
 
     const direction = sort.direction === 'asc' ? 1 : -1;
@@ -782,7 +983,36 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
       if (sort.key === 'diario') return (a.diario - b.diario) * direction;
       return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
     });
-  }, [factRows, onlyMismatches, query, sort]);
+  }, [factRows, onlyMismatches, onlyFixable, monthFilter, query, sort]);
+
+  const visibleFixableKeys = useMemo(
+    () => filteredFactRows.filter((row) => row.fixable).map((row) => row.key),
+    [filteredFactRows]
+  );
+
+  const allVisibleSelected = visibleFixableKeys.length > 0 && visibleFixableKeys.every((key) => selectedKeys.has(key));
+
+  const toggleSelected = (key: string, fixable: boolean) => {
+    if (!fixable) return;
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleSelectVisible = () => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleFixableKeys.forEach((key) => next.delete(key));
+      } else {
+        visibleFixableKeys.forEach((key) => next.add(key));
+      }
+      return next;
+    });
+  };
 
   const filteredCogsMonthRows = useMemo(() => {
     const needle = normalizeText(query);
@@ -809,8 +1039,10 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     if (filteredFactRows.length === 0) return;
     const XLSX = await import('xlsx');
     const rows = [
-      ['Línea', 'Mes', 'Mes (YYYY-MM)', 'Budget €', 'Diario €', 'Desfase €', 'Estado', 'Qué hacer'],
+      ['Seleccionado', 'Autoajustable', 'Línea', 'Mes', 'Mes (YYYY-MM)', 'Budget €', 'Diario €', 'Desfase €', 'Estado', 'Qué hacer'],
       ...filteredFactRows.map((row) => [
+        selectedKeys.has(row.key) ? 'Sí' : 'No',
+        row.fixable ? 'Sí' : 'No',
         row.line.replace(` · ${row.monthLabel}`, ''),
         row.monthLabel,
         row.monthStart.slice(0, 7),
@@ -827,6 +1059,40 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
       .replace(/\.[^.]+$/, '')
       .replace(/[^\w.-]+/g, '_');
     XLSX.writeFile(workbook, `${baseName}_desfases_facturacion_FY_${plan?.fyStartYear || ''}.xlsx`);
+  };
+
+  const downloadCorrectedFacturacion = async () => {
+    if (!dailyWorkbook || !plan || selectedKeys.size === 0) return;
+    const correction = buildSelectedFacturacionCorrection(
+      dailyWorkbook,
+      plan.lines,
+      selectedKeys,
+      plan.fyStartYear
+    );
+    if (!correction) return;
+
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    const factSheetName = correction.sheetName || findFacturacionSheet(dailyWorkbook)?.name || 'Hoja1';
+
+    // Mismo archivo diario: todas las hojas iguales, solo cambia Hoja1 en las filas/meses marcados.
+    Object.entries(dailyWorkbook.sheets).forEach(([name, rows]) => {
+      const sheetRows = name === factSheetName ? correction.rows : rows;
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetRows), name);
+    });
+
+    if (!dailyWorkbook.sheets[factSheetName]) {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(correction.rows), factSheetName);
+    }
+
+    const baseName = dailyWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_ajustado.xlsx`);
+
+    if (correction.skipped.length > 0) {
+      window.alert(
+        `Archivo diario guardado. Ajusté ${correction.appliedCount} línea(s)/mes.\nNo pude autoajustar ${correction.skipped.length}:\n- ${correction.skipped.slice(0, 8).join('\n- ')}`
+      );
+    }
   };
 
   const downloadCorrectedCogs = async () => {
@@ -858,8 +1124,8 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Validador budget</h2>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              1) Cuadra facturación del diario con el budget general al céntimo (solo el FY del budget).
-              Tú decides qué celdas tocar. 2) Cuadra COGS con el mismo budget y el mismo día que la facturación.
+              Eliges qué desfases autoajusto y te devuelvo el mismo archivo diario, solo con esas filas/meses cuadradas al budget.
+              El resto lo dejas igual o lo ignoras para pasar a COGS.
             </p>
           </div>
           <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-1">
@@ -870,12 +1136,15 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
               <button
                 key={step}
                 type="button"
-                onClick={() => setActiveStep(step)}
+                onClick={() => {
+                  if (step === 2 && !canGoToCogs && plan && daily) return;
+                  setActiveStep(step);
+                }}
                 className={`rounded px-3 py-1.5 text-xs font-medium transition ${
                   activeStep === step
                     ? 'bg-[var(--text-primary)] text-white'
                     : 'text-[var(--text-secondary)] hover:bg-white'
-                }`}
+                } ${step === 2 && plan && daily && !canGoToCogs ? 'opacity-45' : ''}`}
               >
                 {label}
               </button>
@@ -980,23 +1249,38 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
               />
               Solo lo que no cuadra
             </label>
+            {activeStep === 1 && (
+              <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+                <input
+                  type="checkbox"
+                  checked={onlyFixable}
+                  onChange={(event) => setOnlyFixable(event.target.checked)}
+                  className="h-4 w-4 rounded border-[var(--border)]"
+                />
+                Solo autoajustables
+              </label>
+            )}
           </section>
 
           {activeStep === 1 && (
             <section className="space-y-4">
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
+                  <div className="max-w-2xl">
                     <h3 className="text-lg font-semibold">Paso 1 · Facturación</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Compara Importe del budget general con la suma diaria de Hoja1, solo en {fyLabel}.
-                      No reescribimos celdas: te digo el desfase del mes y tú eliges dónde meterlo.
+                      1) Mira el desfase por mes. 2) Marca las filas que quieres que ajuste.
+                      3) Descarga el mismo archivo diario: solo cambian esas filas/meses para cuadrar con el budget; el resto (otros años, COGS, líneas no marcadas) queda igual.
+                      4) Si lo demás lo harás a mano, ignora el resto y pasa a COGS.
+                    </p>
+                    <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                      Desfases: {factBadCount} · Autoajustables: {factFixableCount} · Sin diario: {factUnfixableCount} · Marcadas para autoajuste: {selectedCount}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge
                       ok={factSquared}
-                      label={`${factOkCount} OK · ${factBadCount} a corregir`}
+                      label={factSquared ? 'Cuadra al céntimo' : `${factBadCount} sin match`}
                     />
                     <button
                       type="button"
@@ -1007,15 +1291,139 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                       <Download className="h-4 w-4" />
                       Exportar listado
                     </button>
+                    <button
+                      type="button"
+                      onClick={downloadCorrectedFacturacion}
+                      disabled={selectedCount === 0}
+                      className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Download className="h-4 w-4" />
+                      Descargar mismo archivo ajustado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIgnoredRest(true);
+                        setActiveStep(2);
+                      }}
+                      disabled={factSquared}
+                      className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      Ignorar el resto → COGS
+                    </button>
                   </div>
                 </div>
               </div>
 
+              {monthSummaries.length > 0 && (
+                <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+                  <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
+                    Desfase por mes · selecciona con cuidado si el mes mueve mucho
+                  </div>
+                  <div className="max-h-[280px] overflow-auto">
+                    <table className="w-full min-w-[920px] border-collapse text-sm">
+                      <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
+                        <tr>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Filas</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Desfase total</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Si marco ahora</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Me lo dejo yo</th>
+                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {monthSummaries.map((month) => {
+                          const remaining = roundMoney(month.totalDiff - month.selectedDiff);
+                          const active = monthFilter === month.monthStart;
+                          return (
+                            <tr key={month.monthStart} className={`border-b border-[var(--border)] ${active ? 'bg-[var(--accent-soft)]' : ''}`}>
+                              <td className="px-3 py-2 capitalize font-medium">{month.monthLabel}</td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">{month.rows}</td>
+                              <td className={`px-3 py-2 text-right font-mono text-xs ${Math.abs(month.totalDiff) > CENTIMO ? 'text-[var(--danger)]' : ''}`}>
+                                {formatCurrency(month.totalDiff)}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-xs text-[var(--accent)]">
+                                {formatCurrency(month.selectedDiff)}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-xs">
+                                {formatCurrency(remaining)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={() => setMonthFilter(active ? null : month.monthStart)}
+                                    className="rounded border border-[var(--border)] bg-white px-2 py-1 hover:bg-[var(--bg-soft)]"
+                                  >
+                                    {active ? 'Ver todos' : 'Ver filas'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => selectMonthFixable(month.monthStart)}
+                                    disabled={month.fixableRows === 0}
+                                    className="rounded border border-[var(--border)] bg-white px-2 py-1 hover:bg-[var(--bg-soft)] disabled:opacity-40"
+                                  >
+                                    Marcar autoajustables
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => clearMonthSelection(month.monthStart)}
+                                    disabled={month.selectedRows === 0}
+                                    className="rounded border border-[var(--border)] bg-white px-2 py-1 hover:bg-[var(--bg-soft)] disabled:opacity-40"
+                                  >
+                                    Desmarcar
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-[var(--bg-soft)] text-xs font-semibold">
+                          <td className="px-3 py-2">Total FY</td>
+                          <td className="px-3 py-2 text-right font-mono">{factBadCount}</td>
+                          <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(factTotalDiff)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-[var(--accent)]">{formatCurrency(selectedDiff)}</td>
+                          <td className="px-3 py-2 text-right font-mono">{formatCurrency(remainingDiff)}</td>
+                          <td className="px-3 py-2" />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
+                  <p className="text-sm font-semibold">
+                    Filas sin match{monthFilter ? ` · ${displayMonth(monthFilter)}` : ''}
+                  </p>
+                  {monthFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setMonthFilter(null)}
+                      className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    >
+                      Quitar filtro de mes
+                    </button>
+                  )}
+                </div>
                 <div className="max-h-[560px] overflow-auto">
-                  <table className="w-full min-w-[980px] border-collapse text-sm">
-                    <thead className="sticky top-0 bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
+                  <table className="w-full min-w-[1080px] border-collapse text-sm">
+                    <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
                       <tr>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={toggleSelectVisible}
+                            disabled={visibleFixableKeys.length === 0}
+                            className="h-4 w-4 rounded border-[var(--border)]"
+                            title="Seleccionar visibles autoajustables"
+                          />
+                        </th>
                         <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
                           <button type="button" onClick={() => toggleSort('line')}>Línea</button>
                         </th>
@@ -1037,12 +1445,24 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                     <tbody>
                       {filteredFactRows.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-3 py-8 text-center text-[var(--text-secondary)]">
+                          <td colSpan={7} className="px-3 py-8 text-center text-[var(--text-secondary)]">
                             {factSquared ? 'Todo cuadra al céntimo.' : 'No hay filas con ese filtro.'}
                           </td>
                         </tr>
                       ) : filteredFactRows.map((row) => (
-                        <tr key={row.key} className="border-b border-[var(--border)] align-top">
+                        <tr
+                          key={row.key}
+                          className={`border-b border-[var(--border)] align-top ${row.fixable ? '' : 'bg-[var(--bg-soft)]/70'}`}
+                        >
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedKeys.has(row.key)}
+                              disabled={!row.fixable}
+                              onChange={() => toggleSelected(row.key, row.fixable)}
+                              className="h-4 w-4 rounded border-[var(--border)] disabled:opacity-40"
+                            />
+                          </td>
                           <td className="px-3 py-2 font-medium">{row.line.replace(` · ${row.monthLabel}`, '')}</td>
                           <td className="px-3 py-2 capitalize">{row.monthLabel}</td>
                           <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.budget)}</td>
@@ -1057,6 +1477,12 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                   </table>
                 </div>
               </div>
+
+              {factUnfixableCount > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {factUnfixableCount} filas no tienen diario usable (gris, sin checkbox). Esas las dejas para ti o las revisas aparte.
+                </div>
+              )}
 
               {factSquared && (
                 <div className="rounded-lg border border-green-200 bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
@@ -1081,7 +1507,9 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                 </div>
                 {!factSquared && (
                   <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    La facturación aún no cuadra al céntimo. Conviene cerrar el paso 1 antes de corregir COGS.
+                    {ignoredRest
+                      ? `Has ignorado el resto de facturación (${formatCurrency(remainingDiff)} pendientes). COGS usará el diario tal cual esté ahora.`
+                      : 'La facturación aún no cuadra al céntimo. Conviene cerrar o ignorar el resto en el paso 1.'}
                   </p>
                 )}
               </div>
