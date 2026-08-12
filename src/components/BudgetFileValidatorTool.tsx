@@ -418,7 +418,7 @@ function buildPlanLines(workbook: WorkbookUpload): { fyStartYear: number; lines:
     const existing = lines.get(key);
     const facturacion = (existing?.facturacion || 0) + amount;
     const margenTotal = (existing?.margen || 0) + margen;
-    const cogs = facturacion - margenTotal;
+    const cogs = roundMoney(facturacion - margenTotal);
 
     lines.set(key, {
       key,
@@ -428,8 +428,8 @@ function buildPlanLines(workbook: WorkbookUpload): { fyStartYear: number; lines:
       zona,
       country,
       monthStart,
-      facturacion,
-      margen: margenTotal,
+      facturacion: roundMoney(facturacion),
+      margen: roundMoney(margenTotal),
       cogs,
       cogsRate: facturacion !== 0 ? 1 - margenTotal / facturacion : null,
     });
@@ -936,7 +936,7 @@ function buildSelectedCogsCorrection(
   const cogsDateColumns = cogsHeader
     .map((cell, index) => ({ index, date: formatDateKey(cell) }))
     .filter((item): item is { index: number; date: string } => (
-      !!item.date && item.date >= fyStart && item.date <= fyEnd && factDateColumns.has(item.date)
+      !!item.date && item.date >= fyStart && item.date <= fyEnd
     ));
 
   const factRows = new Map<string, any[]>();
@@ -963,6 +963,19 @@ function buildSelectedCogsCorrection(
     selectedMonthsByLine.set(baseKey, months);
   });
 
+  const writeCogsCell = (rowIndex: number, colIndex: number, next: number | null) => {
+    const row = correctedRows[rowIndex];
+    while (row.length <= colIndex) row.push('');
+    const current = numericValue(row[colIndex]);
+    const changed = next === null
+      ? current !== null || String(row[colIndex] ?? '').trim() !== ''
+      : current === null || roundMoney(current) !== next || current !== next;
+    // Siempre materializa el valor objetivo (evita dejar basura de >2 decimales de Excel).
+    row[colIndex] = next === null ? '' : next;
+    if (changed) changeCount += 1;
+    return changed;
+  };
+
   cogsSheet.rows.slice(cogsHeaderIndex + 1).forEach((cogsRow, rowOffset) => {
     const rowIndex = cogsHeaderIndex + 1 + rowOffset;
     const baseKey = lineKey([cogsRow[0], cogsRow[1], normalizeZoneForCompare(cogsRow[2]), normalizeCountryCode(cogsRow[3])]);
@@ -985,12 +998,11 @@ function buildSelectedCogsCorrection(
       const monthStart = `${date.slice(0, 7)}-01`;
       if (!selectedMonths.has(monthStart)) return;
 
-      const factIndex = factDateColumns.get(date);
-      if (factIndex === undefined) return;
       const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
       if (!planLine || planLine.cogsRate === null) return;
 
-      const fact = numericValue(factRow[factIndex]);
+      const factIndex = factDateColumns.get(date);
+      const fact = factIndex === undefined ? null : numericValue(factRow[factIndex]);
       const expected = fact === null ? null : roundMoney(fact * planLine.cogsRate);
       const bucket = monthBuckets.get(monthStart) || [];
       bucket.push({ index, date, expected });
@@ -1000,32 +1012,39 @@ function buildSelectedCogsCorrection(
     selectedMonths.forEach((monthStart) => {
       if (!monthBuckets.has(monthStart)) {
         const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
-        skippedLines.push(`${label} · ${displayMonth(monthStart)}: ${planLine ? 'sin días de facturación' : 'sin % en budget'}`);
+        skippedLines.push(`${label} · ${displayMonth(monthStart)}: ${planLine ? 'sin días del mes en COGS' : 'sin % en budget'}`);
       }
     });
 
     monthBuckets.forEach((bucket, monthStart) => {
       const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
-      const filled = bucket.filter((item) => item.expected !== null) as Array<{ index: number; date: string; expected: number }>;
-      if (planLine && filled.length > 0) {
-        const currentSum = filled.reduce((sum, item) => sum + item.expected, 0);
-        const adjustment = roundMoney(planLine.cogs - currentSum);
-        if (Math.abs(adjustment) > 0) {
-          const last = filled[filled.length - 1];
-          last.expected = roundMoney(last.expected + adjustment);
+      if (!planLine || planLine.cogsRate === null) return;
+
+      const sorted = [...bucket].sort((a, b) => a.date.localeCompare(b.date));
+      const filledIndexes: number[] = [];
+
+      sorted.forEach((item) => {
+        if (item.expected === null) {
+          writeCogsCell(rowIndex, item.index, null);
+          return;
         }
+        writeCogsCell(rowIndex, item.index, item.expected);
+        filledIndexes.push(item.index);
+      });
+
+      if (filledIndexes.length === 0) {
+        skippedLines.push(`${label} · ${displayMonth(monthStart)}: sin días de facturación`);
+        return;
       }
 
-      bucket.forEach((item) => {
-        const current = numericValue(correctedRows[rowIndex][item.index]);
-        const next = item.expected;
-        const changed = next === null
-          ? current !== null
-          : current === null || moneyDiffers(current, next);
-        if (!changed) return;
-        correctedRows[rowIndex][item.index] = next === null ? '' : next;
-        changeCount += 1;
+      // Cuadra el mes al céntimo: el último día absorbe el residual vs budget.
+      let sumOthers = 0;
+      filledIndexes.slice(0, -1).forEach((colIndex) => {
+        sumOthers += numericValue(correctedRows[rowIndex][colIndex]) || 0;
       });
+      const lastCol = filledIndexes[filledIndexes.length - 1];
+      const lastValue = roundMoney(planLine.cogs - sumOthers);
+      writeCogsCell(rowIndex, lastCol, lastValue);
     });
   });
 
@@ -1080,10 +1099,10 @@ function buildSelectedDayCogsCorrection(
 
     const current = numericValue(row[parsed.col]);
     const changed = typeof next === 'string'
-      ? current !== null && String(row[parsed.col] ?? '').trim() !== ''
-      : current === null || moneyDiffers(current, next);
-    if (!changed) return;
+      ? current !== null || String(row[parsed.col] ?? '').trim() !== ''
+      : current === null || roundMoney(current) !== next || current !== next;
     row[parsed.col] = next;
+    if (!changed) return;
     changeCount += 1;
   });
 
