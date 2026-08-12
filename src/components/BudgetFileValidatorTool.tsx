@@ -1242,7 +1242,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">COGS</p>
               <div className="mt-2">
-                <StatusBadge ok={cogsOk} label={cogsOk ? 'Cuadra y mismo día' : `${cogsMonthBad.length + dayIssues.length} incidencias`} />
+                <StatusBadge ok={cogsOk} label={cogsOk ? 'Cuadra y mismo día' : `${cogsMismatchRows.length + dayIssues.length} incidencias`} />
               </div>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
