@@ -916,7 +916,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     setSelectedKeys(new Set());
     setSelectedCogsKeys(new Set());
     setIgnoredRest(false);
-  }, [factRows, cogsMonthRows]);
+  }, [dailyWorkbook?.fileName, planWorkbook?.fileName]);
 
   const mismatchRows = useMemo(() => factRows.filter((row) => row.status !== 'ok'), [factRows]);
   const factBadCount = mismatchRows.length;
@@ -1061,7 +1061,33 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     XLSX.writeFile(workbook, `${baseName}_desfases_facturacion_FY_${plan?.fyStartYear || ''}.xlsx`);
   };
 
-  const downloadCorrectedFacturacion = async () => {
+  const downloadCogsListado = async () => {
+    if (filteredCogsMonthRows.length === 0) return;
+    const XLSX = await import('xlsx');
+    const rows = [
+      ['Seleccionado', 'Autoajustable', 'Línea', 'Mes', 'Mes (YYYY-MM)', 'Budget €', 'Diario €', 'Desfase €', 'Estado', 'Qué hacer'],
+      ...filteredCogsMonthRows.map((row) => [
+        selectedCogsKeys.has(row.key) ? 'Sí' : 'No',
+        row.fixable ? 'Sí' : 'No',
+        row.line.replace(` · ${row.monthLabel}`, ''),
+        row.monthLabel,
+        row.monthStart.slice(0, 7),
+        roundMoney(row.budget),
+        roundMoney(row.diario),
+        roundMoney(row.diff),
+        row.status,
+        row.instruction,
+      ]),
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), 'COGS');
+    const baseName = (dailyWorkbook?.fileName || planWorkbook?.fileName || 'validador')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_desfases_cogs_FY_${plan?.fyStartYear || ''}.xlsx`);
+  };
+
+  const applyFactSelection = () => {
     if (!dailyWorkbook || !plan || selectedKeys.size === 0) return;
     const correction = buildSelectedFacturacionCorrection(
       dailyWorkbook,
@@ -1071,31 +1097,24 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     );
     if (!correction) return;
 
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
     const factSheetName = correction.sheetName || findFacturacionSheet(dailyWorkbook)?.name || 'Hoja1';
-
-    // Mismo archivo diario: todas las hojas iguales, solo cambia Hoja1 en las filas/meses marcados.
-    Object.entries(dailyWorkbook.sheets).forEach(([name, rows]) => {
-      const sheetRows = name === factSheetName ? correction.rows : rows;
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetRows), name);
+    setDailyWorkbook({
+      ...dailyWorkbook,
+      sheets: {
+        ...dailyWorkbook.sheets,
+        [factSheetName]: correction.rows,
+      },
     });
-
-    if (!dailyWorkbook.sheets[factSheetName]) {
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(correction.rows), factSheetName);
-    }
-
-    const baseName = dailyWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
-    XLSX.writeFile(workbook, `${baseName}_ajustado.xlsx`);
+    setSelectedKeys(new Set());
 
     if (correction.skipped.length > 0) {
       window.alert(
-        `Archivo diario guardado. Ajusté ${correction.appliedCount} línea(s)/mes.\nNo pude autoajustar ${correction.skipped.length}:\n- ${correction.skipped.slice(0, 8).join('\n- ')}`
+        `Aplicadas ${correction.appliedCount} corrección(es) en pantalla.\nNo pude autoajustar ${correction.skipped.length}:\n- ${correction.skipped.slice(0, 8).join('\n- ')}`
       );
     }
   };
 
-  const downloadCorrectedCogs = async () => {
+  const applyCogsSelection = () => {
     if (!dailyWorkbook || !plan || selectedCogsKeys.size === 0) return;
     const correction = buildSelectedCogsCorrection(
       dailyWorkbook,
@@ -1105,27 +1124,32 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
     );
     if (!correction) return;
 
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
     const cogsSheetName = correction.sheetName || findCogsSheet(dailyWorkbook)?.name || 'COGS';
-
-    Object.entries(dailyWorkbook.sheets).forEach(([name, rows]) => {
-      const sheetRows = name === cogsSheetName ? correction.rows : rows;
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetRows), name);
+    setDailyWorkbook({
+      ...dailyWorkbook,
+      sheets: {
+        ...dailyWorkbook.sheets,
+        [cogsSheetName]: correction.rows,
+      },
     });
-
-    if (!dailyWorkbook.sheets[cogsSheetName]) {
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(correction.rows), cogsSheetName);
-    }
-
-    const baseName = dailyWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
-    XLSX.writeFile(workbook, `${baseName}_cogs_ajustado.xlsx`);
+    setSelectedCogsKeys(new Set());
 
     if (correction.skippedLines.length > 0) {
       window.alert(
-        `Archivo diario guardado. Ajusté ${correction.changeCount} celda(s) COGS.\nNo pude autoajustar ${correction.skippedLines.length}:\n- ${correction.skippedLines.slice(0, 8).join('\n- ')}`
+        `Aplicadas ${correction.changeCount} celda(s) COGS en pantalla.\nNo pude autoajustar ${correction.skippedLines.length}:\n- ${correction.skippedLines.slice(0, 8).join('\n- ')}`
       );
     }
+  };
+
+  const downloadCurrentWorkbook = async () => {
+    if (!dailyWorkbook) return;
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    Object.entries(dailyWorkbook.sheets).forEach(([name, rows]) => {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
+    });
+    const baseName = dailyWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_ajustado.xlsx`);
   };
 
   const fyLabel = plan
@@ -1148,7 +1172,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Validador budget</h2>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              En facturación y en COGS marcas qué filas ajustar y te devuelvo el mismo archivo diario, solo con esas cambios.
+              Marca filas → Aplicar (se reajusta en pantalla) → Descargar el mismo archivo diario ya corregido.
             </p>
           </div>
           <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-1">
@@ -1292,11 +1316,11 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                   <div className="max-w-2xl">
                     <h3 className="text-lg font-semibold">Paso 1 · Facturación</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Marca las filas que quieres que ajuste y descarga el mismo archivo diario.
-                      Solo cambian esas filas/meses; el resto queda igual. Si lo demás lo harás a mano, ignora el resto y pasa a COGS.
+                      Marca las filas, pulsa Aplicar para reajustar lo de pantalla, y luego descarga el archivo diario.
+                      Lo no marcado no se toca. Si el resto lo harás a mano, ignora y pasa a COGS.
                     </p>
                     <p className="mt-2 text-xs text-[var(--text-secondary)]">
-                      Desfases: {factBadCount} · Autoajustables: {factFixableCount} · Sin diario: {factUnfixableCount} · Marcadas para autoajuste: {selectedCount}
+                      Desfases: {factBadCount} · Autoajustables: {factFixableCount} · Sin diario: {factUnfixableCount} · Marcadas: {selectedCount}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1315,12 +1339,20 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                     </button>
                     <button
                       type="button"
-                      onClick={downloadCorrectedFacturacion}
+                      onClick={applyFactSelection}
                       disabled={selectedCount === 0}
                       className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
                     >
+                      Aplicar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadCurrentWorkbook}
+                      disabled={!dailyWorkbook}
+                      className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
                       <Download className="h-4 w-4" />
-                      Descargar mismo archivo ajustado
+                      Descargar archivo
                     </button>
                     <button
                       type="button"
@@ -1430,8 +1462,8 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                   <div className="max-w-2xl">
                     <h3 className="text-lg font-semibold">Paso 2 · COGS</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Marca las filas/meses que quieres que ajuste. Te devuelvo el mismo archivo diario,
-                      recalculando solo esas COGS con el % del budget (mismo día que facturación). El resto no se toca.
+                      Marca filas/meses, pulsa Aplicar para recalcular COGS en pantalla (mismo día + % del budget),
+                      y descarga el archivo diario. Lo no marcado no se toca.
                     </p>
                     <p className="mt-2 text-xs text-[var(--text-secondary)]">
                       Desfases: {cogsMismatchRows.length} · Autoajustables: {cogsFixableCount} · Marcadas: {selectedCogsCount}
@@ -1442,12 +1474,29 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
                     <StatusBadge ok={cogsOk} label={cogsOk ? 'OK' : 'Hay incidencias'} />
                     <button
                       type="button"
-                      onClick={downloadCorrectedCogs}
+                      onClick={downloadCogsListado}
+                      disabled={filteredCogsMonthRows.length === 0}
+                      className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Download className="h-4 w-4" />
+                      Exportar listado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyCogsSelection}
                       disabled={selectedCogsCount === 0}
                       className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
                     >
+                      Aplicar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadCurrentWorkbook}
+                      disabled={!dailyWorkbook}
+                      className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-soft)] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
                       <Download className="h-4 w-4" />
-                      Descargar mismo archivo ajustado
+                      Descargar archivo
                     </button>
                   </div>
                 </div>
