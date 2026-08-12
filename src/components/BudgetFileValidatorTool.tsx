@@ -2,157 +2,97 @@
 
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
-import { ArrowLeft, CheckCircle2, Download, XCircle } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Download,
+  FileSpreadsheet,
+  Search,
+  XCircle,
+} from 'lucide-react';
 
 interface WorkbookUpload {
   fileName: string;
   sheets: Record<string, any[][]>;
 }
 
-interface WideLine {
+interface PlanMonthLine {
   key: string;
-  idVertical: string;
-  nombre: string;
+  line: string;
+  verticalId: string;
+  medio: string;
   zona: string;
-  codMercado: string;
-  values: Map<string, any>;
-  cells: Map<string, string>;
-}
-
-interface CogsIssue {
-  key: string;
-  type: string;
-  line: string;
-  date?: string;
-  cell?: string;
-  facturacion?: number | null;
-  cogs?: number | null;
-  expected?: number | null;
-  diff?: number | null;
-  ratio?: number | null;
-}
-
-interface CogsLineSummary {
-  key: string;
-  line: string;
+  country: string;
+  monthStart: string;
+  facturacion: number;
+  margen: number;
+  cogs: number;
   cogsRate: number | null;
+}
+
+interface DailyMonthLine {
+  key: string;
+  line: string;
   facturacion: number;
   cogs: number;
-  checks: number;
-  issues: number;
+  daysWithFact: number;
+  daysWithCogs: number;
+  daysFactWithoutCogs: number;
+  daysCogsWithoutFact: number;
 }
 
-interface CogsValidation {
-  ok: boolean;
-  sheetFacturacion: string | null;
-  sheetCogs: string | null;
-  checkedCells: number;
-  issueCount: number;
-  totalFacturacion: number;
-  totalCogs: number;
-  lines: CogsLineSummary[];
-  issues: CogsIssue[];
+interface FactMismatch {
+  key: string;
+  line: string;
+  monthStart: string;
+  monthLabel: string;
+  budget: number;
+  diario: number;
+  diff: number;
+  instruction: string;
+  status: 'ok' | 'mismatch' | 'solo-budget' | 'solo-diario';
 }
 
-interface CogsCorrectionChange {
+interface CogsMonthMismatch {
+  key: string;
+  line: string;
+  monthStart: string;
+  monthLabel: string;
+  budget: number;
+  diario: number;
+  diff: number;
+  instruction: string;
+  status: 'ok' | 'mismatch' | 'solo-budget' | 'solo-diario';
+}
+
+interface CogsDayIssue {
   key: string;
   line: string;
   date: string;
-  cell: string;
-  current: number | null;
-  expected: number | null;
+  type: 'Facturación sin COGS' | 'COGS sin facturación';
   facturacion: number | null;
-  cogsRate: number | null;
+  cogs: number | null;
+  cellFact?: string;
+  cellCogs?: string;
 }
 
 interface CogsCorrectionSummary {
-  ok: boolean;
-  sheetName: string | null;
   rows: any[][];
+  sheetName: string;
   changeCount: number;
-  changes: CogsCorrectionChange[];
   skippedLines: string[];
-}
-
-interface MonthlyFacturacionCorrectionChange {
-  key: string;
-  line: string;
-  month: string;
-  current: number;
-  expected: number;
-  diff: number;
-  action: string;
-}
-
-interface MonthlyFacturacionCorrectionSummary {
-  ok: boolean;
-  sheetName: string | null;
-  rows: any[][];
-  changeCount: number;
-  changes: MonthlyFacturacionCorrectionChange[];
-  skippedLines: string[];
-  fyStartYear?: number;
 }
 
 interface BudgetFileValidatorToolProps {
   onBack: () => void;
 }
 
-type ValidatorStep = 1 | 2 | 3;
-type DiffLineSortKey = 'line' | 'left' | 'right' | 'diff';
-type DiffIssueSortKey = 'line' | 'date' | 'left' | 'right' | 'diff';
+type ValidatorStep = 1 | 2;
 type SortDirection = 'asc' | 'desc';
+type FactSortKey = 'line' | 'month' | 'budget' | 'diario' | 'diff';
 
-interface BudgetDiffIssue {
-  key: string;
-  line: string;
-  date?: string;
-  leftCell?: string;
-  rightCell?: string;
-  leftValue: number;
-  rightValue: number;
-  diff: number;
-}
+const CENTIMO = 0.01;
 
-interface BudgetDiffLine {
-  key: string;
-  line: string;
-  leftTotal: number;
-  rightTotal: number;
-  diff: number;
-  absDiff: number;
-}
-
-interface BudgetDiffSummary {
-  ok: boolean;
-  sheetLeft: string | null;
-  sheetRight: string | null;
-  label: string;
-  totalLeft: number;
-  totalRight: number;
-  diff: number;
-  checkedCells: number;
-  issueCount: number;
-  lines: BudgetDiffLine[];
-  issues: BudgetDiffIssue[];
-}
-
-interface CombinedBudgetDiffSummary {
-  ok: boolean;
-  summaries: BudgetDiffSummary[];
-  mode?: 'daily' | 'monthly-plan';
-  fyStartYear?: number;
-  error?: string;
-}
-
-interface ValueEntry {
-  line: string;
-  value: number;
-  cell?: string;
-}
-
-const DEFAULT_MONEY_TOLERANCE = 0.2;
-const RATE_TOLERANCE = 0.001;
 const MONTHS_ES = [
   ['abril', 4],
   ['mayo', 5],
@@ -175,6 +115,7 @@ const VERTICAL_ID_BY_NAME: Record<string, string> = {
   'basketball emotion': '2',
   'the pitch': '6',
   'running emotion': '7',
+  'ekinsports.com': '7',
   'rcd mallorca': '101',
   'sd huesca': '102',
   'nastic de tarragona': '103',
@@ -202,11 +143,6 @@ function normalizeHeader(value: unknown): string {
 
 function formatCurrency(value: number): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
-}
-
-function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '-';
-  return `${(value * 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
 function formatDateKey(value: unknown): string | null {
@@ -271,6 +207,10 @@ function excelColumnName(index: number): string {
   return name;
 }
 
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
 function normalizeCountryCode(value: unknown): string {
   const text = normalizeText(value).replace(/\./g, '');
   if (!text) return '';
@@ -292,6 +232,10 @@ function normalizeVerticalId(value: unknown): string {
   const raw = String(value ?? '').trim();
   const normalized = normalizeText(raw);
   return VERTICAL_ID_BY_NAME[normalized] || raw;
+}
+
+function lineKey(parts: Array<unknown>): string {
+  return parts.map((part) => normalizeText(part)).join('|');
 }
 
 function monthStartFromLabel(value: unknown, fyStartYear: number): string | null {
@@ -338,130 +282,35 @@ function findFacturacionSheet(workbook: WorkbookUpload): { name: string; rows: a
 
 function findCogsSheet(workbook: WorkbookUpload): { name: string; rows: any[][] } | null {
   for (const [name, rows] of Object.entries(workbook.sheets)) {
-    if (normalizeText(name).includes('cogs') && findWideHeaderIndex(rows) >= 0) return { name, rows };
+    if (normalizeText(name).includes('cogs') && findWideHeaderIndex(rows) >= 0) {
+      return { name, rows };
+    }
   }
   return null;
 }
 
-function lineKey(parts: Array<unknown>): string {
-  return parts.map((part) => normalizeText(part)).join('|');
-}
-
-function parseWideSheet(rows: any[][], fyStartYear: number): Map<string, WideLine> {
-  const headerIndex = findWideHeaderIndex(rows);
-  if (headerIndex < 0) return new Map();
-
-  const header = rows[headerIndex];
-  const fyStart = `${fyStartYear}-04-01`;
-  const fyEnd = `${fyStartYear + 1}-03-31`;
-  const dateColumns = header
-    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
-    .filter((item): item is { index: number; date: string } => (
-      !!item.date && item.date >= fyStart && item.date <= fyEnd
-    ));
-  const lines = new Map<string, WideLine>();
-
-  rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
-    const idVertical = String(row[0] ?? '').trim();
-    const nombre = String(row[1] ?? '').trim();
-    const zona = String(row[2] ?? '').trim();
-    const codMercado = String(row[3] ?? '').trim();
-    const key = lineKey([idVertical, nombre, zona, codMercado]);
-    if (!key.replace(/\|/g, '')) return;
-
-    const values = new Map<string, any>();
-    const cells = new Map<string, string>();
-    const rowNumber = headerIndex + 2 + rowOffset;
-    dateColumns.forEach(({ index, date }) => {
-      values.set(date, row[index] ?? null);
-      cells.set(date, `${excelColumnName(index)}${rowNumber}`);
-    });
-    lines.set(key, { key, idVertical, nombre, zona, codMercado, values, cells });
-  });
-
-  return lines;
-}
-
-function getWideSheetDates(rows: any[][]): string[] {
-  const headerIndex = findWideHeaderIndex(rows);
-  if (headerIndex < 0) return [];
-
-  return Array.from(new Set(
-    rows[headerIndex]
-      .map(formatDateKey)
-      .filter((date): date is string => !!date)
-  )).sort();
-}
-
-function parseWideSheetForDates(rows: any[][], dates: string[]): Map<string, WideLine> {
-  const headerIndex = findWideHeaderIndex(rows);
-  if (headerIndex < 0) return new Map();
-
-  const header = rows[headerIndex];
-  const wantedDates = new Set(dates);
-  const dateColumns = header
-    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
-    .filter((item): item is { index: number; date: string } => !!item.date && wantedDates.has(item.date));
-  const lines = new Map<string, WideLine>();
-
-  rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
-    const idVertical = String(row[0] ?? '').trim();
-    const nombre = String(row[1] ?? '').trim();
-    const zona = String(row[2] ?? '').trim();
-    const codMercado = String(row[3] ?? '').trim();
-    const key = lineKey([idVertical, nombre, zona, codMercado]);
-    if (!key.replace(/\|/g, '')) return;
-
-    const values = new Map<string, any>();
-    const cells = new Map<string, string>();
-    const rowNumber = headerIndex + 2 + rowOffset;
-    dateColumns.forEach(({ index, date }) => {
-      values.set(date, row[index] ?? null);
-      cells.set(date, `${excelColumnName(index)}${rowNumber}`);
-    });
-    lines.set(key, { key, idVertical, nombre, zona, codMercado, values, cells });
-  });
-
-  return lines;
-}
-
-function getFiscalYearsInWorkbook(workbook: WorkbookUpload | null): number[] {
-  if (!workbook) return [];
-  const dates = new Set<string>();
-  const fact = findFacturacionSheet(workbook);
-  const cogs = findCogsSheet(workbook);
-  if (fact) getWideSheetDates(fact.rows).forEach((date) => dates.add(date));
-  if (cogs) getWideSheetDates(cogs.rows).forEach((date) => dates.add(date));
-
-  return Array.from(new Set(Array.from(dates).map((date) => {
-    const year = parseInt(date.slice(0, 4), 10);
-    const month = parseInt(date.slice(5, 7), 10);
-    return month >= 4 ? year : year - 1;
-  }))).sort((a, b) => a - b);
-}
-
 function findMonthlyPlanSheet(workbook: WorkbookUpload): { name: string; rows: any[][]; headerIndex: number } | null {
   for (const [name, rows] of Object.entries(workbook.sheets)) {
-    const headerIndex = rows.findIndex((row) => {
-      const headers = row.map(normalizeHeader);
-      return (
+    for (let index = 0; index < Math.min(rows.length, 20); index += 1) {
+      const headers = (rows[index] || []).map((cell) => normalizeHeader(cell));
+      if (
         headers.some((header) => header.includes('mes')) &&
-        headers.includes('vertical') &&
-        headers.some((header) => header.includes('medio')) &&
-        headers.includes('importe') &&
+        headers.some((header) => header.includes('vertical')) &&
+        headers.some((header) => header.includes('importe') || header.includes('budget')) &&
         headers.some((header) => header.includes('margen bruto'))
-      );
-    });
-    if (headerIndex >= 0) return { name, rows, headerIndex };
+      ) {
+        return { name, rows, headerIndex: index };
+      }
+    }
   }
   return null;
 }
 
 function plannedColumn(headers: string[], aliases: string[]): number {
-  return headers.findIndex((header) => aliases.some((alias) => header === normalizeHeader(alias) || header.includes(normalizeHeader(alias))));
+  return headers.findIndex((header) => aliases.some((alias) => header.includes(alias)));
 }
 
-function plannedMonthlyValues(workbook: WorkbookUpload): { facturacion: Map<string, ValueEntry>; cogs: Map<string, ValueEntry>; sheetName: string; fyStartYear: number } | null {
+function buildPlanLines(workbook: WorkbookUpload): { fyStartYear: number; lines: Map<string, PlanMonthLine> } | null {
   const sheet = findMonthlyPlanSheet(workbook);
   if (!sheet) return null;
 
@@ -479,1163 +328,496 @@ function plannedMonthlyValues(workbook: WorkbookUpload): { facturacion: Map<stri
 
   if (Object.values(colMap).some((index) => index < 0)) return null;
 
-  const facturacion = new Map<string, ValueEntry>();
-  const cogs = new Map<string, ValueEntry>();
+  const lines = new Map<string, PlanMonthLine>();
 
-  sheet.rows.slice(sheet.headerIndex + 1).forEach((row, rowOffset) => {
+  sheet.rows.slice(sheet.headerIndex + 1).forEach((row) => {
     const monthStart = monthStartFromLabel(row[colMap.month], fyStartYear);
     if (!monthStart) return;
 
     const amount = numericValue(row[colMap.amount]);
     if (amount === null) return;
 
-    const margin = numericValue(row[colMap.margin]) || 0;
+    const margen = numericValue(row[colMap.margin]) || 0;
     const verticalId = normalizeVerticalId(row[colMap.vertical]);
     const medio = String(row[colMap.medio] ?? '').trim();
-    const zone = normalizeZoneForCompare(row[colMap.zone]);
+    const zona = normalizeZoneForCompare(row[colMap.zone]);
     const country = normalizeCountryCode(row[colMap.country]);
-    const key = lineKey([verticalId, medio, zone, country, monthStart]);
-    const line = [row[colMap.vertical], medio, row[colMap.zone], country, displayMonth(monthStart)].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
-    const amountCell = `${excelColumnName(colMap.amount)}${sheet.headerIndex + 2 + rowOffset}`;
-    const marginCell = `${excelColumnName(colMap.margin)}${sheet.headerIndex + 2 + rowOffset}`;
+    const key = lineKey([verticalId, medio, zona, country, monthStart]);
+    const line = [row[colMap.vertical], medio, row[colMap.zone], country, displayMonth(monthStart)]
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean)
+      .join(' · ');
 
-    const currentFact = facturacion.get(key);
-    facturacion.set(key, {
-      line,
-      value: (currentFact?.value || 0) + amount,
-      cell: currentFact?.cell ? `${currentFact.cell}, ${amountCell}` : amountCell,
-    });
+    const existing = lines.get(key);
+    const facturacion = (existing?.facturacion || 0) + amount;
+    const margenTotal = (existing?.margen || 0) + margen;
+    const cogs = facturacion - margenTotal;
 
-    const cogsValue = amount - margin;
-    const currentCogs = cogs.get(key);
-    cogs.set(key, {
-      line,
-      value: (currentCogs?.value || 0) + cogsValue,
-      cell: currentCogs?.cell ? `${currentCogs.cell}, ${amountCell}/${marginCell}` : `${amountCell}/${marginCell}`,
-    });
-  });
-
-  return { facturacion, cogs, sheetName: sheet.name, fyStartYear };
-}
-
-function loadedMonthlyValues(sheet: { name: string; rows: any[][] } | null, fyStartYear: number): Map<string, ValueEntry> {
-  if (!sheet) return new Map();
-  const lines = parseWideSheet(sheet.rows, fyStartYear);
-  const values = new Map<string, ValueEntry>();
-
-  lines.forEach((line) => {
-    line.values.forEach((rawValue, date) => {
-      const value = numericValue(rawValue);
-      if (value === null) return;
-      const monthStart = `${date.slice(0, 7)}-01`;
-      const key = lineKey([line.idVertical, line.nombre, normalizeZoneForCompare(line.zona), normalizeCountryCode(line.codMercado), monthStart]);
-      const label = [line.idVertical, line.nombre, line.zona, line.codMercado, displayMonth(monthStart)].filter(Boolean).join(' · ');
-      const existing = values.get(key);
-      values.set(key, {
-        line: existing?.line || label,
-        value: (existing?.value || 0) + value,
-        cell: existing?.cell || line.cells.get(date),
-      });
+    lines.set(key, {
+      key,
+      line: existing?.line || line,
+      verticalId,
+      medio,
+      zona,
+      country,
+      monthStart,
+      facturacion,
+      margen: margenTotal,
+      cogs,
+      cogsRate: facturacion !== 0 ? 1 - margenTotal / facturacion : null,
     });
   });
 
-  return values;
+  return { fyStartYear, lines };
 }
 
-function compareValueMaps(
-  label: string,
-  leftValues: Map<string, ValueEntry>,
-  rightValues: Map<string, ValueEntry>,
-  sheetLeft: string | null,
-  sheetRight: string | null,
-  tolerance: number
-): BudgetDiffSummary {
-  const keys = Array.from(new Set([...Array.from(leftValues.keys()), ...Array.from(rightValues.keys())]));
-  const lineDiffs: BudgetDiffLine[] = [];
-  const issues: BudgetDiffIssue[] = [];
-  let totalLeft = 0;
-  let totalRight = 0;
-  let checkedCells = 0;
-  let issueCount = 0;
-
-  keys.forEach((key) => {
-    const left = leftValues.get(key);
-    const right = rightValues.get(key);
-    const leftValue = left?.value || 0;
-    const rightValue = right?.value || 0;
-    const diff = rightValue - leftValue;
-    const line = right?.line || left?.line || key;
-    const keyParts = key.split('|');
-    const date = keyParts[keyParts.length - 1];
-
-    totalLeft += leftValue;
-    totalRight += rightValue;
-    if (Math.abs(leftValue) > tolerance || Math.abs(rightValue) > tolerance) checkedCells += 1;
-    if (Math.abs(diff) <= tolerance) return;
-
-    issueCount += 1;
-    lineDiffs.push({ key: `${label}|${key}`, line, leftTotal: leftValue, rightTotal: rightValue, diff, absDiff: Math.abs(diff) });
-    issues.push({ key: `${label}|${key}`, line, date, leftCell: left?.cell, rightCell: right?.cell, leftValue, rightValue, diff });
-  });
-
-  return {
-    ok: issueCount === 0,
-    sheetLeft,
-    sheetRight,
-    label,
-    totalLeft,
-    totalRight,
-    diff: totalRight - totalLeft,
-    checkedCells,
-    issueCount,
-    lines: lineDiffs.sort((a, b) => b.absDiff - a.absDiff).slice(0, 30),
-    issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
-  };
-}
-
-function compareLoadedToMonthlyPlan(left: WorkbookUpload, right: WorkbookUpload, tolerance: number): CombinedBudgetDiffSummary | null {
-  const plan = plannedMonthlyValues(right);
-  if (!plan) return null;
-
-  const factSheet = findFacturacionSheet(left);
-  const cogsSheet = findCogsSheet(left);
-  const summaries = [
-    compareValueMaps('Facturación mensual', loadedMonthlyValues(factSheet, plan.fyStartYear), plan.facturacion, factSheet?.name || null, plan.sheetName, tolerance),
-    compareValueMaps('COGS mensual', loadedMonthlyValues(cogsSheet, plan.fyStartYear), plan.cogs, cogsSheet?.name || null, plan.sheetName, tolerance),
-  ];
-
-  return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'monthly-plan', fyStartYear: plan.fyStartYear };
-}
-
-function buildMonthlyFacturacionCorrection(
-  left: WorkbookUpload | null,
-  right: WorkbookUpload | null,
-  tolerance: number
-): MonthlyFacturacionCorrectionSummary | null {
-  if (!left || !right) return null;
-
-  const plan = plannedMonthlyValues(right);
-  const factSheet = findFacturacionSheet(left);
-  if (!plan || !factSheet) return null;
-
-  const headerIndex = findWideHeaderIndex(factSheet.rows);
-  if (headerIndex < 0) return null;
-
-  const fyStart = `${plan.fyStartYear}-04-01`;
-  const fyEnd = `${plan.fyStartYear + 1}-03-31`;
-  const header = factSheet.rows[headerIndex];
-  const dateColumns = header
-    .map((cell, index) => ({ index, date: formatDateKey(cell) }))
-    .filter((item): item is { index: number; date: string } => !!item.date && item.date >= fyStart && item.date <= fyEnd);
-  const columnsByMonth = new Map<string, Array<{ index: number; date: string }>>();
-  dateColumns.forEach((column) => {
-    const monthStart = `${column.date.slice(0, 7)}-01`;
-    const existing = columnsByMonth.get(monthStart) || [];
-    existing.push(column);
-    columnsByMonth.set(monthStart, existing);
-  });
-
-  const correctedRows = factSheet.rows.map((row) => [...row]);
-  const changes: MonthlyFacturacionCorrectionChange[] = [];
-  const skippedLines: string[] = [];
-  const seenKeys = new Set<string>();
-  let changeCount = 0;
-
-  factSheet.rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
-    const rowIndex = headerIndex + 1 + rowOffset;
-    const idVertical = String(row[0] ?? '').trim();
-    const nombre = String(row[1] ?? '').trim();
-    const zona = String(row[2] ?? '').trim();
-    const codMercado = String(row[3] ?? '').trim();
-    if (!lineKey([idVertical, nombre, zona, codMercado]).replace(/\|/g, '')) return;
-
-    columnsByMonth.forEach((columns, monthStart) => {
-      const key = lineKey([idVertical, nombre, normalizeZoneForCompare(zona), normalizeCountryCode(codMercado), monthStart]);
-      const target = plan.facturacion.get(key)?.value || 0;
-      const numericColumns = columns
-        .map((column) => ({ ...column, value: numericValue(row[column.index]) }))
-        .filter((column): column is { index: number; date: string; value: number } => column.value !== null);
-      const current = numericColumns.reduce((sum, column) => sum + column.value, 0);
-      const diff = target - current;
-
-      if (Math.abs(current) > tolerance || Math.abs(target) > tolerance) seenKeys.add(key);
-      if (Math.abs(diff) <= tolerance) return;
-
-      const line = [idVertical, nombre, zona, codMercado, displayMonth(monthStart)].filter(Boolean).join(' · ');
-
-      if (numericColumns.length === 0 && Math.abs(target) > tolerance) {
-        skippedLines.push(`${line}: sin reparto diario en el cargado`);
-        return;
-      }
-
-      if (Math.abs(target) <= tolerance) {
-        numericColumns.forEach((column) => {
-          correctedRows[rowIndex][column.index] = null;
-        });
-        changeCount += 1;
-        if (changes.length < 120) {
-          changes.push({ key, line, month: monthStart, current, expected: 0, diff: -current, action: 'Vaciar mes' });
-        }
-        return;
-      }
-
-      if (Math.abs(current) <= tolerance) {
-        skippedLines.push(`${line}: total actual 0, no puedo escalar reparto diario`);
-        return;
-      }
-
-      const factor = target / current;
-      let roundedTotal = 0;
-      numericColumns.forEach((column) => {
-        const nextValue = roundCurrency(column.value * factor);
-        correctedRows[rowIndex][column.index] = nextValue;
-        roundedTotal += nextValue;
-      });
-
-      const adjustment = roundCurrency(target - roundedTotal);
-      if (Math.abs(adjustment) > 0 && numericColumns.length > 0) {
-        const lastColumn = numericColumns[numericColumns.length - 1];
-        correctedRows[rowIndex][lastColumn.index] = roundCurrency((numericValue(correctedRows[rowIndex][lastColumn.index]) || 0) + adjustment);
-      }
-
-      changeCount += 1;
-      if (changes.length < 120) {
-        changes.push({ key, line, month: monthStart, current, expected: target, diff, action: 'Escalar reparto diario' });
-      }
-    });
-  });
-
-  plan.facturacion.forEach((target, key) => {
-    if (seenKeys.has(key) || Math.abs(target.value) <= tolerance) return;
-    skippedLines.push(`${target.line}: no existe línea equivalente en el cargado`);
-  });
-
-  return {
-    ok: skippedLines.length === 0,
-    sheetName: factSheet.name,
-    rows: correctedRows,
-    changeCount,
-    changes,
-    skippedLines: Array.from(new Set(skippedLines)).slice(0, 80),
-    fyStartYear: plan.fyStartYear,
-  };
-}
-
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function roundCurrency(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function fiscalYearFromDate(date: string): number {
-  const year = parseInt(date.slice(0, 4), 10);
-  const month = parseInt(date.slice(5, 7), 10);
-  return month >= 4 ? year : year - 1;
-}
-
-function buildCogsCorrection(workbook: WorkbookUpload | null, tolerance: number, fiscalYears?: number[]): CogsCorrectionSummary | null {
-  if (!workbook) return null;
-
+function buildDailyMonthTotals(
+  workbook: WorkbookUpload,
+  fyStartYear: number
+): {
+  factSheetName: string | null;
+  cogsSheetName: string | null;
+  months: Map<string, DailyMonthLine>;
+  dayIssues: CogsDayIssue[];
+} {
   const factSheet = findFacturacionSheet(workbook);
   const cogsSheet = findCogsSheet(workbook);
-  if (!factSheet || !cogsSheet) {
-    return { ok: false, sheetName: cogsSheet?.name || null, rows: [], changeCount: 0, changes: [], skippedLines: ['No encuentro Hoja1 o COGS con formato ancho.'] };
+  const fyStart = `${fyStartYear}-04-01`;
+  const fyEnd = `${fyStartYear + 1}-03-31`;
+  const months = new Map<string, DailyMonthLine>();
+  const dayIssues: CogsDayIssue[] = [];
+
+  const ensureMonth = (key: string, line: string, monthStart: string) => {
+    const existing = months.get(key);
+    if (existing) return existing;
+    const created: DailyMonthLine = {
+      key,
+      line: `${line} · ${displayMonth(monthStart)}`,
+      facturacion: 0,
+      cogs: 0,
+      daysWithFact: 0,
+      daysWithCogs: 0,
+      daysFactWithoutCogs: 0,
+      daysCogsWithoutFact: 0,
+    };
+    months.set(key, created);
+    return created;
+  };
+
+  const factByLineDate = new Map<string, { value: number | null; cell?: string; label: string }>();
+  const cogsByLineDate = new Map<string, { value: number | null; cell?: string; label: string }>();
+
+  if (factSheet) {
+    const headerIndex = findWideHeaderIndex(factSheet.rows);
+    if (headerIndex >= 0) {
+      const header = factSheet.rows[headerIndex];
+      const dateColumns = header
+        .map((cell, index) => ({ index, date: formatDateKey(cell) }))
+        .filter((item): item is { index: number; date: string } => (
+          !!item.date && item.date >= fyStart && item.date <= fyEnd
+        ));
+
+      factSheet.rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
+        const idVertical = String(row[0] ?? '').trim();
+        const nombre = String(row[1] ?? '').trim();
+        const zona = String(row[2] ?? '').trim();
+        const codMercado = String(row[3] ?? '').trim();
+        const baseKey = lineKey([idVertical, nombre, normalizeZoneForCompare(zona), normalizeCountryCode(codMercado)]);
+        if (!baseKey.replace(/\|/g, '')) return;
+        const label = [idVertical, nombre, zona, codMercado].filter(Boolean).join(' · ');
+
+        dateColumns.forEach(({ index, date }) => {
+          const value = numericValue(row[index]);
+          const monthStart = `${date.slice(0, 7)}-01`;
+          const key = `${baseKey}|${monthStart}`;
+          const month = ensureMonth(key, label, monthStart);
+          if (value !== null) {
+            month.facturacion += value;
+            month.daysWithFact += 1;
+          }
+          factByLineDate.set(`${baseKey}|${date}`, {
+            value,
+            cell: `${excelColumnName(index)}${headerIndex + 2 + rowOffset}`,
+            label,
+          });
+        });
+      });
+    }
   }
+
+  if (cogsSheet) {
+    const headerIndex = findWideHeaderIndex(cogsSheet.rows);
+    if (headerIndex >= 0) {
+      const header = cogsSheet.rows[headerIndex];
+      const dateColumns = header
+        .map((cell, index) => ({ index, date: formatDateKey(cell) }))
+        .filter((item): item is { index: number; date: string } => (
+          !!item.date && item.date >= fyStart && item.date <= fyEnd
+        ));
+
+      cogsSheet.rows.slice(headerIndex + 1).forEach((row, rowOffset) => {
+        const idVertical = String(row[0] ?? '').trim();
+        const nombre = String(row[1] ?? '').trim();
+        const zona = String(row[2] ?? '').trim();
+        const codMercado = String(row[3] ?? '').trim();
+        const baseKey = lineKey([idVertical, nombre, normalizeZoneForCompare(zona), normalizeCountryCode(codMercado)]);
+        if (!baseKey.replace(/\|/g, '')) return;
+        const label = [idVertical, nombre, zona, codMercado].filter(Boolean).join(' · ');
+
+        dateColumns.forEach(({ index, date }) => {
+          const value = numericValue(row[index]);
+          const monthStart = `${date.slice(0, 7)}-01`;
+          const key = `${baseKey}|${monthStart}`;
+          const month = ensureMonth(key, label, monthStart);
+          if (value !== null) {
+            month.cogs += value;
+            month.daysWithCogs += 1;
+          }
+          cogsByLineDate.set(`${baseKey}|${date}`, {
+            value,
+            cell: `${excelColumnName(index)}${headerIndex + 2 + rowOffset}`,
+            label,
+          });
+        });
+      });
+    }
+  }
+
+  const allDayKeys = new Set([...Array.from(factByLineDate.keys()), ...Array.from(cogsByLineDate.keys())]);
+  allDayKeys.forEach((dayKey) => {
+    const fact = factByLineDate.get(dayKey);
+    const cogs = cogsByLineDate.get(dayKey);
+    const factValue = fact?.value ?? null;
+    const cogsValue = cogs?.value ?? null;
+    const hasFact = factValue !== null;
+    const hasCogs = cogsValue !== null;
+    if (hasFact === hasCogs) return;
+
+    const [baseKey, date] = [dayKey.slice(0, dayKey.lastIndexOf('|')), dayKey.slice(dayKey.lastIndexOf('|') + 1)];
+    const monthStart = `${date.slice(0, 7)}-01`;
+    const month = months.get(`${baseKey}|${monthStart}`);
+    if (month) {
+      if (hasFact && !hasCogs) month.daysFactWithoutCogs += 1;
+      if (!hasFact && hasCogs) month.daysCogsWithoutFact += 1;
+    }
+
+    dayIssues.push({
+      key: dayKey,
+      line: fact?.label || cogs?.label || baseKey,
+      date,
+      type: hasFact && !hasCogs ? 'Facturación sin COGS' : 'COGS sin facturación',
+      facturacion: factValue,
+      cogs: cogsValue,
+      cellFact: fact?.cell,
+      cellCogs: cogs?.cell,
+    });
+  });
+
+  months.forEach((month) => {
+    month.facturacion = roundMoney(month.facturacion);
+    month.cogs = roundMoney(month.cogs);
+  });
+
+  return {
+    factSheetName: factSheet?.name || null,
+    cogsSheetName: cogsSheet?.name || null,
+    months,
+    dayIssues: dayIssues.sort((a, b) => a.date.localeCompare(b.date) || a.line.localeCompare(b.line, 'es')),
+  };
+}
+
+function desfaseInstruction(diff: number): string {
+  const abs = Math.abs(diff);
+  if (abs <= CENTIMO) return 'Cuadra al céntimo';
+  if (diff > 0) return `En el diario faltan ${formatCurrency(abs)} respecto al budget`;
+  return `En el diario sobran ${formatCurrency(abs)} respecto al budget`;
+}
+
+function buildFactMismatches(
+  plan: Map<string, PlanMonthLine>,
+  daily: Map<string, DailyMonthLine>
+): FactMismatch[] {
+  const keys = Array.from(new Set([...Array.from(plan.keys()), ...Array.from(daily.keys())]));
+
+  return keys.map((key) => {
+    const planLine = plan.get(key);
+    const dailyLine = daily.get(key);
+    const budget = planLine?.facturacion || 0;
+    const diario = dailyLine?.facturacion || 0;
+    const diff = roundMoney(budget - diario);
+    const monthStart = planLine?.monthStart || key.split('|').slice(-1)[0];
+    let status: FactMismatch['status'] = 'ok';
+    if (!planLine && dailyLine) status = 'solo-diario';
+    else if (planLine && !dailyLine) status = 'solo-budget';
+    else if (Math.abs(diff) > CENTIMO) status = 'mismatch';
+
+    return {
+      key,
+      line: planLine?.line || dailyLine?.line || key,
+      monthStart,
+      monthLabel: displayMonth(monthStart),
+      budget,
+      diario,
+      diff,
+      instruction: status === 'solo-budget'
+        ? 'Existe en budget general y no en diario'
+        : status === 'solo-diario'
+          ? 'Existe en diario (FY) y no en budget general'
+          : desfaseInstruction(diff),
+      status,
+    };
+  }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.line.localeCompare(b.line, 'es'));
+}
+
+function buildCogsMonthMismatches(
+  plan: Map<string, PlanMonthLine>,
+  daily: Map<string, DailyMonthLine>
+): CogsMonthMismatch[] {
+  const keys = Array.from(new Set([...Array.from(plan.keys()), ...Array.from(daily.keys())]));
+
+  return keys.map((key) => {
+    const planLine = plan.get(key);
+    const dailyLine = daily.get(key);
+    const budget = planLine?.cogs || 0;
+    const diario = dailyLine?.cogs || 0;
+    const diff = roundMoney(budget - diario);
+    const monthStart = planLine?.monthStart || key.split('|').slice(-1)[0];
+    let status: CogsMonthMismatch['status'] = 'ok';
+    if (!planLine && dailyLine) status = 'solo-diario';
+    else if (planLine && !dailyLine) status = 'solo-budget';
+    else if (Math.abs(diff) > CENTIMO) status = 'mismatch';
+
+    return {
+      key,
+      line: planLine?.line || dailyLine?.line || key,
+      monthStart,
+      monthLabel: displayMonth(monthStart),
+      budget,
+      diario,
+      diff,
+      instruction: status === 'solo-budget'
+        ? 'Existe en budget general y no en diario'
+        : status === 'solo-diario'
+          ? 'Existe en diario (FY) y no en budget general'
+          : desfaseInstruction(diff),
+      status,
+    };
+  }).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff) || a.line.localeCompare(b.line, 'es'));
+}
+
+function buildCogsCorrectionFromPlan(
+  dailyWorkbook: WorkbookUpload,
+  plan: Map<string, PlanMonthLine>,
+  fyStartYear: number
+): CogsCorrectionSummary | null {
+  const factSheet = findFacturacionSheet(dailyWorkbook);
+  const cogsSheet = findCogsSheet(dailyWorkbook);
+  if (!factSheet || !cogsSheet) return null;
 
   const factHeaderIndex = findWideHeaderIndex(factSheet.rows);
   const cogsHeaderIndex = findWideHeaderIndex(cogsSheet.rows);
-  if (factHeaderIndex < 0 || cogsHeaderIndex < 0) {
-    return { ok: false, sheetName: cogsSheet.name, rows: [], changeCount: 0, changes: [], skippedLines: ['No encuentro cabeceras válidas.'] };
-  }
+  if (factHeaderIndex < 0 || cogsHeaderIndex < 0) return null;
+
+  const fyStart = `${fyStartYear}-04-01`;
+  const fyEnd = `${fyStartYear + 1}-03-31`;
 
   const factHeader = factSheet.rows[factHeaderIndex];
   const cogsHeader = cogsSheet.rows[cogsHeaderIndex];
   const factDateColumns = new Map<string, number>();
   factHeader.forEach((cell, index) => {
     const date = formatDateKey(cell);
-    if (date) factDateColumns.set(date, index);
+    if (date && date >= fyStart && date <= fyEnd) factDateColumns.set(date, index);
   });
 
   const cogsDateColumns = cogsHeader
     .map((cell, index) => ({ index, date: formatDateKey(cell) }))
-    .filter((item): item is { index: number; date: string } => {
-      if (!item.date || !factDateColumns.has(item.date)) return false;
-      return !fiscalYears?.length || fiscalYears.includes(fiscalYearFromDate(item.date));
-    });
+    .filter((item): item is { index: number; date: string } => (
+      !!item.date && item.date >= fyStart && item.date <= fyEnd && factDateColumns.has(item.date)
+    ));
 
   const factRows = new Map<string, any[]>();
   factSheet.rows.slice(factHeaderIndex + 1).forEach((row) => {
-    const key = lineKey([row[0], row[1], row[2], row[3]]);
+    const key = lineKey([row[0], row[1], normalizeZoneForCompare(row[2]), normalizeCountryCode(row[3])]);
     if (key.replace(/\|/g, '')) factRows.set(key, row);
   });
 
+  const planByLineMonth = new Map<string, PlanMonthLine>();
+  plan.forEach((line) => {
+    const baseKey = lineKey([line.verticalId, line.medio, line.zona, line.country]);
+    planByLineMonth.set(`${baseKey}|${line.monthStart}`, line);
+  });
+
   const correctedRows = cogsSheet.rows.map((row) => [...row]);
-  const changes: CogsCorrectionChange[] = [];
   const skippedLines: string[] = [];
   let changeCount = 0;
 
   cogsSheet.rows.slice(cogsHeaderIndex + 1).forEach((cogsRow, rowOffset) => {
     const rowIndex = cogsHeaderIndex + 1 + rowOffset;
-    const key = lineKey([cogsRow[0], cogsRow[1], cogsRow[2], cogsRow[3]]);
-    if (!key.replace(/\|/g, '')) return;
+    const baseKey = lineKey([cogsRow[0], cogsRow[1], normalizeZoneForCompare(cogsRow[2]), normalizeCountryCode(cogsRow[3])]);
+    if (!baseKey.replace(/\|/g, '')) return;
 
-    const factRow = factRows.get(key);
-    const lineLabel = [cogsRow[0], cogsRow[1], cogsRow[2], cogsRow[3]].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
+    const factRow = factRows.get(baseKey);
+    const label = [cogsRow[0], cogsRow[1], cogsRow[2], cogsRow[3]].map((value) => String(value ?? '').trim()).filter(Boolean).join(' · ');
+
     if (!factRow) {
-      skippedLines.push(`${lineLabel}: sin línea de facturación`);
+      skippedLines.push(`${label}: sin línea de facturación`);
       return;
     }
 
-    const ratiosByFiscalYear = new Map<number, number[]>();
-    cogsDateColumns.forEach(({ index, date }) => {
-      const factIndex = factDateColumns.get(date);
-      if (factIndex === undefined) return;
-      const fact = numericValue(factRow[factIndex]);
-      const cogs = numericValue(cogsRow[index]);
-      if (fact !== null && fact !== 0 && cogs !== null) {
-        const fy = fiscalYearFromDate(date);
-        const ratios = ratiosByFiscalYear.get(fy) || [];
-        ratios.push(cogs / fact);
-        ratiosByFiscalYear.set(fy, ratios);
-      }
-    });
-
-    let skippedByRate = false;
+    const monthBuckets = new Map<string, Array<{ index: number; date: string; expected: number | null }>>();
+    let sawPlan = false;
 
     cogsDateColumns.forEach(({ index, date }) => {
       const factIndex = factDateColumns.get(date);
       if (factIndex === undefined) return;
+      const monthStart = `${date.slice(0, 7)}-01`;
+      const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
+      if (!planLine || planLine.cogsRate === null) return;
+
+      sawPlan = true;
       const fact = numericValue(factRow[factIndex]);
-      const current = numericValue(cogsRow[index]);
-      const cogsRate = median(ratiosByFiscalYear.get(fiscalYearFromDate(date)) || []);
-      let expected: number | null = null;
-      let shouldEvaluate = true;
-
-      if (fact === null) {
-        expected = null;
-      } else if (fact === 0) {
-        expected = 0;
-      } else if (cogsRate !== null) {
-        expected = roundCurrency(fact * cogsRate);
-      } else {
-        shouldEvaluate = false;
-        skippedByRate = true;
-      }
-
-      if (!shouldEvaluate) return;
-
-      const changed = expected === null
-        ? current !== null
-        : current === null || Math.abs(current - expected) > tolerance;
-      if (!changed) return;
-
-      correctedRows[rowIndex][index] = expected === null ? '' : expected;
-      changeCount += 1;
-      if (changes.length < 150) {
-        changes.push({
-          key: `${key}|${date}`,
-          line: lineLabel,
-          date,
-          cell: `${excelColumnName(index)}${rowIndex + 1}`,
-          current,
-          expected,
-          facturacion: fact,
-          cogsRate,
-        });
-      }
+      const expected = fact === null ? null : roundMoney(fact * planLine.cogsRate);
+      const bucket = monthBuckets.get(monthStart) || [];
+      bucket.push({ index, date, expected });
+      monthBuckets.set(monthStart, bucket);
     });
 
-    if (skippedByRate) skippedLines.push(`${lineLabel}: sin porcentaje COGS inferible`);
+    if (!sawPlan) {
+      skippedLines.push(`${label}: sin % COGS en budget general para el FY`);
+      return;
+    }
+
+    monthBuckets.forEach((bucket, monthStart) => {
+      const planLine = planByLineMonth.get(`${baseKey}|${monthStart}`);
+      const filled = bucket.filter((item) => item.expected !== null) as Array<{ index: number; date: string; expected: number }>;
+      if (planLine && filled.length > 0) {
+        const currentSum = filled.reduce((sum, item) => sum + item.expected, 0);
+        const adjustment = roundMoney(planLine.cogs - currentSum);
+        if (Math.abs(adjustment) > 0) {
+          const last = filled[filled.length - 1];
+          last.expected = roundMoney(last.expected + adjustment);
+        }
+      }
+
+      bucket.forEach((item) => {
+        if (!planByLineMonth.has(`${baseKey}|${monthStart}`)) return;
+        const current = numericValue(correctedRows[rowIndex][item.index]);
+        const next = item.expected;
+        const changed = next === null ? current !== null : current === null || Math.abs(current - next) > CENTIMO;
+        if (!changed) return;
+        correctedRows[rowIndex][item.index] = next === null ? '' : next;
+        changeCount += 1;
+      });
+    });
   });
 
   return {
-    ok: skippedLines.length === 0,
-    sheetName: cogsSheet.name,
     rows: correctedRows,
+    sheetName: cogsSheet.name,
     changeCount,
-    changes,
     skippedLines: Array.from(new Set(skippedLines)).slice(0, 80),
   };
 }
 
-function validateCogs(workbook: WorkbookUpload | null, fyStartYear: number, tolerance: number): CogsValidation | null {
-  if (!workbook) return null;
-
-  const factSheet = findFacturacionSheet(workbook);
-  const cogsSheet = findCogsSheet(workbook);
-  if (!factSheet || !cogsSheet) {
-    return {
-      ok: false,
-      sheetFacturacion: factSheet?.name || null,
-      sheetCogs: cogsSheet?.name || null,
-      checkedCells: 0,
-      issueCount: 1,
-      totalFacturacion: 0,
-      totalCogs: 0,
-      lines: [],
-      issues: [{ key: 'missing-sheet', type: 'No encuentro Hoja1 o COGS con formato ancho', line: workbook.fileName }],
-    };
-  }
-
-  const factLines = parseWideSheet(factSheet.rows, fyStartYear);
-  const cogsLines = parseWideSheet(cogsSheet.rows, fyStartYear);
-  const issues: CogsIssue[] = [];
-  const lines: CogsLineSummary[] = [];
-  let checkedCells = 0;
-  let totalFacturacion = 0;
-  let totalCogs = 0;
-
-  cogsLines.forEach((cogsLine, key) => {
-    const factLine = factLines.get(key);
-    const lineLabel = [cogsLine.idVertical, cogsLine.nombre, cogsLine.zona, cogsLine.codMercado].filter(Boolean).join(' · ');
-    if (!factLine) {
-      issues.push({ key: `${key}|missing-fact`, type: 'Línea COGS sin línea de facturación', line: lineLabel });
-      return;
-    }
-
-    const ratios: number[] = [];
-    let lineFacturacion = 0;
-    let lineCogs = 0;
-    let lineChecks = 0;
-    let lineIssues = 0;
-
-    cogsLine.values.forEach((rawCogs, date) => {
-      const rawFact = factLine.values.get(date);
-      const fact = numericValue(rawFact);
-      const cogs = numericValue(rawCogs);
-      const factBlank = fact === null;
-      const cogsBlank = cogs === null;
-
-      if (factBlank && cogsBlank) return;
-      checkedCells += 1;
-      lineChecks += 1;
-      lineFacturacion += fact || 0;
-      lineCogs += cogs || 0;
-      totalFacturacion += fact || 0;
-      totalCogs += cogs || 0;
-
-      if (factBlank && !cogsBlank) {
-        lineIssues += 1;
-        issues.push({ key: `${key}|${date}|blank-fact`, type: 'COGS con facturación vacía', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: null, cogs });
-        return;
-      }
-
-      if (!factBlank && cogsBlank) {
-        lineIssues += 1;
-        issues.push({ key: `${key}|${date}|blank-cogs`, type: 'Facturación con COGS vacío', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: fact, cogs: null });
-        return;
-      }
-
-      if (!fact || fact === 0) {
-        if (Math.abs(cogs || 0) > tolerance) {
-          lineIssues += 1;
-          issues.push({ key: `${key}|${date}|zero-fact`, type: 'Facturación 0 con COGS distinto de 0', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: fact, cogs });
-        }
-        return;
-      }
-
-      if (cogs !== null) ratios.push(cogs / fact);
-    });
-
-    const cogsRate = median(ratios);
-
-    if (cogsRate !== null) {
-      cogsLine.values.forEach((rawCogs, date) => {
-        const fact = numericValue(factLine.values.get(date));
-        const cogs = numericValue(rawCogs);
-        if (fact === null || cogs === null || fact === 0) return;
-
-        const expected = fact * cogsRate;
-        const diff = cogs - expected;
-        const ratio = cogs / fact;
-        if (Math.abs(diff) > tolerance && Math.abs(ratio - cogsRate) > RATE_TOLERANCE) {
-          lineIssues += 1;
-          if (issues.length < 250) {
-            issues.push({ key: `${key}|${date}|rate`, type: 'COGS no mantiene el porcentaje de la línea', line: lineLabel, date, cell: cogsLine.cells.get(date), facturacion: fact, cogs, expected, diff, ratio });
-          }
-        }
-      });
-    }
-
-    lines.push({
-      key,
-      line: lineLabel,
-      cogsRate,
-      facturacion: lineFacturacion,
-      cogs: lineCogs,
-      checks: lineChecks,
-      issues: lineIssues,
-    });
-  });
-
-  factLines.forEach((factLine, key) => {
-    if (cogsLines.has(key)) return;
-    const hasValues = Array.from(factLine.values.values()).some((value) => numericValue(value) !== null);
-    if (!hasValues) return;
-    const lineLabel = [factLine.idVertical, factLine.nombre, factLine.zona, factLine.codMercado].filter(Boolean).join(' · ');
-    issues.push({ key: `${key}|missing-cogs`, type: 'Línea facturación sin línea COGS', line: lineLabel });
-  });
-
-  return {
-    ok: issues.length === 0,
-    sheetFacturacion: factSheet.name,
-    sheetCogs: cogsSheet.name,
-    checkedCells,
-    issueCount: issues.length,
-    totalFacturacion,
-    totalCogs,
-    lines: lines.sort((a, b) => b.issues - a.issues || Math.abs(b.cogs) - Math.abs(a.cogs)).slice(0, 20),
-    issues: issues.slice(0, 80),
-  };
-}
-
-function validateCogsAllFiscalYears(workbook: WorkbookUpload | null, tolerance: number, fiscalYears?: number[]): CogsValidation | null {
-  if (!workbook) return null;
-  const years = fiscalYears?.length ? fiscalYears : getFiscalYearsInWorkbook(workbook);
-  if (years.length === 0) return validateCogs(workbook, new Date().getFullYear(), tolerance);
-
-  const validations = years
-    .map((year) => ({ year, validation: validateCogs(workbook, year, tolerance) }))
-    .filter((item): item is { year: number; validation: CogsValidation } => !!item.validation);
-
-  if (validations.length === 0) return null;
-
-  return {
-    ok: validations.every((item) => item.validation.ok),
-    sheetFacturacion: validations[0].validation.sheetFacturacion,
-    sheetCogs: validations[0].validation.sheetCogs,
-    checkedCells: validations.reduce((sum, item) => sum + item.validation.checkedCells, 0),
-    issueCount: validations.reduce((sum, item) => sum + item.validation.issueCount, 0),
-    totalFacturacion: validations.reduce((sum, item) => sum + item.validation.totalFacturacion, 0),
-    totalCogs: validations.reduce((sum, item) => sum + item.validation.totalCogs, 0),
-    lines: validations
-      .flatMap((item) => item.validation.lines.map((line) => ({ ...line, key: `${item.year}|${line.key}`, line: `FY ${item.year}/${String(item.year + 1).slice(-2)} · ${line.line}` })))
-      .sort((a, b) => b.issues - a.issues || Math.abs(b.cogs) - Math.abs(a.cogs))
-      .slice(0, 30),
-    issues: validations
-      .flatMap((item) => item.validation.issues.map((issue) => ({ ...issue, key: `${item.year}|${issue.key}`, line: `FY ${item.year}/${String(item.year + 1).slice(-2)} · ${issue.line}` })))
-      .slice(0, 120),
-  };
-}
-
-function compareWideValues(
-  label: string,
-  leftSheet: { name: string; rows: any[][] } | null,
-  rightSheet: { name: string; rows: any[][] } | null,
-  dates: string[],
-  tolerance: number
-): BudgetDiffSummary {
-  if (!leftSheet || !rightSheet) {
-    return {
-      ok: false,
-      sheetLeft: leftSheet?.name || null,
-      sheetRight: rightSheet?.name || null,
-      label,
-      totalLeft: 0,
-      totalRight: 0,
-      diff: 0,
-      checkedCells: 0,
-      issueCount: 1,
-      lines: [],
-      issues: [{ key: `${label}|missing-sheet`, line: `No encuentro hoja ${label} con formato ancho`, leftValue: 0, rightValue: 0, diff: 0 }],
-    };
-  }
-
-  const leftLines = parseWideSheetForDates(leftSheet.rows, dates);
-  const rightLines = parseWideSheetForDates(rightSheet.rows, dates);
-  const keys = Array.from(new Set([...Array.from(leftLines.keys()), ...Array.from(rightLines.keys())]));
-  const lineDiffs: BudgetDiffLine[] = [];
-  const issues: BudgetDiffIssue[] = [];
-  let totalLeft = 0;
-  let totalRight = 0;
-  let checkedCells = 0;
-  let issueCount = 0;
-
-  keys.forEach((key) => {
-    const leftLine = leftLines.get(key);
-    const rightLine = rightLines.get(key);
-    const line = leftLine || rightLine;
-    if (!line) return;
-
-    const lineLabel = [line.idVertical, line.nombre, line.zona, line.codMercado].filter(Boolean).join(' · ');
-    let leftTotal = 0;
-    let rightTotal = 0;
-    let significantDiff = 0;
-    let absDiff = 0;
-
-    dates.forEach((date) => {
-      const leftValue = numericValue(leftLine?.values.get(date)) || 0;
-      const rightValue = numericValue(rightLine?.values.get(date)) || 0;
-      const diff = rightValue - leftValue;
-      if (Math.abs(leftValue) > tolerance || Math.abs(rightValue) > tolerance) checkedCells += 1;
-      leftTotal += leftValue;
-      rightTotal += rightValue;
-
-      if (Math.abs(diff) > tolerance) {
-        issueCount += 1;
-        significantDiff += diff;
-        absDiff += Math.abs(diff);
-        issues.push({
-          key: `${label}|${key}|${date}`,
-          line: lineLabel,
-          date,
-          leftCell: leftLine?.cells.get(date),
-          rightCell: rightLine?.cells.get(date),
-          leftValue,
-          rightValue,
-          diff,
-        });
-      }
-    });
-
-    totalLeft += leftTotal;
-    totalRight += rightTotal;
-    if (absDiff > tolerance) {
-      lineDiffs.push({ key: `${label}|${key}`, line: lineLabel, leftTotal, rightTotal, diff: significantDiff, absDiff });
-    }
-  });
-
-  return {
-    ok: issueCount === 0,
-    sheetLeft: leftSheet.name,
-    sheetRight: rightSheet.name,
-    label,
-    totalLeft,
-    totalRight,
-    diff: totalRight - totalLeft,
-    checkedCells,
-    issueCount,
-    lines: lineDiffs.sort((a, b) => b.absDiff - a.absDiff).slice(0, 30),
-    issues: issues.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 100),
-  };
-}
-function compareLoadedVsPlanned(left: WorkbookUpload | null, right: WorkbookUpload | null, tolerance: number, allowMonthlyPlan = false): CombinedBudgetDiffSummary | null {
-  if (!left || !right) return null;
-
-  if (allowMonthlyPlan) {
-    const monthlyPlanComparison = compareLoadedToMonthlyPlan(left, right, tolerance);
-    if (monthlyPlanComparison) return monthlyPlanComparison;
-    return {
-      ok: false,
-      summaries: [],
-      mode: 'monthly-plan',
-      error: 'No detecto el formato mensual previsto en el segundo archivo. Necesito columnas # Mes, Vertical, Medio de Venta, País, Zona, Importe y Margen Bruto.',
-    };
-  }
-
-  const factRight = findFacturacionSheet(right);
-  const cogsRight = findCogsSheet(right);
-  const factDates = factRight ? getWideSheetDates(factRight.rows) : [];
-  const cogsDates = cogsRight ? getWideSheetDates(cogsRight.rows) : [];
-  const summaries = [
-    compareWideValues('Facturación', findFacturacionSheet(left), factRight, factDates, tolerance),
-    compareWideValues('COGS', findCogsSheet(left), cogsRight, cogsDates, tolerance),
-  ];
-
-  return { ok: summaries.every((summary) => summary.ok), summaries, mode: 'daily' };
-}
-
-function StatusPill({ ok }: { ok: boolean }) {
+function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${ok ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${
+      ok ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'
+    }`}>
       {ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
-      {ok ? 'OK' : 'Revisar'}
+      {label}
     </span>
   );
 }
 
-function SortHeader<T extends string>({
-  label,
-  sortKey,
-  activeKey,
-  direction,
-  onSort,
-  align = 'left',
-}: {
-  label: string;
-  sortKey: T;
-  activeKey: T;
-  direction: SortDirection;
-  onSort: (key: T) => void;
-  align?: 'left' | 'right';
-}) {
-  const isActive = activeKey === sortKey;
-  return (
-    <button
-      type="button"
-      onClick={() => onSort(sortKey)}
-      className={`inline-flex w-full items-center gap-1 ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'} font-medium transition hover:text-[var(--text-primary)]`}
-    >
-      {label}
-      <span className="text-[10px] text-[var(--text-muted)]">{isActive ? (direction === 'asc' ? '↑' : '↓') : '↕'}</span>
-    </button>
-  );
-}
-
 export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorToolProps) {
-  const [leftWorkbook, setLeftWorkbook] = useState<WorkbookUpload | null>(null);
-  const [rightWorkbook, setRightWorkbook] = useState<WorkbookUpload | null>(null);
+  const [dailyWorkbook, setDailyWorkbook] = useState<WorkbookUpload | null>(null);
+  const [planWorkbook, setPlanWorkbook] = useState<WorkbookUpload | null>(null);
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
-  const [moneyTolerance, setMoneyTolerance] = useState(DEFAULT_MONEY_TOLERANCE);
-  const [cogsBaseFiscalYear, setCogsBaseFiscalYear] = useState(2025);
-  const [lineSort, setLineSort] = useState<{ key: DiffLineSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
-  const [issueSort, setIssueSort] = useState<{ key: DiffIssueSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
-  const cogsFiscalYears = useMemo(() => [cogsBaseFiscalYear, cogsBaseFiscalYear + 1], [cogsBaseFiscalYear]);
+  const [query, setQuery] = useState('');
+  const [onlyMismatches, setOnlyMismatches] = useState(true);
+  const [sort, setSort] = useState<{ key: FactSortKey; direction: SortDirection }>({ key: 'diff', direction: 'desc' });
 
-  const combinedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
-  const loadedVsPlannedDiff = useMemo(() => compareLoadedVsPlanned(leftWorkbook, rightWorkbook, moneyTolerance, true), [leftWorkbook, rightWorkbook, moneyTolerance]);
-  const leftCogs = useMemo(() => validateCogsAllFiscalYears(leftWorkbook, moneyTolerance, cogsFiscalYears), [leftWorkbook, moneyTolerance, cogsFiscalYears]);
-  const cogsCorrection = useMemo(() => buildCogsCorrection(leftWorkbook, moneyTolerance), [leftWorkbook, moneyTolerance]);
-  const monthlyFacturacionCorrection = useMemo(() => buildMonthlyFacturacionCorrection(leftWorkbook, rightWorkbook, moneyTolerance), [leftWorkbook, rightWorkbook, moneyTolerance]);
+  const plan = useMemo(() => (planWorkbook ? buildPlanLines(planWorkbook) : null), [planWorkbook]);
+  const daily = useMemo(() => {
+    if (!dailyWorkbook || !plan) return null;
+    return buildDailyMonthTotals(dailyWorkbook, plan.fyStartYear);
+  }, [dailyWorkbook, plan]);
 
-  const handleLoad = (side: 'left' | 'right') => (sheets: Record<string, any[][]>, fileName: string) => {
-    const workbook = { sheets, fileName };
-    if (side === 'left') setLeftWorkbook(workbook);
-    else setRightWorkbook(workbook);
-  };
+  const factRows = useMemo(() => {
+    if (!plan || !daily) return [];
+    return buildFactMismatches(plan.lines, daily.months);
+  }, [plan, daily]);
 
-  const updateLineSort = (key: DiffLineSortKey) => {
-    setLineSort((prev) => ({ key, direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc' }));
-  };
+  const cogsMonthRows = useMemo(() => {
+    if (!plan || !daily) return [];
+    return buildCogsMonthMismatches(plan.lines, daily.months);
+  }, [plan, daily]);
 
-  const updateIssueSort = (key: DiffIssueSortKey) => {
-    setIssueSort((prev) => ({ key, direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc' }));
+  const factOkCount = factRows.filter((row) => row.status === 'ok').length;
+  const factBadCount = factRows.length - factOkCount;
+  const factTotalDiff = roundMoney(factRows.reduce((sum, row) => sum + row.diff, 0));
+  const factSquared = factRows.length > 0 && factBadCount === 0;
+
+  const cogsMonthBad = cogsMonthRows.filter((row) => row.status !== 'ok');
+  const dayIssues = daily?.dayIssues || [];
+  const cogsOk = cogsMonthBad.length === 0 && dayIssues.length === 0;
+
+  const cogsCorrection = useMemo(() => {
+    if (!dailyWorkbook || !plan) return null;
+    return buildCogsCorrectionFromPlan(dailyWorkbook, plan.lines, plan.fyStartYear);
+  }, [dailyWorkbook, plan]);
+
+  const filteredFactRows = useMemo(() => {
+    const needle = normalizeText(query);
+    let rows = factRows;
+    if (onlyMismatches) rows = rows.filter((row) => row.status !== 'ok');
+    if (needle) rows = rows.filter((row) => normalizeText(row.line).includes(needle) || normalizeText(row.monthLabel).includes(needle));
+
+    const direction = sort.direction === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sort.key === 'line') return a.line.localeCompare(b.line, 'es') * direction;
+      if (sort.key === 'month') return a.monthStart.localeCompare(b.monthStart) * direction;
+      if (sort.key === 'budget') return (a.budget - b.budget) * direction;
+      if (sort.key === 'diario') return (a.diario - b.diario) * direction;
+      return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
+    });
+  }, [factRows, onlyMismatches, query, sort]);
+
+  const filteredCogsMonthRows = useMemo(() => {
+    const needle = normalizeText(query);
+    let rows = cogsMonthRows;
+    if (onlyMismatches) rows = rows.filter((row) => row.status !== 'ok');
+    if (needle) rows = rows.filter((row) => normalizeText(row.line).includes(needle) || normalizeText(row.monthLabel).includes(needle));
+    return rows;
+  }, [cogsMonthRows, onlyMismatches, query]);
+
+  const filteredDayIssues = useMemo(() => {
+    const needle = normalizeText(query);
+    if (!needle) return dayIssues;
+    return dayIssues.filter((issue) => normalizeText(issue.line).includes(needle) || issue.date.includes(needle));
+  }, [dayIssues, query]);
+
+  const toggleSort = (key: FactSortKey) => {
+    setSort((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }));
   };
 
   const downloadCorrectedCogs = async () => {
-    if (!leftWorkbook || !cogsCorrection || cogsCorrection.rows.length === 0) return;
+    if (!dailyWorkbook || !cogsCorrection || cogsCorrection.rows.length === 0) return;
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(cogsCorrection.rows), 'COGS');
-    const baseName = leftWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
-    XLSX.writeFile(workbook, `${baseName}_COGS_corregido.xlsx`);
+    const baseName = dailyWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+    XLSX.writeFile(workbook, `${baseName}_COGS_FY_${plan?.fyStartYear || ''}.xlsx`);
   };
 
-  const downloadCorrectedMonthlyFacturacion = async () => {
-    if (!leftWorkbook || !monthlyFacturacionCorrection || monthlyFacturacionCorrection.rows.length === 0) return;
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(monthlyFacturacionCorrection.rows), 'Hoja1');
-    const baseName = leftWorkbook.fileName.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
-    XLSX.writeFile(workbook, `${baseName}_facturacion_corregida_FY_${monthlyFacturacionCorrection.fyStartYear || ''}.xlsx`);
-  };
+  const fyLabel = plan
+    ? `FY ${plan.fyStartYear}/${String(plan.fyStartYear + 1).slice(-2)} (abr ${plan.fyStartYear} – mar ${plan.fyStartYear + 1})`
+    : null;
 
-  const sortedDiffLines = (lines: BudgetDiffLine[]) => [...lines].sort((a, b) => {
-    const direction = lineSort.direction === 'asc' ? 1 : -1;
-    if (lineSort.key === 'line') return a.line.localeCompare(b.line, 'es') * direction;
-    if (lineSort.key === 'left') return (a.leftTotal - b.leftTotal) * direction;
-    if (lineSort.key === 'right') return (a.rightTotal - b.rightTotal) * direction;
-    return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
-  });
-
-  const sortedDiffIssues = (issues: BudgetDiffIssue[]) => [...issues].sort((a, b) => {
-    const direction = issueSort.direction === 'asc' ? 1 : -1;
-    if (issueSort.key === 'line') return a.line.localeCompare(b.line, 'es') * direction;
-    if (issueSort.key === 'date') return String(a.date || '').localeCompare(String(b.date || '')) * direction;
-    if (issueSort.key === 'left') return (a.leftValue - b.leftValue) * direction;
-    if (issueSort.key === 'right') return (a.rightValue - b.rightValue) * direction;
-    return (Math.abs(a.diff) - Math.abs(b.diff)) * direction;
-  });
-
-  const renderCogsValidation = (title: string, workbook: WorkbookUpload | null, validation: CogsValidation | null) => (
-    <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">COGS</p>
-          <h3 className="mt-1 text-lg font-semibold">{title}</h3>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">{workbook?.fileName || 'Archivo no cargado'}</p>
-        </div>
-        {validation && <StatusPill ok={validation.ok} />}
-      </div>
-
-      {!validation ? (
-        <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm text-[var(--text-secondary)]">Carga el archivo para validar COGS.</p>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Celdas revisadas</p>
-              <p className="mt-1 text-lg font-semibold">{validation.checkedCells.toLocaleString('de-DE')}</p>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Incidencias</p>
-              <p className={`mt-1 text-lg font-semibold ${validation.issueCount === 0 ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{validation.issueCount.toLocaleString('de-DE')}</p>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Facturación FY</p>
-              <p className="mt-1 text-lg font-semibold">{formatCurrency(validation.totalFacturacion)}</p>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">COGS FY</p>
-              <p className="mt-1 text-lg font-semibold">{formatCurrency(validation.totalCogs)}</p>
-            </div>
-          </div>
-
-          {cogsCorrection && (
-            <div className="rounded-md border border-[var(--border)]">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-3">
-                <div>
-                  <p className="text-sm font-semibold">COGS corregido</p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    La descarga corrige todos los FY presentes en el archivo. Facturación vacía deja COGS vacío, facturación 0 deja COGS 0 y el resto recalcula con el porcentaje de cada línea dentro de su FY.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={downloadCorrectedCogs}
-                  disabled={!cogsCorrection.rows.length}
-                  className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Download className="h-4 w-4" />
-                  Descargar COGS bueno
-                </button>
-              </div>
-              <div className="grid gap-3 border-b border-[var(--border)] p-3 md:grid-cols-3">
-                <div>
-                  <p className="text-xs text-[var(--text-secondary)]">Cambios propuestos</p>
-                  <p className="mt-1 text-lg font-semibold">{cogsCorrection.changeCount.toLocaleString('de-DE')}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-[var(--text-secondary)]">Hoja origen</p>
-                  <p className="mt-1 text-sm font-medium">{cogsCorrection.sheetName || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-[var(--text-secondary)]">Líneas sin corregir</p>
-                  <p className={`mt-1 text-lg font-semibold ${cogsCorrection.skippedLines.length ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
-                    {cogsCorrection.skippedLines.length.toLocaleString('de-DE')}
-                  </p>
-                </div>
-              </div>
-
-              {cogsCorrection.changes.length > 0 ? (
-                <div className="max-h-72 overflow-auto">
-                  <table className="w-full min-w-[1040px] border-collapse text-xs">
-                    <thead className="bg-white text-left text-[var(--text-secondary)]">
-                      <tr>
-                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celda</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS actual</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS bueno</th>
-                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cogsCorrection.changes.map((change) => (
-                        <tr key={change.key} className="border-b border-[var(--border)]">
-                          <td className="px-3 py-2 font-medium">{change.line}</td>
-                          <td className="px-3 py-2">{displayDate(change.date)}</td>
-                          <td className="px-3 py-2 font-mono">{change.cell}</td>
-                          <td className="px-3 py-2 text-right font-mono">{change.facturacion === null ? '-' : formatCurrency(change.facturacion)}</td>
-                          <td className="px-3 py-2 text-right font-mono">{change.current === null ? '-' : formatCurrency(change.current)}</td>
-                          <td className="px-3 py-2 text-right font-mono text-[var(--success)]">{change.expected === null ? 'Vacío' : formatCurrency(change.expected)}</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatPercent(change.cogsRate)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="p-3 text-sm text-[var(--text-secondary)]">No hay cambios por encima del umbral.</p>
-              )}
-
-              {cogsCorrection.skippedLines.length > 0 && (
-                <div className="border-t border-[var(--border)] p-3">
-                  <p className="text-xs font-semibold text-[var(--danger)]">Líneas que no puedo corregir automáticamente</p>
-                  <div className="mt-2 grid gap-1 text-xs text-[var(--text-secondary)] md:grid-cols-2">
-                    {cogsCorrection.skippedLines.slice(0, 20).map((line) => (
-                      <p key={line} className="rounded bg-[var(--bg-soft)] px-2 py-1">{line}</p>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {validation.issues.length > 0 && (
-            <div className="rounded-md border border-[var(--border)]">
-              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">Primeras incidencias</div>
-              <div className="max-h-72 overflow-auto">
-                <table className="w-full min-w-[980px] border-collapse text-xs">
-                  <thead className="bg-white text-left text-[var(--text-secondary)]">
-                    <tr>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Tipo</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celda</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Esperado</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {validation.issues.map((issue) => (
-                      <tr key={issue.key} className="border-b border-[var(--border)]">
-                        <td className="px-3 py-2 text-[var(--danger)]">{issue.type}</td>
-                        <td className="px-3 py-2 font-medium">{issue.line}</td>
-                        <td className="px-3 py-2">{displayDate(issue.date)}</td>
-                        <td className="px-3 py-2 font-mono">{issue.cell || '-'}</td>
-                        <td className="px-3 py-2 text-right font-mono">{issue.facturacion === undefined || issue.facturacion === null ? '-' : formatCurrency(issue.facturacion)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{issue.cogs === undefined || issue.cogs === null ? '-' : formatCurrency(issue.cogs)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{issue.expected === undefined || issue.expected === null ? '-' : formatCurrency(issue.expected)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{issue.diff === undefined || issue.diff === null ? '-' : formatCurrency(issue.diff)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-         </div>
-      )}
-    </section>
-  );
-
-  const renderBudgetDiff = (title: string, summary: BudgetDiffSummary | null) => (
-    <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Diferencias cuantitativas</p>
-          <h3 className="mt-1 text-lg font-semibold">{title}</h3>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">Compara importes línea a línea y día a día. Solo marca incidencias cuando la diferencia por celda supera el umbral.</p>
-        </div>
-        {summary && <StatusPill ok={summary.ok} />}
-      </div>
-
-      {!summary ? (
-        <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm text-[var(--text-secondary)]">Carga los dos archivos para ver diferencias cuantitativas.</p>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Archivo 1</p>
-              <p className="mt-1 text-lg font-semibold">{formatCurrency(summary.totalLeft)}</p>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Archivo 2</p>
-              <p className="mt-1 text-lg font-semibold">{formatCurrency(summary.totalRight)}</p>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Diferencia total</p>
-              <p className={`mt-1 text-lg font-semibold ${Math.abs(summary.diff) <= moneyTolerance ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>{formatCurrency(summary.diff)}</p>
-            </div>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-              <p className="text-xs text-[var(--text-secondary)]">Celdas &gt; umbral</p>
-              <p className="mt-1 text-lg font-semibold">{summary.issueCount.toLocaleString('de-DE')}</p>
-            </div>
-          </div>
-
-          {summary.issueCount === 0 && Math.abs(summary.diff) > 0 && (
-            <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-sm text-[var(--text-secondary)]">
-              No hay celdas por encima del umbral. La diferencia total viene de redondeos pequeños acumulados.
-            </p>
-          )}
-
-          {summary.lines.length > 0 && (
-            <div className="rounded-md border border-[var(--border)]">
-              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">Principales diferencias por línea</div>
-              <div className="max-h-72 overflow-auto">
-                <table className="w-full min-w-[860px] border-collapse text-xs">
-                  <thead className="bg-white text-left text-[var(--text-secondary)]">
-                    <tr>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
-                        <SortHeader label="Línea" sortKey="line" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
-                        <SortHeader label="Archivo 1" sortKey="left" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} align="right" />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
-                        <SortHeader label="Archivo 2" sortKey="right" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} align="right" />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
-                        <SortHeader label="Dif. neta &gt; umbral" sortKey="diff" activeKey={lineSort.key} direction={lineSort.direction} onSort={updateLineSort} align="right" />
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedDiffLines(summary.lines).map((line) => (
-                      <tr key={line.key} className="border-b border-[var(--border)]">
-                        <td className="px-3 py-2 font-medium">{line.line}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.leftTotal)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.rightTotal)}</td>
-                        <td className={`px-3 py-2 text-right font-mono ${Math.abs(line.diff) > moneyTolerance ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>{formatCurrency(line.diff)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {summary.issues.length > 0 && (
-            <div className="rounded-md border border-[var(--border)]">
-              <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
-                {summary.label.includes('mensual') ? 'Mayores diferencias por mes' : 'Mayores diferencias por fecha'}
-              </div>
-              <div className="max-h-72 overflow-auto">
-                <table className="w-full min-w-[880px] border-collapse text-xs">
-                  <thead className="bg-white text-left text-[var(--text-secondary)]">
-                    <tr>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
-                        <SortHeader label="Línea" sortKey="line" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
-                        <SortHeader label={summary.label.includes('mensual') ? 'Mes' : 'Fecha'} sortKey="date" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celdas</th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
-                        <SortHeader label="Archivo 1" sortKey="left" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} align="right" />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
-                        <SortHeader label="Archivo 2" sortKey="right" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} align="right" />
-                      </th>
-                      <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
-                        <SortHeader label="Diferencia" sortKey="diff" activeKey={issueSort.key} direction={issueSort.direction} onSort={updateIssueSort} align="right" />
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedDiffIssues(summary.issues).map((issue) => (
-                      <tr key={issue.key} className="border-b border-[var(--border)]">
-                        <td className="px-3 py-2 font-medium">{issue.line}</td>
-                        <td className="px-3 py-2">{summary.label.includes('mensual') ? displayMonth(issue.date) : displayDate(issue.date)}</td>
-                        <td className="px-3 py-2 font-mono">{[issue.leftCell, issue.rightCell].filter(Boolean).join(' / ') || '-'}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.leftValue)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{formatCurrency(issue.rightValue)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(issue.diff)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-
-  const renderCombinedBudgetDiff = (title: string, summary: CombinedBudgetDiffSummary | null) => {
-    const fyLabel = summary?.fyStartYear
-      ? `FY abril ${summary.fyStartYear} - marzo ${summary.fyStartYear + 1}`
-      : null;
-
-    return (
-      <div className="space-y-4">
-        <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Comparación</p>
-              <h3 className="mt-1 text-lg font-semibold">{title}</h3>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                {summary?.mode === 'monthly-plan'
-                  ? `Compara por mes el cargado diario contra el previsto mensual${fyLabel ? ` (${fyLabel})` : ''}. Facturación usa Importe y COGS usa Importe menos Margen Bruto.`
-                  : 'Compara Facturación y COGS usando únicamente las fechas existentes en el segundo archivo.'}
-              </p>
-            </div>
-            {summary && <StatusPill ok={summary.ok} />}
-          </div>
-        </section>
-
-        {!summary ? (
-          <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4 text-sm text-[var(--text-secondary)]">Carga los dos archivos para comparar Facturación y COGS.</p>
-        ) : summary.error ? (
-          <p className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] p-4 text-sm text-[var(--danger)]">{summary.error}</p>
-        ) : (
-          <>
-            {summary.mode === 'monthly-plan' && monthlyFacturacionCorrection && (
-              <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3">
-                  <div>
-                    <p className="text-sm font-semibold">Facturación corregida</p>
-                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                      Escala el reparto diario del cargado para que cada línea y mes cuadre con el previsto. Si el previsto no tiene esa línea/mes, limpia el mes.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={downloadCorrectedMonthlyFacturacion}
-                    disabled={!monthlyFacturacionCorrection.rows.length}
-                    className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm font-medium transition hover:bg-[var(--bg-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Download className="h-4 w-4" />
-                    Descargar facturación corregida
-                  </button>
-                </div>
-                <div className="grid gap-3 border-b border-[var(--border)] p-3 md:grid-cols-3">
-                  <div>
-                    <p className="text-xs text-[var(--text-secondary)]">Cambios propuestos</p>
-                    <p className="mt-1 text-lg font-semibold">{monthlyFacturacionCorrection.changeCount.toLocaleString('de-DE')}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-[var(--text-secondary)]">Hoja origen</p>
-                    <p className="mt-1 text-sm font-medium">{monthlyFacturacionCorrection.sheetName || '-'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-[var(--text-secondary)]">Líneas sin corregir</p>
-                    <p className={`mt-1 text-lg font-semibold ${monthlyFacturacionCorrection.skippedLines.length ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
-                      {monthlyFacturacionCorrection.skippedLines.length.toLocaleString('de-DE')}
-                    </p>
-                  </div>
-                </div>
-
-                {monthlyFacturacionCorrection.changes.length > 0 ? (
-                  <div className="max-h-72 overflow-auto">
-                    <table className="w-full min-w-[980px] border-collapse text-xs">
-                      <thead className="bg-white text-left text-[var(--text-secondary)]">
-                        <tr>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Acción</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Actual</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Objetivo</th>
-                          <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diferencia</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {monthlyFacturacionCorrection.changes.map((change) => (
-                          <tr key={change.key} className="border-b border-[var(--border)]">
-                            <td className="px-3 py-2 font-medium">{change.line}</td>
-                            <td className="px-3 py-2">{displayMonth(change.month)}</td>
-                            <td className="px-3 py-2">{change.action}</td>
-                            <td className="px-3 py-2 text-right font-mono">{formatCurrency(change.current)}</td>
-                            <td className="px-3 py-2 text-right font-mono text-[var(--success)]">{formatCurrency(change.expected)}</td>
-                            <td className="px-3 py-2 text-right font-mono text-[var(--danger)]">{formatCurrency(change.diff)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="p-3 text-sm text-[var(--text-secondary)]">No hay cambios por encima del umbral.</p>
-                )}
-
-                {monthlyFacturacionCorrection.skippedLines.length > 0 && (
-                  <div className="border-t border-[var(--border)] p-3">
-                    <p className="text-xs font-semibold text-[var(--danger)]">Líneas que no puedo corregir automáticamente</p>
-                    <div className="mt-2 grid gap-1 text-xs text-[var(--text-secondary)] md:grid-cols-2">
-                      {monthlyFacturacionCorrection.skippedLines.slice(0, 20).map((line) => (
-                        <p key={line} className="rounded bg-[var(--bg-soft)] px-2 py-1">{line}</p>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </section>
-            )}
-            {summary.summaries.map((item) => renderBudgetDiff(item.label, item))}
-          </>
-        )}
-      </div>
-    );
-  };
   return (
     <div className="space-y-6">
       <button
@@ -1646,86 +828,345 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
         Herramientas
       </button>
 
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+          <div className="max-w-2xl">
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Validador budget</h2>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Flujo de revisión: igualdad de archivos, validación COGS y comparación cargado vs previsto.</p>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+              1) Cuadra facturación del diario con el budget general al céntimo (solo el FY del budget).
+              Tú decides qué celdas tocar. 2) Cuadra COGS con el mismo budget y el mismo día que la facturación.
+            </p>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            {activeStep === 2 && (
-              <label className="block">
-                <span className="mb-1 block text-xs text-[var(--text-secondary)]">Validar desde FY</span>
-                <input
-                  type="number"
-                  min="2020"
-                  step="1"
-                  value={cogsBaseFiscalYear}
-                  onChange={(event) => setCogsBaseFiscalYear(Number(event.target.value) || 2025)}
-                  className="h-9 w-28 rounded-md border border-[var(--border)] bg-white px-3 text-right text-sm outline-none focus:border-[var(--text-primary)]"
-                />
-              </label>
-            )}
-            <label className="block">
-              <span className="mb-1 block text-xs text-[var(--text-secondary)]">Umbral €</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={moneyTolerance}
-                onChange={(event) => setMoneyTolerance(Math.max(0, Number(event.target.value) || 0))}
-                className="h-9 w-28 rounded-md border border-[var(--border)] bg-white px-3 text-right text-sm outline-none focus:border-[var(--text-primary)]"
-              />
-            </label>
-            <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
-              {[
-                [1, '1 · Archivos'],
-                [2, '2 · COGS'],
-                [3, '3 · Cargado vs previsto'],
-              ].map(([step, label]) => (
-                <button
-                  key={step}
-                  type="button"
-                  onClick={() => setActiveStep(step as ValidatorStep)}
-                  className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeStep === step ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+          <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-1">
+            {([
+              [1, '1 · Facturación'],
+              [2, '2 · COGS'],
+            ] as const).map(([step, label]) => (
+              <button
+                key={step}
+                type="button"
+                onClick={() => setActiveStep(step)}
+                className={`rounded px-3 py-1.5 text-xs font-medium transition ${
+                  activeStep === step
+                    ? 'bg-[var(--text-primary)] text-white'
+                    : 'text-[var(--text-secondary)] hover:bg-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-          <FileUpload
-            inputId="validator-left-file"
-            label={activeStep === 2 ? 'Archivo a validar' : activeStep === 3 ? 'Budget cargado' : 'Archivo 1'}
-            onFileLoaded={() => {}}
-            onWorkbookLoaded={handleLoad('left')}
-          />
-          {leftWorkbook && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {leftWorkbook.fileName}</p>}
-        </div>
-        {activeStep !== 2 && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <FileUpload
-              inputId="validator-right-file"
-              label={activeStep === 3 ? 'Budget previsto' : 'Archivo 2'}
-              onFileLoaded={() => {}}
-              onWorkbookLoaded={handleLoad('right')}
-            />
-            {rightWorkbook && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {rightWorkbook.fileName}</p>}
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
+              <FileSpreadsheet className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Budget general</p>
+              <p className="text-xs text-[var(--text-secondary)]">Departamento · mensual · Importe + Margen</p>
+            </div>
           </div>
-        )}
+          <FileUpload
+            inputId="validator-plan-file"
+            label="Sube Budget TS FY…"
+            onFileLoaded={() => {}}
+            onWorkbookLoaded={(sheets, fileName) => setPlanWorkbook({ sheets, fileName })}
+          />
+          {planWorkbook && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {planWorkbook.fileName}{fyLabel ? ` · ${fyLabel}` : ''}
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+              <FileSpreadsheet className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Budget diario</p>
+              <p className="text-xs text-[var(--text-secondary)]">Hoja1 (facturación) + COGS · se ignora fuera del FY</p>
+            </div>
+          </div>
+          <FileUpload
+            inputId="validator-daily-file"
+            label="Sube budget diario…"
+            onFileLoaded={() => {}}
+            onWorkbookLoaded={(sheets, fileName) => setDailyWorkbook({ sheets, fileName })}
+          />
+          {dailyWorkbook && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">{dailyWorkbook.fileName}</p>
+          )}
+        </div>
       </section>
 
-      {activeStep === 1 && renderCombinedBudgetDiff('Archivo 1 vs archivo 2', combinedDiff)}
+      {!plan || !daily ? (
+        <div className="rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--bg-soft)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
+          Sube los dos archivos para empezar la validación.
+        </div>
+      ) : (
+        <>
+          <section className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">FY analizado</p>
+              <p className="mt-1 text-sm font-semibold">{fyLabel}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Facturación</p>
+              <div className="mt-2">
+                <StatusBadge ok={factSquared} label={factSquared ? 'Cuadra al céntimo' : `${factBadCount} desfases`} />
+              </div>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">COGS</p>
+              <div className="mt-2">
+                <StatusBadge ok={cogsOk} label={cogsOk ? 'Cuadra y mismo día' : `${cogsMonthBad.length + dayIssues.length} incidencias`} />
+              </div>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+              <p className="text-xs text-[var(--text-secondary)]">Desfase facturación neto</p>
+              <p className={`mt-1 text-lg font-semibold ${Math.abs(factTotalDiff) <= CENTIMO ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+                {formatCurrency(factTotalDiff)}
+              </p>
+            </div>
+          </section>
 
-      {activeStep === 2 && renderCogsValidation(`Archivo a validar · FY ${cogsBaseFiscalYear}/${String(cogsBaseFiscalYear + 1).slice(-2)} y FY ${cogsBaseFiscalYear + 1}/${String(cogsBaseFiscalYear + 2).slice(-2)}`, leftWorkbook, leftCogs)}
+          <section className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Filtrar por línea o mes…"
+                className="h-9 w-full rounded-md border border-[var(--border)] bg-white pl-9 pr-3 text-sm outline-none focus:border-[var(--text-primary)]"
+              />
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={onlyMismatches}
+                onChange={(event) => setOnlyMismatches(event.target.checked)}
+                className="h-4 w-4 rounded border-[var(--border)]"
+              />
+              Solo lo que no cuadra
+            </label>
+          </section>
 
-      {activeStep === 3 && renderCombinedBudgetDiff('Budget cargado vs budget previsto', loadedVsPlannedDiff)}
+          {activeStep === 1 && (
+            <section className="space-y-4">
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">Paso 1 · Facturación</h3>
+                    <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                      Compara Importe del budget general con la suma diaria de Hoja1, solo en {fyLabel}.
+                      No reescribimos celdas: te digo el desfase del mes y tú eliges dónde meterlo.
+                    </p>
+                  </div>
+                  <StatusBadge
+                    ok={factSquared}
+                    label={`${factOkCount} OK · ${factBadCount} a corregir`}
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+                <div className="max-h-[560px] overflow-auto">
+                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                    <thead className="sticky top-0 bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                          <button type="button" onClick={() => toggleSort('line')}>Línea</button>
+                        </th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">
+                          <button type="button" onClick={() => toggleSort('month')}>Mes</button>
+                        </th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                          <button type="button" onClick={() => toggleSort('budget')}>Budget</button>
+                        </th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                          <button type="button" onClick={() => toggleSort('diario')}>Diario</button>
+                        </th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
+                          <button type="button" onClick={() => toggleSort('diff')}>Desfase</button>
+                        </th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Qué hacer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredFactRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-8 text-center text-[var(--text-secondary)]">
+                            {factSquared ? 'Todo cuadra al céntimo.' : 'No hay filas con ese filtro.'}
+                          </td>
+                        </tr>
+                      ) : filteredFactRows.map((row) => (
+                        <tr key={row.key} className="border-b border-[var(--border)] align-top">
+                          <td className="px-3 py-2 font-medium">{row.line.replace(` · ${row.monthLabel}`, '')}</td>
+                          <td className="px-3 py-2 capitalize">{row.monthLabel}</td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.budget)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.diario)}</td>
+                          <td className={`px-3 py-2 text-right font-mono text-xs ${Math.abs(row.diff) > CENTIMO ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                            {formatCurrency(row.diff)}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-[var(--text-secondary)]">{row.instruction}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {factSquared && (
+                <div className="rounded-lg border border-green-200 bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
+                  Facturación cuadrada. Pasa al paso 2 para COGS.
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeStep === 2 && (
+            <section className="space-y-4">
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">Paso 2 · COGS</h3>
+                    <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                      El COGS mensual debe ser exactamente Importe − Margen del budget general.
+                      Además, cada día con facturación debe tener COGS el mismo día.
+                    </p>
+                  </div>
+                  <StatusBadge ok={cogsOk} label={cogsOk ? 'OK' : 'Hay incidencias'} />
+                </div>
+                {!factSquared && (
+                  <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    La facturación aún no cuadra al céntimo. Conviene cerrar el paso 1 antes de corregir COGS.
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">COGS corregido (opcional)</p>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                      Genera la hoja COGS del FY usando el % del budget general sobre la facturación diaria,
+                      con el mismo día y total mensual exacto. No toca años fuera del FY.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={downloadCorrectedCogs}
+                    disabled={!cogsCorrection || cogsCorrection.changeCount === 0}
+                    className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar COGS FY
+                  </button>
+                </div>
+                {cogsCorrection && (
+                  <p className="mt-3 text-xs text-[var(--text-secondary)]">
+                    Cambios propuestos: {cogsCorrection.changeCount.toLocaleString('de-DE')}
+                    {cogsCorrection.skippedLines.length > 0
+                      ? ` · ${cogsCorrection.skippedLines.length} líneas sin corregir`
+                      : ''}
+                  </p>
+                )}
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+                <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
+                  Totales mensuales COGS
+                </div>
+                <div className="max-h-[360px] overflow-auto">
+                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                    <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Diario</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Desfase</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Qué hacer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredCogsMonthRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-8 text-center text-[var(--text-secondary)]">
+                            Totales mensuales de COGS cuadrados.
+                          </td>
+                        </tr>
+                      ) : filteredCogsMonthRows.map((row) => (
+                        <tr key={row.key} className="border-b border-[var(--border)] align-top">
+                          <td className="px-3 py-2 font-medium">{row.line.replace(` · ${row.monthLabel}`, '')}</td>
+                          <td className="px-3 py-2 capitalize">{row.monthLabel}</td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.budget)}</td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.diario)}</td>
+                          <td className={`px-3 py-2 text-right font-mono text-xs ${Math.abs(row.diff) > CENTIMO ? 'text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                            {formatCurrency(row.diff)}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-[var(--text-secondary)]">{row.instruction}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+                <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
+                  Mismo día · facturación vs COGS ({filteredDayIssues.length})
+                </div>
+                <div className="max-h-[360px] overflow-auto">
+                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                    <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
+                      <tr>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Tipo</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Línea</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Fecha</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Celdas</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
+                        <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">COGS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredDayIssues.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-8 text-center text-[var(--text-secondary)]">
+                            No hay días con facturación y COGS desalineados en el FY.
+                          </td>
+                        </tr>
+                      ) : filteredDayIssues.slice(0, 200).map((issue) => (
+                        <tr key={issue.key} className="border-b border-[var(--border)]">
+                          <td className="px-3 py-2 text-xs font-medium text-[var(--danger)]">{issue.type}</td>
+                          <td className="px-3 py-2 text-xs font-medium">{issue.line}</td>
+                          <td className="px-3 py-2 text-xs">{displayDate(issue.date)}</td>
+                          <td className="px-3 py-2 font-mono text-xs">
+                            {[issue.cellFact, issue.cellCogs].filter(Boolean).join(' / ') || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">
+                            {issue.facturacion === null ? 'Vacío' : formatCurrency(issue.facturacion)}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-xs">
+                            {issue.cogs === null ? 'Vacío' : formatCurrency(issue.cogs)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }
