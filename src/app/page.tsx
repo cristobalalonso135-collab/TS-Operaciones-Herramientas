@@ -618,74 +618,142 @@ export default function Home() {
   }
 
   if (view === 'tools') {
+    const activeTools = [
+      {
+        id: 'budget' as const,
+        title: 'Budget',
+        description: 'Parte el budget mensual a días laborables, ajusta negativos y pondera semanas. Exporta el Excel diario.',
+        detail: 'Generación del diario',
+        icon: Calculator,
+        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
+        delay: 'tools-rise-delay-1',
+      },
+      {
+        id: 'budgetCompare' as const,
+        title: 'Comparador budget',
+        description: 'Cruza dos versiones del budget (o vs real) para ver qué líneas y meses se desvían y por cuánto.',
+        detail: 'Análisis de variaciones',
+        icon: BarChart3,
+        tone: 'bg-amber-50 text-[var(--warning)]',
+        delay: 'tools-rise-delay-2',
+      },
+      {
+        id: 'budgetValidator' as const,
+        title: 'Validador budget',
+        description: 'Compara el budget general del departamento con el diario. Corrige facturación y COGS al céntimo, mes a mes y celda a celda.',
+        detail: 'General vs diario',
+        icon: FileSpreadsheet,
+        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
+        delay: 'tools-rise-delay-3',
+      },
+      {
+        id: 'dailyMatch' as const,
+        title: 'Cuadre diario',
+        description: 'Compara dos archivos diarios (facturación + COGS) hasta una fecha. Útil para validar que un ajustado no ha roto lo ya cerrado.',
+        detail: 'Diario vs diario',
+        icon: GitCompare,
+        tone: 'bg-[var(--success-soft)] text-[var(--success)]',
+        delay: 'tools-rise-delay-4',
+      },
+    ];
+
+    const upcomingTools = [
+      {
+        title: 'Forecast',
+        description: 'Proyecciones y seguimiento frente a budget. Todavía no disponible.',
+      },
+      {
+        title: 'Pedidos',
+        description: 'Control operativo de pedidos y cobertura. Todavía no disponible.',
+      },
+      {
+        title: 'Stock',
+        description: 'Visión de stock y alertas de rotura. Todavía no disponible.',
+      },
+    ];
+
     return (
-      <div className="mx-auto max-w-5xl space-y-7">
-        <section className="space-y-2">
-          <p className="text-sm font-medium text-[var(--text-secondary)]">Workspace</p>
-          <h2 className="text-3xl font-semibold tracking-tight">Herramientas</h2>
+      <div className="mx-auto max-w-5xl space-y-10">
+        <section className="tools-rise relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/90 px-6 py-8 shadow-sm sm:px-8">
+          <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[var(--accent-soft)] blur-2xl" />
+          <div className="pointer-events-none absolute -bottom-24 left-10 h-48 w-48 rounded-full bg-[var(--success-soft)] blur-2xl" />
+          <div className="relative max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
+              TS Operaciones
+            </p>
+            <h2 className="mt-3 font-display text-4xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-5xl">
+              Herramientas
+            </h2>
+            <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
+              Workspace de budget y control. Elige la herramienta según lo que necesites cuadrar o generar.
+            </p>
+          </div>
         </section>
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <button
-            onClick={() => setView('budget')}
-            className="group min-h-[152px] rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
-                <Calculator className="h-5 w-5" />
-              </div>
-              <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
+        <section className="space-y-4">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <h3 className="font-display text-xl font-semibold tracking-tight">Disponibles</h3>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">Listas para usar en el FY 26/27</p>
             </div>
-            <h3 className="text-base font-semibold">Budget</h3>
-          </button>
+          </div>
 
-          <button
-            onClick={() => setView('budgetCompare')}
-            className="group min-h-[152px] rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-[var(--warning)]">
-                <BarChart3 className="h-5 w-5" />
-              </div>
-              <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
-            </div>
-            <h3 className="text-base font-semibold">Comparador budget</h3>
-          </button>
+          <div className="grid gap-3">
+            {activeTools.map((tool) => {
+              const Icon = tool.icon;
+              return (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => setView(tool.id)}
+                  className={`tools-rise ${tool.delay} group flex w-full items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/95 p-5 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white sm:gap-5 sm:p-6`}
+                >
+                  <div className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${tool.tone}`}>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="font-display text-lg font-semibold tracking-tight">
+                        {tool.title}
+                      </h4>
+                      <span className="rounded-md bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                        {tool.detail}
+                      </span>
+                    </div>
+                    <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-[var(--text-secondary)]">
+                      {tool.description}
+                    </p>
+                  </div>
+                  <span className="mt-1 hidden shrink-0 text-sm font-medium text-[var(--accent)] transition group-hover:translate-x-0.5 sm:inline">
+                    Abrir →
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
-          <button
-            onClick={() => setView('budgetValidator')}
-            className="group min-h-[152px] rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-50 text-[var(--accent)]">
-                <FileSpreadsheet className="h-5 w-5" />
+        <section className="space-y-4">
+          <div>
+            <h3 className="font-display text-xl font-semibold tracking-tight">Próximamente</h3>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">En el roadmap, aún no operativas</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {upcomingTools.map((tool) => (
+              <div
+                key={tool.title}
+                className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-card)]/55 p-5"
+              >
+                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--bg-soft)] text-[var(--text-muted)]">
+                  <Table2 className="h-5 w-5" />
+                </div>
+                <h4 className="font-display text-base font-semibold text-[var(--text-secondary)]">
+                  {tool.title}
+                </h4>
+                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-muted)]">{tool.description}</p>
               </div>
-              <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
-            </div>
-            <h3 className="text-base font-semibold">Validador budget</h3>
-          </button>
-
-          <button
-            onClick={() => setView('dailyMatch')}
-            className="group min-h-[152px] rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-md"
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
-                <GitCompare className="h-5 w-5" />
-              </div>
-              <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">Activo</span>
-            </div>
-            <h3 className="text-base font-semibold">Cuadre diario</h3>
-          </button>
-
-          {['Forecast', 'Pedidos', 'Stock'].map((tool) => (
-            <div key={tool} className="min-h-[152px] rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-5 text-left">
-              <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-md bg-[var(--bg-soft)] text-[var(--text-muted)]">
-                <Table2 className="h-5 w-5" />
-              </div>
-              <h3 className="text-base font-semibold text-[var(--text-secondary)]">{tool}</h3>
-            </div>
-          ))}
+            ))}
+          </div>
         </section>
       </div>
     );
