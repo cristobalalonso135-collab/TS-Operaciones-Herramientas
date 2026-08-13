@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
+import { getHolidayName } from '@/lib/holidays';
 import {
   ArrowLeft,
   Download,
@@ -283,7 +284,9 @@ function weekOfMonth(date: string): number {
 }
 
 function Sparkline({ points, weekdaysOnly }: { points: DayPoint[]; weekdaysOnly: boolean }) {
+  const [hover, setHover] = useState<{ index: number; x: number } | null>(null);
   const visible = weekdaysOnly ? points.filter((point) => !isWeekend(point.date)) : points;
+
   if (visible.length === 0) {
     return (
       <p className="rounded-lg bg-[var(--bg-soft)] px-3 py-8 text-center text-sm text-[var(--text-secondary)]">
@@ -295,32 +298,65 @@ function Sparkline({ points, weekdaysOnly }: { points: DayPoint[]; weekdaysOnly:
   const max = Math.max(...visible.map((point) => Math.abs(point.total)), 1);
   const width = visible.length;
   const height = 112;
+  const hovered = hover ? visible[hover.index] : null;
+  const holidayName = hovered ? getHolidayName(hovered.date) : null;
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      className="h-28 w-full rounded-lg bg-[var(--bg-soft)]"
-      role="img"
-      aria-label="Curva diaria"
-    >
-      {visible.map((point, index) => {
-        const barHeight = Math.max(2, (Math.abs(point.total) / max) * (height - 6));
-        return (
-          <rect
-            key={point.date}
-            x={index + 0.08}
-            y={height - barHeight}
-            width={0.84}
-            height={barHeight}
-            fill="var(--accent)"
-            opacity={0.82}
-          >
-            <title>{`${displayDateWithWeekday(point.date)} · ${formatCurrency(point.total)}`}</title>
-          </rect>
-        );
-      })}
-    </svg>
+    <div className="relative">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        className="h-36 w-full cursor-crosshair rounded-lg bg-[var(--bg-soft)]"
+        role="img"
+        aria-label="Curva diaria"
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const ratio = (event.clientX - rect.left) / Math.max(rect.width, 1);
+          const index = Math.min(visible.length - 1, Math.max(0, Math.floor(ratio * visible.length)));
+          setHover({ index, x: event.clientX - rect.left });
+        }}
+        onMouseLeave={() => setHover(null)}
+      >
+        {visible.map((point, index) => {
+          const barHeight = Math.max(2, (Math.abs(point.total) / max) * (height - 8));
+          const isHoliday = !!getHolidayName(point.date);
+          const isActive = hover?.index === index;
+          return (
+            <g key={point.date}>
+              <rect x={index} y={0} width={1} height={height} fill={isActive ? 'rgba(31, 75, 122, 0.08)' : 'transparent'} />
+              <rect
+                x={index + 0.12}
+                y={height - barHeight}
+                width={0.76}
+                height={barHeight}
+                fill={isHoliday ? 'var(--warning)' : 'var(--accent)'}
+                opacity={isActive ? 1 : isHoliday ? 0.95 : 0.82}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      {hovered && (
+        <div
+          className="pointer-events-none absolute top-2 z-10 min-w-[180px] rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs shadow-md"
+          style={{
+            left: `clamp(96px, ${hover?.x || 0}px, calc(100% - 96px))`,
+            transform: 'translateX(-50%)',
+          }}
+        >
+          <p className="font-semibold capitalize">{displayDateWithWeekday(hovered.date)}</p>
+          <p className="mt-0.5 font-mono">{formatCurrency(hovered.total)}</p>
+          {holidayName ? (
+            <p className="mt-1 font-medium text-[var(--warning)]">Festivo Zaragoza · {holidayName}</p>
+          ) : (
+            <p className="mt-1 text-[var(--text-muted)]">Laborable</p>
+          )}
+        </div>
+      )}
+      <p className="mt-2 text-xs text-[var(--text-secondary)]">
+        Pasa el ratón por una barra para ver el día. Las barras en ámbar son festivos de Zaragoza.
+      </p>
+    </div>
   );
 }
 
