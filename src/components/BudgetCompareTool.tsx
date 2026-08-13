@@ -110,6 +110,7 @@ interface QualityOperation {
 
 interface QualitySummary {
   score: number;
+  potentialScore: number;
   averageDeviation: number;
   totalWeight: number;
   editableRows: number;
@@ -441,6 +442,17 @@ function formatPercent(value: number | null): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
+function formatScore(value: number): string {
+  return value.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function scoreTone(score: number): string {
+  if (score >= 9) return 'text-[var(--success)]';
+  if (score >= 7.5) return 'text-[var(--text-primary)]';
+  if (score >= 5) return 'text-[var(--warning)]';
+  return 'text-[var(--danger)]';
+}
+
 function barWidth(value: number, maxValue: number): number {
   if (value === 0 || maxValue <= 0) return 0;
   return Math.max(1, Math.min(100, (Math.abs(value) / maxValue) * 100));
@@ -665,6 +677,36 @@ function buildMonthlyAnomalies(rows: CompareRow[]): MonthlyAnomaly[] {
   return anomalies.sort((a, b) => b.deviation - a.deviation).slice(0, 10);
 }
 
+function scoreFromDeviation(averageDeviation: number): number {
+  // 0% desvío = 10. Cada 10 puntos de desvío medio restan 1 punto.
+  return Math.max(0, Math.min(10, 10 - averageDeviation / 10));
+}
+
+function scoreVerdict(score: number): { label: string; hint: string } {
+  if (score >= 9) {
+    return {
+      label: 'Muy bien cuadrado',
+      hint: 'Los meses abiertos siguen el mismo % que el resto del año de su línea. Flecos menores.',
+    };
+  }
+  if (score >= 7.5) {
+    return {
+      label: 'Bien, con flecos',
+      hint: 'Lo que queda del año cuadra, pero algún mes abierto se sale del ritmo de su línea.',
+    };
+  }
+  if (score >= 5) {
+    return {
+      label: 'Mejorable',
+      hint: 'Hay líneas con meses abiertos demasiado altos o bajos vs el resto del año. Mueve budget entre esos meses.',
+    };
+  }
+  return {
+    label: 'Poco cuadrado',
+    hint: 'El anual puede estar bien, pero los meses que aún puedes tocar no siguen el año anterior escalado.',
+  };
+}
+
 function isEditableMonth(monthLabel: string, lockedThroughIndex: number): boolean {
   const order = MONTH_ORDER.get(monthLabel) ?? 99;
   return order > lockedThroughIndex;
@@ -703,9 +745,11 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   const operations: QualityOperation[] = [];
 
   grouped.forEach((group, key) => {
-    if (Math.abs(group.facturacion) < 1000) return;
-    const groupPct = group.facturacion !== 0 ? ((group.budget - group.facturacion) / Math.abs(group.facturacion)) * 100 : null;
-    if (groupPct === null) return;
+    const openRows = group.rows.filter((row) => isEditableMonth(row.monthLabel, lockedThroughIndex));
+    const openFacturacion = openRows.reduce((sum, row) => sum + row.facturacion, 0);
+    const openBudget = openRows.reduce((sum, row) => sum + row.budget, 0);
+    if (Math.abs(openFacturacion) < 1000) return;
+    const remainingPct = ((openBudget - openFacturacion) / Math.abs(openFacturacion)) * 100;
     const editableLineRows: Array<{
       row: CompareRow;
       monthPct: number | null;
@@ -715,9 +759,7 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
       weight: number;
     }> = [];
 
-    group.rows
-      .filter((row) => isEditableMonth(row.monthLabel, lockedThroughIndex))
-      .forEach((row) => {
+    openRows.forEach((row) => {
         const weight = Math.max(Math.abs(row.facturacion), Math.abs(row.budget));
         if (weight < 1000) return;
 
@@ -727,11 +769,11 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
 
         if (row.facturacion !== 0) {
           monthPct = ((row.budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
-          expectedBudget = row.facturacion * (1 + groupPct / 100);
-          deviation = Math.abs(monthPct - groupPct);
+          expectedBudget = row.facturacion * (1 + remainingPct / 100);
+          deviation = Math.abs(monthPct - remainingPct);
         } else if (row.budget !== 0) {
           expectedBudget = 0;
-          deviation = Math.max(100, Math.abs(groupPct));
+          deviation = Math.max(100, Math.abs(remainingPct));
         }
 
         const cappedDeviation = Math.min(120, deviation);
@@ -742,12 +784,12 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
         const suggestedAdjustment = expectedBudget - row.budget;
         editableLineRows.push({ row, monthPct, expectedBudget, suggestedAdjustment, deviation, weight });
 
-        if (Math.abs(suggestedAdjustment) >= 1000 && deviation >= Math.max(20, Math.abs(groupPct) * 0.25)) {
+        if (Math.abs(suggestedAdjustment) >= 1000 && deviation >= Math.max(20, Math.abs(remainingPct) * 0.25)) {
           suggestions.push({
             key: `${key}|${row.monthKey}`,
             monthLabel: row.monthLabel,
             groupLabel: group.label,
-            groupPct,
+            groupPct: remainingPct,
             monthPct,
             suggestedAdjustment,
             impact: deviation * weight,
@@ -757,57 +799,57 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
 
     const donors = editableLineRows
       .filter((item) => item.suggestedAdjustment < -1000)
-      .sort((a, b) => Math.abs(b.suggestedAdjustment) - Math.abs(a.suggestedAdjustment));
+      .map((item) => ({ ...item, remaining: Math.abs(item.suggestedAdjustment) }))
+      .sort((a, b) => b.remaining - a.remaining);
     const receivers = editableLineRows
       .filter((item) => item.suggestedAdjustment > 1000)
-      .sort((a, b) => Math.abs(b.suggestedAdjustment) - Math.abs(a.suggestedAdjustment));
+      .map((item) => ({ ...item, remaining: Math.abs(item.suggestedAdjustment) }))
+      .sort((a, b) => b.remaining - a.remaining);
 
-    const usedDonor = new Set<string>();
-    const usedReceiver = new Set<string>();
     donors.forEach((donor) => {
-      const receiver = receivers.find((candidate) => !usedReceiver.has(candidate.row.monthKey));
-      if (!receiver || usedDonor.has(donor.row.monthKey)) return;
-      const amount = Math.min(Math.abs(donor.suggestedAdjustment), Math.abs(receiver.suggestedAdjustment));
-      if (amount < 1000) return;
+      receivers.forEach((receiver) => {
+        const amount = Math.min(donor.remaining, receiver.remaining);
+        if (amount < 1000) return;
 
-      const donorAfterDeviation = deviationAfterBudget(donor.row, donor.row.budget - amount, groupPct);
-      const receiverAfterDeviation = deviationAfterBudget(receiver.row, receiver.row.budget + amount, groupPct);
-      const donorPctAfter = pctAfterBudget(donor.row, donor.row.budget - amount);
-      const receiverPctAfter = pctAfterBudget(receiver.row, receiver.row.budget + amount);
-      const beforeImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
-      const afterImpact = (Math.min(120, donorAfterDeviation) * donor.weight) + (Math.min(120, receiverAfterDeviation) * receiver.weight);
-      const currentImpact = Math.max(0, beforeImpact - afterImpact);
-      if (currentImpact <= 0) return;
+        const donorAfterDeviation = deviationAfterBudget(donor.row, donor.row.budget - amount, remainingPct);
+        const receiverAfterDeviation = deviationAfterBudget(receiver.row, receiver.row.budget + amount, remainingPct);
+        const donorPctAfter = pctAfterBudget(donor.row, donor.row.budget - amount);
+        const receiverPctAfter = pctAfterBudget(receiver.row, receiver.row.budget + amount);
+        const beforeImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
+        const afterImpact = (Math.min(120, donorAfterDeviation) * donor.weight) + (Math.min(120, receiverAfterDeviation) * receiver.weight);
+        const currentImpact = Math.max(0, beforeImpact - afterImpact);
+        if (currentImpact <= 0) return;
 
-      operations.push({
-        key: `${key}|${donor.row.monthKey}|${receiver.row.monthKey}`,
-        groupLabel: group.label,
-        fromMonth: donor.row.monthLabel,
-        toMonth: receiver.row.monthLabel,
-        amount,
-        impact: currentImpact,
-        estimatedGain: 0,
-        resultingScore: 0,
-        fromPct: donor.monthPct,
-        toPct: receiver.monthPct,
-        fromPctAfter: donorPctAfter,
-        toPctAfter: receiverPctAfter,
-        targetPct: groupPct,
+        operations.push({
+          key: `${key}|${donor.row.monthKey}|${receiver.row.monthKey}|${amount.toFixed(0)}`,
+          groupLabel: group.label,
+          fromMonth: donor.row.monthLabel,
+          toMonth: receiver.row.monthLabel,
+          amount,
+          impact: currentImpact,
+          estimatedGain: 0,
+          resultingScore: 0,
+          fromPct: donor.monthPct,
+          toPct: receiver.monthPct,
+          fromPctAfter: donorPctAfter,
+          toPctAfter: receiverPctAfter,
+          targetPct: remainingPct,
+        });
+        donor.remaining -= amount;
+        receiver.remaining -= amount;
       });
-      usedDonor.add(donor.row.monthKey);
-      usedReceiver.add(receiver.row.monthKey);
     });
   });
 
   const averageDeviation = totalWeight > 0 ? weightedDeviation / totalWeight : 0;
-  const score = Math.max(0, Math.min(10, 10 - (averageDeviation / 18)));
+  const score = scoreFromDeviation(averageDeviation);
   let runningScore = score;
   const rankedOperations: QualityOperation[] = [];
   operations
     .sort((a, b) => b.impact - a.impact)
     .forEach((operation) => {
-      if (rankedOperations.length >= 10) return;
-      const rawGain = totalWeight > 0 ? operation.impact / totalWeight / 18 : 0;
+      if (rankedOperations.length >= 8) return;
+      const rawGain = totalWeight > 0 ? operation.impact / totalWeight / 10 : 0;
       const estimatedGain = Math.min(Math.max(0, 10 - runningScore), rawGain);
       if (estimatedGain < 0.05) return;
       runningScore = Math.min(10, runningScore + estimatedGain);
@@ -820,6 +862,9 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
 
   return {
     score,
+    potentialScore: rankedOperations.length > 0
+      ? rankedOperations[rankedOperations.length - 1].resultingScore
+      : score,
     averageDeviation,
     totalWeight,
     editableRows,
@@ -1270,6 +1315,8 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   ), [justifiedAlertKeys, structuralAlerts]);
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
+  const qualityVerdict = scoreVerdict(qualitySummary.score);
+  const companyScoreDiffers = Math.abs(companyQualitySummary.score - qualitySummary.score) >= 0.15;
   const classificationIssues = useMemo<ClassificationIssue[]>(() => {
     const grouped = new Map<string, ClassificationIssue>();
 
@@ -1510,7 +1557,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Comparador budget</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Compara facturación FY 25/26 contra budget FY 26/27 con la granularidad correcta de cada área.
+              ¿Los meses abiertos de cada línea siguen el mismo % que el resto del año? Te da una nota y los movimientos para subirla.
             </p>
           </div>
           <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
@@ -1654,30 +1701,85 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             </button>
           </section>
 
-          <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Calidad de carga</p>
-                <h3 className="mt-1 text-lg font-semibold">Nota {qualitySummary.score.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}/10</h3>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                  Mide si los meses editables siguen el crecimiento total de su propia combinación, ponderando por volumen de facturación/budget. Desviación media ponderada: {formatPercent(qualitySummary.averageDeviation)}.
+          <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+            <div className="grid gap-5 lg:grid-cols-[minmax(220px,280px)_1fr]">
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Cuadre del budget</p>
+                <p className={`mt-2 text-5xl font-semibold tabular-nums ${scoreTone(qualitySummary.score)}`}>
+                  {formatScore(qualitySummary.score)}
+                  <span className="ml-1 text-lg font-medium text-[var(--text-muted)]">/10</span>
                 </p>
+                <p className={`mt-2 text-sm font-semibold ${scoreTone(qualitySummary.score)}`}>{qualityVerdict.label}</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{qualityVerdict.hint}</p>
+                {qualitySummary.operations.length > 0 && (
+                  <p className="mt-3 text-xs text-[var(--text-secondary)]">
+                    Con estos movimientos: <span className="font-semibold text-[var(--text-primary)]">{formatScore(qualitySummary.potentialScore)}/10</span>
+                  </p>
+                )}
+                {companyScoreDiffers && (
+                  <p className="mt-2 text-xs text-[var(--text-muted)]">
+                    Empresa sin filtros: {formatScore(companyQualitySummary.score)}/10
+                  </p>
+                )}
               </div>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Meses cerrados hasta</span>
-                <select
-                  value={lockedThroughIndex}
-                  onChange={(event) => setLockedThroughIndex(parseInt(event.target.value, 10))}
-                  className="h-10 w-44 rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
-                >
-                  <option value={-1}>Ninguno</option>
-                  {MONTHS.map(([, label], index) => (
-                    <option key={label} value={index}>{label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
 
+              <div className="min-w-0">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="max-w-xl">
+                        <p className="text-sm font-semibold">Cómo se puntúa</p>
+                        <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                          Cada línea se puntúa solo con los meses abiertos. El objetivo es el % de lo que queda del año en esa línea, no el anual (los meses cerrados ya no cuentan). 0% de desvío = 10; cada 10 puntos de desvío medio restan 1. Ahora: {formatPercent(qualitySummary.averageDeviation)}.
+                        </p>
+                      </div>
+                      <label className="space-y-1">
+                        <span className="text-xs font-medium text-[var(--text-secondary)]">Meses cerrados hasta</span>
+                        <select
+                          value={lockedThroughIndex}
+                          onChange={(event) => setLockedThroughIndex(parseInt(event.target.value, 10))}
+                          className="h-10 w-44 rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
+                        >
+                          <option value={-1}>Ninguno</option>
+                          {MONTHS.map(([, label], index) => (
+                            <option key={label} value={index}>{label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    {qualitySummary.operations.length === 0 ? (
+                      <p className="mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
+                        No veo movimientos claros entre meses abiertos. Si la nota no es 10, el desvío está muy repartido o en líneas pequeñas.
+                      </p>
+                    ) : (
+                      <div className="mt-4">
+                        <p className="text-xs font-medium text-[var(--text-secondary)]">Para subir puntos, mueve budget dentro de la misma línea</p>
+                        <div className="mt-2 space-y-2">
+                          {qualitySummary.operations.slice(0, 5).map((operation, index) => (
+                            <div key={operation.key} className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2">
+                              <p className="min-w-0 text-sm">
+                                <span className="mr-2 font-mono text-xs text-[var(--text-muted)]">{index + 1}.</span>
+                                Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>
+                                <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{operation.groupLabel}</span>
+                              </p>
+                              <p className="shrink-0 rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">
+                                +{formatScore(operation.estimatedGain)} → {formatScore(operation.resultingScore)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                        {qualitySummary.operations.length > 5 && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveView('operaciones')}
+                            className="mt-2 text-xs font-medium text-[var(--accent)] hover:underline"
+                          >
+                            Ver los {qualitySummary.operations.length} movimientos
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+            </div>
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -1726,7 +1828,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
                     onClick={() => setActiveView('operaciones')}
                     className={`rounded px-3 py-1.5 text-xs font-medium transition ${activeView === 'operaciones' ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
                   >
-                    Operaciones
+                    Movimientos
                   </button>
                   <button
                     type="button"
@@ -2176,57 +2278,45 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             {activeView === 'operaciones' && (
               <div className="rounded-md border border-[var(--border)] bg-white p-4">
                 <div className="mb-4">
-                  <p className="text-sm font-semibold">Libro mayor de movimientos sugeridos</p>
+                  <p className="text-sm font-semibold">Movimientos para subir la nota</p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Propone mover budget entre meses editables dentro de la misma combinación para acercar cada mes al crecimiento total de su línea. La mejora estimada es orientativa y ponderada por volumen.
+                    Mismo importe, misma línea, de un mes demasiado alto vs el % de los meses abiertos a uno demasiado bajo. El total de lo que queda no cambia: solo se aplana la forma.
                   </p>
                 </div>
 
                 {qualitySummary.operations.length === 0 ? (
                   <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
-                    No veo movimientos claros entre meses editables con los filtros actuales.
+                    No veo movimientos claros entre meses abiertos con los filtros actuales.
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {qualitySummary.operations.map((operation, index) => {
-                      const companyGain = companyQualitySummary.totalWeight > 0
-                        ? Math.min(Math.max(0, 10 - companyQualitySummary.score), operation.impact / companyQualitySummary.totalWeight / 18)
-                        : 0;
-                      const companyResultingScore = Math.min(10, companyQualitySummary.score + companyGain);
-
-                      return (
-                        <div key={operation.key} className="rounded-md border border-[var(--border)] p-3">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold">Operación {index + 1}</p>
-                              <p className="mt-1 text-xs text-[var(--text-secondary)]">{operation.groupLabel}</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2 text-xs font-medium">
-                              <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-[var(--success)]">
-                                Selección +{operation.estimatedGain.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} · nota {operation.resultingScore.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                              </p>
-                              <p className="rounded-md bg-[var(--bg-soft)] px-2 py-1 text-[var(--text-secondary)]">
-                                Empresa +{companyGain.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · nota {companyResultingScore.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                              </p>
-                            </div>
+                    {qualitySummary.operations.map((operation, index) => (
+                      <div key={operation.key} className="rounded-md border border-[var(--border)] p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold">Movimiento {index + 1}</p>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">{operation.groupLabel}</p>
                           </div>
-                          <p className="mt-3 text-sm">
-                            Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>.
+                          <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">
+                            +{formatScore(operation.estimatedGain)} · nota {formatScore(operation.resultingScore)}
                           </p>
-                          <div className="mt-2 grid gap-2 text-xs text-[var(--text-secondary)] md:grid-cols-3">
-                            <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
-                              Objetivo línea <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.targetPct)}</span>
-                            </p>
-                            <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
-                              Origen <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.fromPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.fromPctAfter)}</span>
-                            </p>
-                            <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
-                              Destino <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.toPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.toPctAfter)}</span>
-                            </p>
-                          </div>
                         </div>
-                      );
-                    })}
+                        <p className="mt-3 text-sm">
+                          Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>.
+                        </p>
+                        <div className="mt-2 grid gap-2 text-xs text-[var(--text-secondary)] md:grid-cols-3">
+                          <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
+                            % meses abiertos <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.targetPct)}</span>
+                          </p>
+                          <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
+                            {operation.fromMonth} <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.fromPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.fromPctAfter)}</span>
+                          </p>
+                          <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
+                            {operation.toMonth} <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.toPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.toPctAfter)}</span>
+                          </p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

@@ -636,8 +636,8 @@ export default function Home() {
       {
         id: 'budgetCompare' as const,
         title: 'Comparador budget',
-        description: 'Cruza dos versiones del budget (o vs real) para ver qué líneas y meses se desvían y por cuánto.',
-        detail: 'Análisis de variaciones',
+        description: 'Nota sobre 10 de si los meses abiertos de cada línea siguen el mismo % que el resto del año. Te dice qué mover para subir puntos.',
+        detail: '¿Está bien cuadrado?',
         icon: BarChart3,
         tone: 'bg-amber-50 text-[var(--warning)]',
         delay: 'tools-rise-delay-2',
