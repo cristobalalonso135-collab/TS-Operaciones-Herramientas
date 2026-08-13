@@ -8,6 +8,7 @@ import WeeklyWeightsForm from '@/components/WeeklyWeightsForm';
 import BudgetCompareTool from '@/components/BudgetCompareTool';
 import BudgetFileValidatorTool from '@/components/BudgetFileValidatorTool';
 import DailyBudgetMatchTool from '@/components/DailyBudgetMatchTool';
+import DailyVariationTool from '@/components/DailyVariationTool';
 import {
   parseExcelData,
   processFullBudget,
@@ -23,7 +24,7 @@ import {
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
-import { ArrowLeft, BarChart3, Calculator, Download, FileSpreadsheet, GitCompare, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
+import { Activity, ArrowLeft, BarChart3, Calculator, Download, FileSpreadsheet, GitCompare, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
 
 const ALL_MONTHS = 'ALL';
 
@@ -397,7 +398,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch'>('tools');
+  const [view, setView] = useState<'tools' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch' | 'dailyVariation'>('tools');
   const [currentStep, setCurrentStep] = useState(0);
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
@@ -617,6 +618,10 @@ export default function Home() {
     return <DailyBudgetMatchTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'dailyVariation') {
+    return <DailyVariationTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const activeTools = [
       {
@@ -653,6 +658,15 @@ export default function Home() {
         detail: 'Diario vs diario',
         icon: GitCompare,
         tone: 'bg-[var(--success-soft)] text-[var(--success)]',
+        delay: 'tools-rise-delay-4',
+      },
+      {
+        id: 'dailyVariation' as const,
+        title: 'Suavidad diaria',
+        description: 'Sube un diario y mira saltos mes a mes, bordes entre meses y variación día a día. Sirve para ver si la ponderación semanal ha suavizado la curva.',
+        detail: 'Curva y saltos',
+        icon: Activity,
+        tone: 'bg-amber-50 text-[var(--warning)]',
         delay: 'tools-rise-delay-4',
       },
     ];
