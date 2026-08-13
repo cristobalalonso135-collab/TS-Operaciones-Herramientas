@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, BarChart3, Download, FileSpreadsheet } from 'lucide-react';
 
@@ -992,16 +992,22 @@ interface MultiFilterSelectProps {
   label: string;
   value: MultiFilterState;
   options: string[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onChange: (value: MultiFilterState) => void;
 }
 
-function MultiFilterSelect({ label, value, options, onChange }: MultiFilterSelectProps) {
+function MultiFilterSelect({ label, value, options, open, onOpenChange, onChange }: MultiFilterSelectProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const summary = value.values.length === 0
     ? 'Todos'
     : value.values.length === 1
       ? value.values[0]
       : `${value.values.length} seleccionados`;
-  const visibleOptions = Array.from(new Set([...value.values, ...options]));
+  const visibleOptions = [
+    ...options,
+    ...value.values.filter((item) => !options.includes(item)),
+  ];
 
   const toggleValue = (option: string) => {
     const values = value.values.includes(option)
@@ -1010,39 +1016,66 @@ function MultiFilterSelect({ label, value, options, onChange }: MultiFilterSelec
     onChange({ ...value, values });
   };
 
+  useEffect(() => {
+    if (!open) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        onOpenChange(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onOpenChange(false);
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, onOpenChange]);
+
   return (
-    <div className="space-y-1">
+    <div ref={rootRef} className="space-y-1">
       <span className="text-xs font-medium text-[var(--text-secondary)]">{label}</span>
-      <details className="group relative">
-        <summary className="flex h-10 cursor-pointer list-none items-center justify-between rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none transition hover:border-[var(--accent)]">
+      <div className="relative">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => onOpenChange(!open)}
+          className="flex h-10 w-full items-center justify-between rounded-md border border-[var(--border)] bg-white px-3 text-left text-sm outline-none transition hover:border-[var(--accent)]"
+        >
           <span className="min-w-0 truncate">{summary}</span>
           <span className="text-xs text-[var(--text-muted)]">▾</span>
-        </summary>
-        <div className="absolute z-30 mt-1 w-72 rounded-md border border-[var(--border)] bg-white p-2 shadow-lg">
-          <button
-            type="button"
-            onClick={() => onChange(createFilter())}
-            className="mb-2 w-full rounded border border-[var(--border)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)]"
-          >
-            Limpiar selección
-          </button>
-          <div className="max-h-64 space-y-1 overflow-auto pr-1">
-            {visibleOptions.length === 0 ? (
-              <div className="px-2 py-3 text-sm text-[var(--text-muted)]">Sin opciones disponibles</div>
-            ) : visibleOptions.map((option) => (
-              <label key={option} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-[var(--bg-soft)]">
-                <input
-                  type="checkbox"
-                  checked={value.values.includes(option)}
-                  onChange={() => toggleValue(option)}
-                  className="h-4 w-4 accent-[var(--text-primary)]"
-                />
-                <span className="min-w-0 truncate" title={option}>{option}</span>
-              </label>
-            ))}
+        </button>
+        {open && (
+          <div className="absolute z-30 mt-1 w-72 rounded-md border border-[var(--border)] bg-white p-2 shadow-lg">
+            <button
+              type="button"
+              onClick={() => onChange(createFilter())}
+              className="mb-2 w-full rounded border border-[var(--border)] px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)]"
+            >
+              Limpiar selección
+            </button>
+            <div className="max-h-64 space-y-1 overflow-auto pr-1">
+              {visibleOptions.length === 0 ? (
+                <div className="px-2 py-3 text-sm text-[var(--text-muted)]">Sin opciones disponibles</div>
+              ) : visibleOptions.map((option) => (
+                <label key={option} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-[var(--bg-soft)]">
+                  <input
+                    type="checkbox"
+                    checked={value.values.includes(option)}
+                    onChange={() => toggleValue(option)}
+                    className="h-4 w-4 accent-[var(--text-primary)]"
+                  />
+                  <span className="min-w-0 truncate" title={option}>{option}</span>
+                </label>
+              ))}
+            </div>
           </div>
-        </div>
-      </details>
+        )}
+      </div>
     </div>
   );
 }
@@ -1116,6 +1149,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
   const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
   const [summaryLevels, setSummaryLevels] = useState<SummaryGroupKey[]>(['vertical', 'medio', 'none']);
   const [lockedThroughIndex, setLockedThroughIndex] = useState(4);
+  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null);
   const [filters, setFilters] = useState<CompareFilters>({
     month: createFilter(),
     area: createFilter(),
@@ -1845,15 +1879,15 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
             </div>
 
             <div className="mb-4 grid gap-3 md:grid-cols-3 xl:grid-cols-9">
-              <MultiFilterSelect label="Mes" value={filters.month} options={options.month} onChange={(value) => updateFilter('month', value)} />
-              <MultiFilterSelect label="Área" value={filters.area} options={options.area} onChange={(value) => updateFilter('area', value)} />
-              <MultiFilterSelect label="Responsable" value={filters.responsable} options={options.responsable} onChange={(value) => updateFilter('responsable', value)} />
-              <MultiFilterSelect label="Subresponsable" value={filters.subresponsable} options={options.subresponsable} onChange={(value) => updateFilter('subresponsable', value)} />
-              <MultiFilterSelect label="Vertical" value={filters.vertical} options={options.vertical} onChange={(value) => updateFilter('vertical', value)} />
-              <MultiFilterSelect label="Medio" value={filters.medio} options={options.medio} onChange={(value) => updateFilter('medio', value)} />
-              <MultiFilterSelect label="Región" value={filters.region} options={options.region} onChange={(value) => updateFilter('region', value)} />
-              <MultiFilterSelect label="Zona" value={filters.zona} options={options.zona} onChange={(value) => updateFilter('zona', value)} />
-              <MultiFilterSelect label="Estado" value={filters.status} options={options.status} onChange={(value) => updateFilter('status', value)} />
+              <MultiFilterSelect label="Mes" value={filters.month} options={options.month} open={openFilter === 'month'} onOpenChange={(next) => setOpenFilter(next ? 'month' : null)} onChange={(value) => updateFilter('month', value)} />
+              <MultiFilterSelect label="Área" value={filters.area} options={options.area} open={openFilter === 'area'} onOpenChange={(next) => setOpenFilter(next ? 'area' : null)} onChange={(value) => updateFilter('area', value)} />
+              <MultiFilterSelect label="Responsable" value={filters.responsable} options={options.responsable} open={openFilter === 'responsable'} onOpenChange={(next) => setOpenFilter(next ? 'responsable' : null)} onChange={(value) => updateFilter('responsable', value)} />
+              <MultiFilterSelect label="Subresponsable" value={filters.subresponsable} options={options.subresponsable} open={openFilter === 'subresponsable'} onOpenChange={(next) => setOpenFilter(next ? 'subresponsable' : null)} onChange={(value) => updateFilter('subresponsable', value)} />
+              <MultiFilterSelect label="Vertical" value={filters.vertical} options={options.vertical} open={openFilter === 'vertical'} onOpenChange={(next) => setOpenFilter(next ? 'vertical' : null)} onChange={(value) => updateFilter('vertical', value)} />
+              <MultiFilterSelect label="Medio" value={filters.medio} options={options.medio} open={openFilter === 'medio'} onOpenChange={(next) => setOpenFilter(next ? 'medio' : null)} onChange={(value) => updateFilter('medio', value)} />
+              <MultiFilterSelect label="Región" value={filters.region} options={options.region} open={openFilter === 'region'} onOpenChange={(next) => setOpenFilter(next ? 'region' : null)} onChange={(value) => updateFilter('region', value)} />
+              <MultiFilterSelect label="Zona" value={filters.zona} options={options.zona} open={openFilter === 'zona'} onOpenChange={(next) => setOpenFilter(next ? 'zona' : null)} onChange={(value) => updateFilter('zona', value)} />
+              <MultiFilterSelect label="Estado" value={filters.status} options={options.status} open={openFilter === 'status'} onOpenChange={(next) => setOpenFilter(next ? 'status' : null)} onChange={(value) => updateFilter('status', value)} />
             </div>
 
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
