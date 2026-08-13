@@ -41,7 +41,9 @@ interface MonthRow {
   label: string;
   total: number;
   days: number;
+  weekdayDays: number;
   avgDaily: number;
+  avgWeekday: number;
   vsPrevPct: number | null;
   vsPrevAbs: number | null;
 }
@@ -127,6 +129,23 @@ function displayMonth(dateKey?: string): string {
   const [year, month] = dateKey.split('-');
   const date = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
   return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+function weekdayIndex(date: string): number {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+function isWeekend(date: string): boolean {
+  const day = weekdayIndex(date);
+  return day === 0 || day === 6;
+}
+
+const WEEKDAY_NAMES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+
+function displayDateWithWeekday(date?: string): string {
+  if (!date) return '';
+  return `${WEEKDAY_NAMES[weekdayIndex(date)]} ${displayDate(date)}`;
 }
 
 function findWideHeaderIndex(rows: any[][]): number {
@@ -218,13 +237,17 @@ function buildJumps(activeDays: DayPoint[]): DayJump[] {
   return jumps;
 }
 
-function buildMonths(activeDays: DayPoint[]): MonthRow[] {
-  const buckets = new Map<string, { total: number; days: number }>();
-  activeDays.forEach((day) => {
+function buildMonths(series: DayPoint[]): MonthRow[] {
+  const buckets = new Map<string, { total: number; days: number; weekdayTotal: number; weekdayDays: number }>();
+  series.forEach((day) => {
     const monthStart = `${day.date.slice(0, 7)}-01`;
-    const existing = buckets.get(monthStart) || { total: 0, days: 0 };
+    const existing = buckets.get(monthStart) || { total: 0, days: 0, weekdayTotal: 0, weekdayDays: 0 };
     existing.total += day.total;
-    existing.days += 1;
+    if (Math.abs(day.total) > CENTIMO) existing.days += 1;
+    if (!isWeekend(day.date)) {
+      existing.weekdayTotal += day.total;
+      existing.weekdayDays += 1;
+    }
     buckets.set(monthStart, existing);
   });
 
@@ -235,7 +258,9 @@ function buildMonths(activeDays: DayPoint[]): MonthRow[] {
       label: displayMonth(monthStart),
       total: roundMoney(bucket.total),
       days: bucket.days,
+      weekdayDays: bucket.weekdayDays,
       avgDaily: bucket.days > 0 ? roundMoney(bucket.total / bucket.days) : 0,
+      avgWeekday: bucket.weekdayDays > 0 ? roundMoney(bucket.weekdayTotal / bucket.weekdayDays) : 0,
       vsPrevPct: null as number | null,
       vsPrevAbs: null as number | null,
     }));
@@ -257,16 +282,17 @@ function weekOfMonth(date: string): number {
   return Math.min(5, Math.ceil(day / 7));
 }
 
-function Sparkline({ points }: { points: DayPoint[] }) {
-  const max = Math.max(...points.map((point) => Math.abs(point.total)), 1);
+function Sparkline({ points, weekdaysOnly }: { points: DayPoint[]; weekdaysOnly: boolean }) {
+  const visible = weekdaysOnly ? points.filter((point) => !isWeekend(point.date)) : points;
+  const max = Math.max(...visible.map((point) => Math.abs(point.total)), 1);
   return (
     <div className="flex h-28 items-end gap-px overflow-hidden rounded-lg bg-[var(--bg-soft)] px-1 py-2">
-      {points.map((point) => {
+      {visible.map((point) => {
         const height = Math.max(2, (Math.abs(point.total) / max) * 100);
         return (
           <div
             key={point.date}
-            title={`${displayDate(point.date)} · ${formatCurrency(point.total)}`}
+            title={`${displayDateWithWeekday(point.date)} · ${formatCurrency(point.total)}`}
             className="min-w-[2px] flex-1 rounded-sm bg-[var(--accent)]/75"
             style={{ height: `${height}%` }}
           />
@@ -283,14 +309,16 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
   const [kind, setKind] = useState<SheetKind>('Facturación');
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [query, setQuery] = useState('');
+  const [includeWeekends, setIncludeWeekends] = useState(false);
 
   const analysis = useMemo(() => {
     if (!workbook) return null;
     const needle = normalizeText(query);
     const { series, sheetName, lineCount } = buildDailySeries(workbook, kind, from, to, needle);
-    const activeDays = series.filter((day) => Math.abs(day.total) > CENTIMO);
-    const jumps = buildJumps(activeDays);
-    const months = buildMonths(activeDays);
+    const curveDays = includeWeekends ? series : series.filter((day) => !isWeekend(day.date));
+    const workDays = curveDays.filter((day) => Math.abs(day.total) > CENTIMO);
+    const jumps = buildJumps(workDays);
+    const months = buildMonths(series);
     const flagged = jumps.filter((jump) => jump.pct !== null && Math.abs(jump.pct) >= threshold);
     const boundaries = jumps.filter((jump) => jump.monthBoundary);
     const pcts = jumps.map((jump) => jump.pct).filter((value): value is number => value !== null);
@@ -300,10 +328,11 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
       : absPcts.length % 2 === 1
         ? absPcts[Math.floor(absPcts.length / 2)]
         : roundMoney((absPcts[absPcts.length / 2 - 1] + absPcts[absPcts.length / 2]) / 2);
-    const maxJump = flagged.concat(jumps).sort((a, b) => Math.abs(b.pct || 0) - Math.abs(a.pct || 0))[0] || null;
+    const maxJump = [...jumps].sort((a, b) => Math.abs(b.pct || 0) - Math.abs(a.pct || 0))[0] || null;
 
     const weekRows = months.map((month) => {
-      const days = activeDays.filter((day) => day.date.startsWith(month.monthStart.slice(0, 7)));
+      const prefix = month.monthStart.slice(0, 7);
+      const days = curveDays.filter((day) => day.date.startsWith(prefix));
       const weeks = [1, 2, 3, 4, 5].map((week) => {
         const weekDays = days.filter((day) => weekOfMonth(day.date) === week);
         const total = weekDays.reduce((sum, day) => sum + day.total, 0);
@@ -318,7 +347,7 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
     return {
       series,
-      activeDays,
+      workDays,
       jumps,
       months,
       flagged,
@@ -329,17 +358,19 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
       sheetName,
       lineCount,
     };
-  }, [workbook, kind, from, to, query, threshold]);
+  }, [workbook, kind, from, to, query, threshold, includeWeekends]);
 
   const downloadListado = async () => {
     if (!analysis || analysis.flagged.length === 0) return;
     const XLSX = await import('xlsx');
     const rows = [
-      ['Tipo', 'Desde', 'Hasta', 'Anterior €', 'Actual €', 'Dif. €', 'Var. %', 'Cambio de mes'],
+      ['Tipo', 'Desde', 'Día desde', 'Hasta', 'Día hasta', 'Anterior €', 'Actual €', 'Dif. €', 'Var. %', 'Cambio de mes'],
       ...analysis.flagged.map((jump) => [
-        jump.monthBoundary ? 'Borde de mes' : 'Día a día',
+        jump.monthBoundary ? 'Borde de mes' : 'Laborable a laborable',
         jump.from,
+        WEEKDAY_NAMES[weekdayIndex(jump.from)],
         jump.to,
+        WEEKDAY_NAMES[weekdayIndex(jump.to)],
         jump.previous,
         jump.current,
         jump.diff,
@@ -369,8 +400,8 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Suavidad diaria</h2>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              Mira el diario del FY: totales de mes (el salto estructural) y luego día a día.
-              El borde entre meses es el que más duele si la ponderación semanal no ha suavizado.
+              Mes vs mes usa el total real (findes incluidos). Semanas, bordes y saltos van solo en lunes–viernes:
+              pocas líneas facturan el finde y eso inventaba caídas.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm">
@@ -438,6 +469,15 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
               />
               %
             </label>
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+              <input
+                type="checkbox"
+                checked={includeWeekends}
+                onChange={(event) => setIncludeWeekends(event.target.checked)}
+                className="h-4 w-4 rounded border-[var(--border)]"
+              />
+              Incluir fines de semana
+            </label>
             <div className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
               <input
@@ -460,8 +500,10 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
           <section className="grid gap-3 md:grid-cols-4">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Días con importe</p>
-              <p className="mt-1 text-lg font-semibold">{analysis.activeDays.length}</p>
+              <p className="text-xs text-[var(--text-secondary)]">
+                {includeWeekends ? 'Días con importe' : 'Laborables con importe'}
+              </p>
+              <p className="mt-1 text-lg font-semibold">{analysis.workDays.length}</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
                 {analysis.lineCount} línea(s) · {analysis.sheetName || kind}
               </p>
@@ -469,7 +511,9 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Variación diaria típica</p>
               <p className="mt-1 text-lg font-semibold">{formatPct(analysis.medianAbsPct)}</p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">mediana |día vs día anterior|</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                mediana |laborable vs anterior|
+              </p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-xs text-[var(--text-secondary)]">Saltos ≥ {threshold}%</p>
@@ -484,7 +528,7 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
               <p className="text-xs text-[var(--text-secondary)]">Mayor salto</p>
               <p className="mt-1 text-lg font-semibold">{formatPct(analysis.maxJump?.pct ?? null)}</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {analysis.maxJump ? `${displayDate(analysis.maxJump.from)} → ${displayDate(analysis.maxJump.to)}` : '—'}
+                {analysis.maxJump ? `${displayDateWithWeekday(analysis.maxJump.from)} → ${displayDateWithWeekday(analysis.maxJump.to)}` : '—'}
               </p>
             </div>
           </section>
@@ -492,18 +536,23 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="mb-3 flex items-center gap-2">
               <Activity className="h-4 w-4 text-[var(--accent)]" />
-              <h3 className="text-sm font-semibold">Curva diaria {kind.toLowerCase()}</h3>
+              <h3 className="text-sm font-semibold">
+                Curva {kind.toLowerCase()} {includeWeekends ? '' : '· lun–vie'}
+              </h3>
             </div>
             {analysis.series.length === 0 ? (
               <p className="text-sm text-[var(--text-secondary)]">No hay columnas de fecha en ese rango.</p>
             ) : (
-              <Sparkline points={analysis.series} />
+              <Sparkline points={analysis.series} weekdaysOnly={!includeWeekends} />
             )}
           </section>
 
           <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-            <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
-              Mes vs mes anterior
+            <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
+              <p className="text-sm font-semibold">Mes vs mes anterior</p>
+              <p className="text-xs text-[var(--text-secondary)]">
+                El total incluye findes. La media es solo lun–vie (todos los laborables del mes, festivos a 0).
+              </p>
             </div>
             <div className="max-h-[420px] overflow-auto">
               <table className="w-full min-w-[860px] border-collapse text-sm">
@@ -511,8 +560,8 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
                   <tr>
                     <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Total</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Días</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Media / día</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Laborables</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Media lun–vie</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Vs mes ant.</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. €</th>
                   </tr>
@@ -524,8 +573,8 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
                       <tr key={month.monthStart} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2 capitalize">{month.label}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(month.total)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-xs">{month.days}</td>
-                        <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(month.avgDaily)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{month.weekdayDays}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(month.avgWeekday)}</td>
                         <td className={`px-3 py-2 text-right font-mono text-xs ${big ? 'text-[var(--danger)]' : ''}`}>
                           {formatPct(month.vsPrevPct)}
                         </td>
@@ -542,9 +591,9 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
           <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
             <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
-              <p className="text-sm font-semibold">Media diaria por semana del mes</p>
+              <p className="text-sm font-semibold">Media lun–vie por semana del mes</p>
               <p className="text-xs text-[var(--text-secondary)]">
-                Semana 1 = días 1–7. Si un mes sube mucho vs el anterior, la ponderación debería ir subiendo estas medias, no pegar el salto el día 1.
+                Semana 1 = días 1–7. Media = importe de lun–vie / nº de lun–vie de esa semana (no divide por sábados/domingos con cuatro líneas).
               </p>
             </div>
             <div className="max-h-[360px] overflow-auto">
@@ -577,7 +626,9 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
           <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
             <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
-              <p className="text-sm font-semibold">Bordes de mes (último día con importe → primero del siguiente)</p>
+              <p className="text-sm font-semibold">
+                Bordes de mes ({includeWeekends ? 'último día con importe → primero del siguiente' : 'último lun–vie → primer lun–vie del siguiente'})
+              </p>
             </div>
             <div className="max-h-[320px] overflow-auto">
               <table className="w-full min-w-[980px] border-collapse text-sm">
@@ -602,8 +653,8 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
                     const big = jump.pct !== null && Math.abs(jump.pct) >= threshold;
                     return (
                       <tr key={`${jump.from}|${jump.to}`} className="border-b border-[var(--border)]">
-                        <td className="px-3 py-2 text-xs">{displayDate(jump.from)}</td>
-                        <td className="px-3 py-2 text-xs">{displayDate(jump.to)}</td>
+                        <td className="px-3 py-2 text-xs">{displayDateWithWeekday(jump.from)}</td>
+                        <td className="px-3 py-2 text-xs">{displayDateWithWeekday(jump.to)}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(jump.previous)}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(jump.current)}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(jump.diff)}</td>
@@ -620,7 +671,7 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
           <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
             <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-sm font-semibold">
-              Saltos día a día ≥ {threshold}% ({analysis.flagged.length})
+              Saltos {includeWeekends ? 'día a día' : 'laborable a laborable'} ≥ {threshold}% ({analysis.flagged.length})
             </div>
             <div className="max-h-[420px] overflow-auto">
               <table className="w-full min-w-[980px] border-collapse text-sm">
@@ -639,7 +690,7 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
                   {analysis.flagged.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-3 py-8 text-center text-[var(--text-secondary)]">
-                        Ningún día salta más de {threshold}% respecto al anterior con importe.
+                        Ningún laborable salta más de {threshold}% respecto al anterior.
                       </td>
                     </tr>
                   ) : analysis.flagged
@@ -648,8 +699,8 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
                     .slice(0, 200)
                     .map((jump) => (
                       <tr key={`${jump.from}|${jump.to}|flag`} className="border-b border-[var(--border)]">
-                        <td className="px-3 py-2 text-xs">{displayDate(jump.from)}</td>
-                        <td className="px-3 py-2 text-xs">{displayDate(jump.to)}</td>
+                        <td className="px-3 py-2 text-xs">{displayDateWithWeekday(jump.from)}</td>
+                        <td className="px-3 py-2 text-xs">{displayDateWithWeekday(jump.to)}</td>
                         <td className="px-3 py-2 text-xs">{jump.monthBoundary ? 'Borde de mes' : 'Dentro del mes'}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(jump.previous)}</td>
                         <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(jump.current)}</td>
