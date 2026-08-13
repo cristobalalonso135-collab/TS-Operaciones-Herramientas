@@ -284,21 +284,43 @@ function weekOfMonth(date: string): number {
 
 function Sparkline({ points, weekdaysOnly }: { points: DayPoint[]; weekdaysOnly: boolean }) {
   const visible = weekdaysOnly ? points.filter((point) => !isWeekend(point.date)) : points;
+  if (visible.length === 0) {
+    return (
+      <p className="rounded-lg bg-[var(--bg-soft)] px-3 py-8 text-center text-sm text-[var(--text-secondary)]">
+        No hay días laborables en el rango.
+      </p>
+    );
+  }
+
   const max = Math.max(...visible.map((point) => Math.abs(point.total)), 1);
+  const width = visible.length;
+  const height = 112;
+
   return (
-    <div className="flex h-28 items-end gap-px overflow-hidden rounded-lg bg-[var(--bg-soft)] px-1 py-2">
-      {visible.map((point) => {
-        const height = Math.max(2, (Math.abs(point.total) / max) * 100);
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className="h-28 w-full rounded-lg bg-[var(--bg-soft)]"
+      role="img"
+      aria-label="Curva diaria"
+    >
+      {visible.map((point, index) => {
+        const barHeight = Math.max(2, (Math.abs(point.total) / max) * (height - 6));
         return (
-          <div
+          <rect
             key={point.date}
-            title={`${displayDateWithWeekday(point.date)} · ${formatCurrency(point.total)}`}
-            className="min-w-[2px] flex-1 rounded-sm bg-[var(--accent)]/75"
-            style={{ height: `${height}%` }}
-          />
+            x={index + 0.08}
+            y={height - barHeight}
+            width={0.84}
+            height={barHeight}
+            fill="var(--accent)"
+            opacity={0.82}
+          >
+            <title>{`${displayDateWithWeekday(point.date)} · ${formatCurrency(point.total)}`}</title>
+          </rect>
         );
       })}
-    </div>
+    </svg>
   );
 }
 
