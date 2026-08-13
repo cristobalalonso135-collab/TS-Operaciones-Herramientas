@@ -278,6 +278,14 @@ function buildMonths(series: DayPoint[]): MonthRow[] {
   return months;
 }
 
+function reviewClass(pct: number | null, threshold: number): string {
+  if (pct === null) return '';
+  const abs = Math.abs(pct);
+  if (abs >= threshold) return 'text-[var(--danger)]';
+  if (abs >= Math.max(12, threshold * 0.6)) return 'text-[var(--warning)]';
+  return '';
+}
+
 function weekOfMonth(date: string): number {
   const day = Number(date.slice(8, 10));
   return Math.min(5, Math.ceil(day / 7));
@@ -390,39 +398,48 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
     const weekRows: Array<{
       month: MonthRow;
-      weeks: Array<{ week: number; days: number; avg: number | null }>;
+      weeks: Array<{
+        week: number;
+        days: number;
+        avg: number | null;
+        gapPct: number | null;
+        expected: number | null;
+      }>;
       entryPct: number | null;
-      week2VsPrevPct: number | null;
     }> = [];
 
     months.forEach((month, monthIndex) => {
       const prefix = month.monthStart.slice(0, 7);
       const days = curveDays.filter((day) => day.date.startsWith(prefix));
+      const previous = monthIndex > 0 ? months[monthIndex - 1] : null;
+      const prevWeeks = monthIndex > 0 ? weekRows[monthIndex - 1].weeks : null;
+      const growthFactor = previous && Math.abs(previous.avgWeekday) > CENTIMO
+        ? month.avgWeekday / previous.avgWeekday
+        : null;
+
       const weeks = [1, 2, 3, 4, 5].map((week) => {
         const weekDays = days.filter((day) => weekOfMonth(day.date) === week);
         const total = weekDays.reduce((sum, day) => sum + day.total, 0);
-        return {
-          week,
-          days: weekDays.length,
-          avg: weekDays.length > 0 ? roundMoney(total / weekDays.length) : null,
-        };
+        const avg = weekDays.length > 0 ? roundMoney(total / weekDays.length) : null;
+        const prevSame = prevWeeks?.[week - 1]?.avg ?? null;
+        const expected = prevSame !== null && growthFactor !== null
+          ? roundMoney(prevSame * growthFactor)
+          : null;
+        const gapPct = avg !== null && expected !== null && Math.abs(expected) > CENTIMO
+          ? roundMoney(((avg / expected) - 1) * 100)
+          : null;
+        return { week, days: weekDays.length, avg, gapPct, expected };
       });
 
       const firstAvg = weeks[0]?.avg ?? null;
-      const lastPrevWeek = monthIndex > 0
-        ? weekRows[monthIndex - 1].weeks.filter((week) => week.avg !== null).slice(-1)[0]?.avg ?? null
+      const lastPrevWeek = prevWeeks
+        ? prevWeeks.filter((week) => week.avg !== null).slice(-1)[0]?.avg ?? null
         : null;
-      const prevWeek2 = monthIndex > 0 ? weekRows[monthIndex - 1].weeks[1]?.avg ?? null : null;
-      const thisWeek2 = weeks[1]?.avg ?? null;
-
       const entryPct = firstAvg !== null && lastPrevWeek !== null && Math.abs(lastPrevWeek) > CENTIMO
         ? roundMoney(((firstAvg / lastPrevWeek) - 1) * 100)
         : null;
-      const week2VsPrevPct = thisWeek2 !== null && prevWeek2 !== null && Math.abs(prevWeek2) > CENTIMO
-        ? roundMoney(((thisWeek2 / prevWeek2) - 1) * 100)
-        : null;
 
-      weekRows.push({ month, weeks, entryPct, week2VsPrevPct });
+      weekRows.push({ month, weeks, entryPct });
     });
 
     return {
@@ -673,11 +690,12 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
             <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
               <p className="text-sm font-semibold">Media lun–vie por semana</p>
               <p className="text-xs text-[var(--text-secondary)]">
-                En rojo: última semana del mes anterior vs semana 1, o semana 2 vs semana 2 del mes anterior (≥ {threshold}%).
+                Rojo ≥ {threshold}% · ámbar ≥ {Math.round(Math.max(12, threshold * 0.6))}%.
+                Semana 1 vs última del mes anterior. Semanas 2–5 vs la misma semana del mes anterior × crecimiento de la media del mes.
               </p>
             </div>
             <div className="max-h-[420px] overflow-auto">
-              <table className="w-full min-w-[980px] border-collapse text-sm">
+              <table className="w-full min-w-[920px] border-collapse text-sm">
                 <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
                   <tr>
                     <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
@@ -687,32 +705,34 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
                       </th>
                     ))}
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Última ant. → S1</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">S2 vs S2 ant.</th>
                   </tr>
                 </thead>
                 <tbody>
                   {analysis.weekRows.map((row) => {
-                    const entryHot = row.entryPct !== null && Math.abs(row.entryPct) >= threshold;
-                    const week2Hot = row.week2VsPrevPct !== null && Math.abs(row.week2VsPrevPct) >= threshold;
+                    const entryClass = reviewClass(row.entryPct, threshold);
                     return (
                       <tr key={row.month.monthStart} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2 capitalize">{row.month.label}</td>
                         {row.weeks.map((week) => {
-                          const hot = (week.week === 1 && entryHot) || (week.week === 2 && week2Hot);
+                          const pct = week.week === 1 ? row.entryPct : week.gapPct;
+                          const tone = reviewClass(pct, threshold);
+                          const title = week.week === 1
+                            ? (row.entryPct === null ? undefined : `Última semana anterior → S1: ${formatPct(row.entryPct)}`)
+                            : (week.expected === null || week.avg === null
+                              ? undefined
+                              : `Misma semana mes ant. × crec. mes → esp. ${formatCurrency(week.expected)} · desvío ${formatPct(week.gapPct)}`);
                           return (
                             <td
                               key={week.week}
-                              className={`px-3 py-2 text-right font-mono text-xs ${hot ? 'text-[var(--danger)]' : ''}`}
+                              title={title}
+                              className={`px-3 py-2 text-right font-mono text-xs ${tone}`}
                             >
                               {week.avg === null ? '—' : formatCurrency(week.avg)}
                             </td>
                           );
                         })}
-                        <td className={`px-3 py-2 text-right font-mono text-xs ${entryHot ? 'text-[var(--danger)]' : ''}`}>
+                        <td className={`px-3 py-2 text-right font-mono text-xs ${entryClass}`}>
                           {formatPct(row.entryPct)}
-                        </td>
-                        <td className={`px-3 py-2 text-right font-mono text-xs ${week2Hot ? 'text-[var(--danger)]' : ''}`}>
-                          {formatPct(row.week2VsPrevPct)}
                         </td>
                       </tr>
                     );
