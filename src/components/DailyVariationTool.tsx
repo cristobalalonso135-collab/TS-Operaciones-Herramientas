@@ -390,22 +390,14 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
     const weekRows: Array<{
       month: MonthRow;
-      weeks: Array<{
-        week: number;
-        days: number;
-        avg: number | null;
-        vsPrevWeekPct: number | null;
-        expected: number | null;
-      }>;
-      lastPrevWeek: number | null;
+      weeks: Array<{ week: number; days: number; avg: number | null }>;
       entryPct: number | null;
-      monthAvgPct: number | null;
+      week2VsPrevPct: number | null;
     }> = [];
 
     months.forEach((month, monthIndex) => {
       const prefix = month.monthStart.slice(0, 7);
       const days = curveDays.filter((day) => day.date.startsWith(prefix));
-      const previous = monthIndex > 0 ? months[monthIndex - 1] : null;
       const weeks = [1, 2, 3, 4, 5].map((week) => {
         const weekDays = days.filter((day) => weekOfMonth(day.date) === week);
         const total = weekDays.reduce((sum, day) => sum + day.total, 0);
@@ -413,52 +405,24 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
           week,
           days: weekDays.length,
           avg: weekDays.length > 0 ? roundMoney(total / weekDays.length) : null,
-          vsPrevWeekPct: null as number | null,
-          expected: null as number | null,
         };
       });
 
-      const filled = weeks.filter((week) => week.avg !== null);
-      filled.forEach((week, index) => {
-        if (!previous || filled.length === 0) {
-          week.expected = month.avgWeekday;
-          return;
-        }
-        const progress = filled.length === 1 ? 1 : index / (filled.length - 1);
-        week.expected = roundMoney(previous.avgWeekday + (month.avgWeekday - previous.avgWeekday) * progress);
-      });
-
-      const firstAvg = filled[0]?.avg ?? null;
+      const firstAvg = weeks[0]?.avg ?? null;
       const lastPrevWeek = monthIndex > 0
         ? weekRows[monthIndex - 1].weeks.filter((week) => week.avg !== null).slice(-1)[0]?.avg ?? null
         : null;
+      const prevWeek2 = monthIndex > 0 ? weekRows[monthIndex - 1].weeks[1]?.avg ?? null : null;
+      const thisWeek2 = weeks[1]?.avg ?? null;
+
       const entryPct = firstAvg !== null && lastPrevWeek !== null && Math.abs(lastPrevWeek) > CENTIMO
         ? roundMoney(((firstAvg / lastPrevWeek) - 1) * 100)
         : null;
-      const monthAvgPct = previous && Math.abs(previous.avgWeekday) > CENTIMO
-        ? roundMoney(((month.avgWeekday / previous.avgWeekday) - 1) * 100)
+      const week2VsPrevPct = thisWeek2 !== null && prevWeek2 !== null && Math.abs(prevWeek2) > CENTIMO
+        ? roundMoney(((thisWeek2 / prevWeek2) - 1) * 100)
         : null;
 
-      weekRows.push({ month, weeks, lastPrevWeek, entryPct, monthAvgPct });
-    });
-
-    const chain: Array<{ avg: number; set: (pct: number | null) => void }> = [];
-    weekRows.forEach((row) => {
-      row.weeks.forEach((week) => {
-        if (week.avg === null) return;
-        chain.push({
-          avg: week.avg,
-          set: (pct) => { week.vsPrevWeekPct = pct; },
-        });
-      });
-    });
-    chain.forEach((item, index) => {
-      if (index === 0) {
-        item.set(null);
-        return;
-      }
-      const previous = chain[index - 1].avg;
-      item.set(Math.abs(previous) <= CENTIMO ? null : roundMoney(((item.avg / previous) - 1) * 100));
+      weekRows.push({ month, weeks, entryPct, week2VsPrevPct });
     });
 
     return {
@@ -707,67 +671,49 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
           <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
             <div className="border-b border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
-              <p className="text-sm font-semibold">Media lun–vie por semana · vs crecimiento del mes</p>
+              <p className="text-sm font-semibold">Media lun–vie por semana</p>
               <p className="text-xs text-[var(--text-secondary)]">
-                Si el mes sube un X% en media laborable, las semanas deberían ir hacia ese ritmo:
-                la semana 1 parecida a la última del mes anterior, y subir (o bajar) a lo largo del mes.
-                El % bajo cada semana es vs la semana anterior. Entrada = última semana previa → semana 1.
+                En rojo: última semana del mes anterior vs semana 1, o semana 2 vs semana 2 del mes anterior (≥ {threshold}%).
               </p>
             </div>
-            <div className="max-h-[520px] overflow-auto">
-              <table className="w-full min-w-[1180px] border-collapse text-sm">
+            <div className="max-h-[420px] overflow-auto">
+              <table className="w-full min-w-[980px] border-collapse text-sm">
                 <thead className="sticky top-0 bg-white text-left text-xs text-[var(--text-secondary)]">
                   <tr>
                     <th className="border-b border-[var(--border)] px-3 py-2 font-medium">Mes</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Media mes</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Crec. mes</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Entrada</th>
                     {[1, 2, 3, 4, 5].map((week) => (
                       <th key={week} className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">
                         Sem. {week}
                       </th>
                     ))}
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Última ant. → S1</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">S2 vs S2 ant.</th>
                   </tr>
                 </thead>
                 <tbody>
                   {analysis.weekRows.map((row) => {
                     const entryHot = row.entryPct !== null && Math.abs(row.entryPct) >= threshold;
-                    const monthHot = row.monthAvgPct !== null && Math.abs(row.monthAvgPct) >= threshold;
-                    const cliff = entryHot && (
-                      row.monthAvgPct === null
-                      || Math.abs(row.entryPct || 0) > Math.abs(row.monthAvgPct) + 8
-                    );
+                    const week2Hot = row.week2VsPrevPct !== null && Math.abs(row.week2VsPrevPct) >= threshold;
                     return (
-                      <tr key={row.month.monthStart} className="border-b border-[var(--border)] align-top">
-                        <td className="px-3 py-2 capitalize font-medium">{row.month.label}</td>
-                        <td className="px-3 py-2 text-right font-mono text-xs">{formatCurrency(row.month.avgWeekday)}</td>
-                        <td className={`px-3 py-2 text-right font-mono text-xs ${monthHot ? 'text-[var(--danger)]' : ''}`}>
-                          {formatPct(row.monthAvgPct)}
-                        </td>
-                        <td className={`px-3 py-2 text-right font-mono text-xs ${cliff ? 'text-[var(--danger)]' : ''}`}>
-                          {formatPct(row.entryPct)}
-                          {cliff ? <div className="text-[10px] font-sans text-[var(--danger)]">salto &gt; mes</div> : null}
-                        </td>
+                      <tr key={row.month.monthStart} className="border-b border-[var(--border)]">
+                        <td className="px-3 py-2 capitalize">{row.month.label}</td>
                         {row.weeks.map((week) => {
-                          const weekHot = week.vsPrevWeekPct !== null && Math.abs(week.vsPrevWeekPct) >= threshold;
+                          const hot = (week.week === 1 && entryHot) || (week.week === 2 && week2Hot);
                           return (
-                            <td key={week.week} className="px-3 py-2 text-right font-mono text-xs">
-                              {week.avg === null ? '—' : (
-                                <>
-                                  <div>{formatCurrency(week.avg)}</div>
-                                  <div className={weekHot ? 'text-[10px] text-[var(--danger)]' : 'text-[10px] text-[var(--text-muted)]'}>
-                                    {formatPct(week.vsPrevWeekPct)}
-                                  </div>
-                                  {week.expected !== null ? (
-                                    <div className="text-[10px] text-[var(--text-muted)]">
-                                      esp. {formatCurrency(week.expected)}
-                                    </div>
-                                  ) : null}
-                                </>
-                              )}
+                            <td
+                              key={week.week}
+                              className={`px-3 py-2 text-right font-mono text-xs ${hot ? 'text-[var(--danger)]' : ''}`}
+                            >
+                              {week.avg === null ? '—' : formatCurrency(week.avg)}
                             </td>
                           );
                         })}
+                        <td className={`px-3 py-2 text-right font-mono text-xs ${entryHot ? 'text-[var(--danger)]' : ''}`}>
+                          {formatPct(row.entryPct)}
+                        </td>
+                        <td className={`px-3 py-2 text-right font-mono text-xs ${week2Hot ? 'text-[var(--danger)]' : ''}`}>
+                          {formatPct(row.week2VsPrevPct)}
+                        </td>
                       </tr>
                     );
                   })}
