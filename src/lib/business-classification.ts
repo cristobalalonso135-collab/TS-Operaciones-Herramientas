@@ -138,10 +138,10 @@ export function findSubresponsable(area: string, line: Pick<ClassificationLine, 
     if (!zona) return 'Pendiente';
     if (zona.includes('francia')) return 'Maxime';
     if (vertical === 'the pitch') return 'Stefano';
-    if (zona === 'portugal' || zona.includes('norte')) return 'Juanjo';
+    if (zona.includes('italia')) return 'Francesco Nunziato';
+    if (zona === 'portugal' || zona === 'norte') return 'Juanjo';
     if (zona.includes('levante')) return 'Samu';
     if (zona.includes('centro-sur') || zona.includes('centro sur')) return 'Tornos';
-    if (zona.includes('italia')) return 'Francesco';
   }
 
   if (normalizedArea === 'b2b') {

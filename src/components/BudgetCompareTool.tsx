@@ -1523,7 +1523,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Levante:</span> Samu.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Norte o Portugal:</span> Juanjo.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots The Pitch:</span> Stefano.</p>
-              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia restante:</span> Francesco.</p>
+              <p><span className="font-semibold text-[var(--text-primary)]">Grassroots Italia:</span> Francesco Nunziato (no tiene subresponsable debajo: aparece él).</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots zona Francia y B2B Francia:</span> Maxime.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">Grassroots sin zona:</span> queda pendiente de responsable y subresponsable.</p>
               <p><span className="font-semibold text-[var(--text-primary)]">B2B no Francia:</span> Marta.</p>

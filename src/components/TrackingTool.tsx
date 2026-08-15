@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
 import { ArrowLeft, ChevronRight, FileSpreadsheet } from 'lucide-react';
@@ -69,16 +69,11 @@ function formatCurrency(value: number): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €`;
 }
 
-function formatCompact(value: number): string {
-  const sign = value < 0 ? '-' : '';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) {
-    return `${sign}${(abs / 1_000_000).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} M€`;
-  }
-  if (abs >= 10_000) {
-    return `${sign}${(abs / 1_000).toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} mil €`;
-  }
-  return formatCurrency(value);
+function formatSignedCurrency(value: number): string {
+  const formatted = formatCurrency(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `−${formatted}`;
+  return formatted;
 }
 
 function formatPercent(value: number | null, digits = 1): string {
@@ -87,9 +82,27 @@ function formatPercent(value: number | null, digits = 1): string {
   return `${value > 0 ? '+' : ''}${formatted}%`;
 }
 
+function formatAbsPercent(value: number | null, digits = 1): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${value.toLocaleString('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+}
+
+function formatPp(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const formatted = Math.abs(value).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (value > 0) return `+${formatted} pp`;
+  if (value < 0) return `−${formatted} pp`;
+  return `${formatted} pp`;
+}
+
 function vsPct(actual: number, target: number): number | null {
   if (target === 0) return null;
   return ((actual - target) / Math.abs(target)) * 100;
+}
+
+function ratioPct(part: number, total: number): number | null {
+  if (total === 0) return null;
+  return (part / total) * 100;
 }
 
 function toneClass(value: number | null): string {
@@ -264,22 +277,37 @@ function groupMetrics(lines: TrackingLine[], keyFn: (line: TrackingLine) => stri
   });
 }
 
-function KpiBar({ label, actual, budget }: { label: string; actual: number; budget: number }) {
-  const pct = vsPct(actual, budget);
-  const fill = budget === 0 ? 0 : Math.max(4, Math.min(100, (actual / Math.abs(budget)) * 100));
+function KpiBar({
+  label,
+  actual,
+  budget,
+  kind = 'money',
+}: {
+  label: string;
+  actual: number | null;
+  budget: number | null;
+  kind?: 'money' | 'margin';
+}) {
+  const actualN = actual ?? 0;
+  const budgetN = budget ?? 0;
+  const pct = kind === 'money' ? vsPct(actualN, budgetN) : (actual !== null && budget !== null ? actual - budget : null);
+  const fillBase = budgetN === 0 ? 0 : (actualN / Math.abs(budgetN)) * 100;
+  const fill = actual === null || budget === null ? 0 : Math.max(4, Math.min(100, fillBase));
+  const delta = kind === 'money' ? actualN - budgetN : pct;
 
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</span>
-        <span className={`text-xs font-semibold tabular-nums ${toneClass(pct)}`}>{formatPercent(pct)}</span>
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-        <div className={`h-full rounded-full ${barClass(pct)}`} style={{ width: `${fill}%` }} />
-      </div>
-      <p className="mt-1 text-[11px] tabular-nums text-[var(--text-muted)]">
-        {formatCompact(actual)} <span className="text-[var(--border-strong)]">/</span> {formatCompact(budget)}
+      <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
+      <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
+        {kind === 'money' ? formatCurrency(actualN) : formatAbsPercent(actual)}
+        <span className="font-medium text-[var(--text-muted)]"> / {kind === 'money' ? formatCurrency(budgetN) : formatAbsPercent(budget)}</span>
       </p>
+      <p className={`text-[11px] font-semibold tabular-nums ${toneClass(delta)}`}>
+        {kind === 'money' ? `${formatSignedCurrency(actualN - budgetN)} · ${formatPercent(pct)}` : formatPp(delta)}
+      </p>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+        <div className={`h-full rounded-full ${barClass(kind === 'money' ? pct : delta)}`} style={{ width: `${fill}%` }} />
+      </div>
     </div>
   );
 }
@@ -307,9 +335,15 @@ function TreeCard({
     >
       {eyebrow && <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{eyebrow}</p>}
       <p className={`font-display text-sm font-semibold ${eyebrow ? 'mt-1' : ''}`}>{block.label}</p>
-      <div className="mt-3 space-y-2.5">
-        <KpiBar label="Facturación" actual={block.facturacion} budget={block.budget} />
+      <div className="mt-3 space-y-3">
         <KpiBar label="Gross margin" actual={block.gm} budget={block.gmBudget} />
+        <KpiBar label="Facturación" actual={block.facturacion} budget={block.budget} />
+        <KpiBar
+          label="% margen"
+          actual={ratioPct(block.gm, block.facturacion)}
+          budget={ratioPct(block.gmBudget, block.budget)}
+          kind="margin"
+        />
       </div>
     </button>
   );
@@ -325,7 +359,7 @@ function TreeColumn({
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-[240px] shrink-0 flex-col gap-2">
+    <div className="flex w-[280px] shrink-0 flex-col gap-2">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{title}</p>
         {hint && <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{hint}</p>}
@@ -342,6 +376,12 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedResponsable, setSelectedResponsable] = useState<string | null>(null);
   const [selectedSubresponsable, setSelectedSubresponsable] = useState<string | null>(null);
+  const treeScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const end = treeScrollRef.current?.querySelector('[data-tree-end]');
+    end?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+  }, [selectedArea, selectedResponsable]);
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -412,7 +452,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
         <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Árbol de izquierda a derecha: Teamsports → área → responsable → subresponsable. En cada caja, facturación vs budget y gross margin vs budget. Pro Clubs y B2B se agrupan sin zona.
+          Árbol de izquierda a derecha: Teamsports → área → responsable → subresponsable. En cada caja: gross margin, facturación y % margen, con importe, budget y diferencia.
         </p>
       </section>
 
@@ -440,7 +480,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel}. Pincha una caja para seguir bajando.</p>
-            <div className="flex items-start gap-2 overflow-x-auto pb-2">
+            <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard
                   block={company}
@@ -474,35 +514,42 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               {selectedArea && (
                 <>
                   <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
-                  <TreeColumn title="Responsable" hint={selectedArea}>
-                    {responsableNodes.map((node) => (
-                      <TreeCard
-                        key={node.key}
-                        block={node}
-                        selected={selectedResponsable === node.key}
-                        onClick={() => {
-                          setSelectedResponsable(node.key);
-                          setSelectedSubresponsable(null);
-                        }}
-                      />
-                    ))}
-                  </TreeColumn>
+                  <div data-tree-end={!selectedResponsable ? 'true' : undefined}>
+                    <TreeColumn title="Responsable" hint={selectedArea}>
+                      {responsableNodes.map((node) => (
+                        <TreeCard
+                          key={node.key}
+                          block={node}
+                          selected={selectedResponsable === node.key}
+                          onClick={() => {
+                            setSelectedResponsable(node.key);
+                            setSelectedSubresponsable(null);
+                          }}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </div>
                 </>
               )}
 
               {selectedResponsable && (
                 <>
                   <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
-                  <TreeColumn title="Subresponsable" hint={selectedResponsable}>
-                    {subresponsableNodes.map((node) => (
-                      <TreeCard
-                        key={node.key}
-                        block={node}
-                        selected={selectedSubresponsable === node.key}
-                        onClick={() => setSelectedSubresponsable(selectedSubresponsable === node.key ? null : node.key)}
-                      />
-                    ))}
-                  </TreeColumn>
+                  <div data-tree-end="true">
+                    <TreeColumn title="Subresponsable" hint={selectedResponsable}>
+                      {(subresponsableNodes.length > 0
+                        ? subresponsableNodes
+                        : responsableNodes.filter((node) => node.key === selectedResponsable)
+                      ).map((node) => (
+                        <TreeCard
+                          key={node.key}
+                          block={node}
+                          selected={selectedSubresponsable === node.key}
+                          onClick={() => setSelectedSubresponsable(selectedSubresponsable === node.key ? null : node.key)}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </div>
                 </>
               )}
             </div>
@@ -523,16 +570,22 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                     <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Zona</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. fact.</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">vs Budget</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">GM</th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">GM Bg</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">vs GM</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. GM</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">% mg</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">% mg Bg</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Δ mg</th>
                   </tr>
                 </thead>
                 <tbody>
                   {detailLines.map((line) => {
                     const sales = vsPct(line.facturacion, line.budget);
-                    const gm = vsPct(line.gm, line.gmBudget);
+                    const mg = ratioPct(line.gm, line.facturacion);
+                    const mgBg = ratioPct(line.gmBudget, line.budget);
+                    const mgDelta = mg !== null && mgBg !== null ? mg - mgBg : null;
                     return (
                       <tr key={line.key} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2">{line.vertical}</td>
@@ -541,10 +594,14 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                         <td className="px-3 py-2">{line.zona || '—'}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.facturacion)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.budget)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${toneClass(line.facturacion - line.budget)}`}>{formatSignedCurrency(line.facturacion - line.budget)}</td>
                         <td className={`px-3 py-2 text-right font-mono ${toneClass(sales)}`}>{formatPercent(sales)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.gm)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.gmBudget)}</td>
-                        <td className={`px-3 py-2 text-right font-mono ${toneClass(gm)}`}>{formatPercent(gm)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${toneClass(line.gm - line.gmBudget)}`}>{formatSignedCurrency(line.gm - line.gmBudget)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(mg)}</td>
+                        <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(mgBg)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${toneClass(mgDelta)}`}>{formatPp(mgDelta)}</td>
                       </tr>
                     );
                   })}
