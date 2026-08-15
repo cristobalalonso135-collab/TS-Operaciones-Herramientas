@@ -678,7 +678,7 @@ export default function Home() {
         id: 'tracking' as const,
         title: 'Seguimiento facturación',
         description: 'Facturación vs budget y margen real vs budget, por responsable. Mismas reglas de área que el comparador.',
-        detail: 'YTD vs budget',
+        detail: 'YTD y por meses',
         icon: Target,
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
         delay: 'tools-rise-delay-6',

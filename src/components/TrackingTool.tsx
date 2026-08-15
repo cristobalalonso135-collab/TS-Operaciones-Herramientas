@@ -11,6 +11,8 @@ interface TrackingToolProps {
 
 interface TrackingLine {
   key: string;
+  monthIndex: number | null;
+  monthLabel: string;
   vertical: string;
   medio: string;
   region: string;
@@ -39,7 +41,9 @@ interface MetricBlock {
 }
 
 type SortDirection = 'asc' | 'desc';
+type TrackingViewMode = 'ytd' | 'monthly';
 type TableSortKey =
+  | 'month'
   | 'vertical'
   | 'medio'
   | 'region'
@@ -58,6 +62,20 @@ type TableSortKey =
 
 const AREA_ORDER = ['Grassroots', 'B2B', 'Pro Clubs', 'Sin área'];
 const ZONA_ORDER = ['Norte', 'Portugal'];
+const FISCAL_MONTHS = [
+  { index: 1, label: '1 · Abril', names: ['abril', 'apr', 'april'] },
+  { index: 2, label: '2 · Mayo', names: ['mayo', 'may'] },
+  { index: 3, label: '3 · Junio', names: ['junio', 'jun', 'june'] },
+  { index: 4, label: '4 · Julio', names: ['julio', 'jul', 'july'] },
+  { index: 5, label: '5 · Agosto', names: ['agosto', 'ago', 'aug', 'august'] },
+  { index: 6, label: '6 · Septiembre', names: ['septiembre', 'setiembre', 'sep', 'sept', 'september'] },
+  { index: 7, label: '7 · Octubre', names: ['octubre', 'oct', 'october'] },
+  { index: 8, label: '8 · Noviembre', names: ['noviembre', 'nov', 'november'] },
+  { index: 9, label: '9 · Diciembre', names: ['diciembre', 'dic', 'dec', 'december'] },
+  { index: 10, label: '10 · Enero', names: ['enero', 'ene', 'jan', 'january'] },
+  { index: 11, label: '11 · Febrero', names: ['febrero', 'feb', 'february'] },
+  { index: 12, label: '12 · Marzo', names: ['marzo', 'mar', 'march'] },
+] as const;
 
 function extraLevelKind(area: string | null, subresponsable: string | null): 'zona' | 'vertical' | null {
   if (!subresponsable) return null;
@@ -111,6 +129,36 @@ function parsePercent(value: unknown): number | null {
 
 function findColumn(headers: string[], test: (header: string) => boolean): number {
   return headers.findIndex(test);
+}
+
+function fiscalMonthByIndex(index: number): { index: number; label: string } | null {
+  const found = FISCAL_MONTHS.find((month) => month.index === index);
+  return found ? { index: found.index, label: found.label } : null;
+}
+
+function parseFiscalMonth(value: unknown): { index: number; label: string } | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return fiscalMonthByIndex(((value.getMonth() + 9) % 12) + 1);
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const rounded = Math.round(value);
+    if (rounded >= 1 && rounded <= 12) return fiscalMonthByIndex(rounded);
+    if (value > 20000 && value < 60000) {
+      const date = new Date(Date.UTC(1899, 11, 30) + value * 86400000);
+      return parseFiscalMonth(date);
+    }
+  }
+
+  if (!cellPresent(value)) return null;
+
+  const normalized = normalizeText(value).replace(/[._]/g, ' ');
+  const named = FISCAL_MONTHS.find((month) => month.names.some((name) => normalized.includes(name)));
+  if (named) return { index: named.index, label: named.label };
+
+  const numbered = normalized.match(/\b(1[0-2]|0?[1-9])\b/);
+  if (!numbered) return null;
+  return fiscalMonthByIndex(Number(numbered[1]));
 }
 
 function formatCurrency(value: number): string {
@@ -208,6 +256,7 @@ function mergeTrackingLines(lines: TrackingLine[]): TrackingLine[] {
   lines.forEach((line) => {
     const collapsed = collapseLine(line);
     const key = [
+      collapsed.monthIndex ?? 'ytd',
       collapsed.area,
       collapsed.responsable,
       collapsed.subresponsable,
@@ -234,6 +283,14 @@ function mergeTrackingLines(lines: TrackingLine[]): TrackingLine[] {
   return Array.from(grouped.values());
 }
 
+function withoutMonth(line: TrackingLine): TrackingLine {
+  return { ...line, monthIndex: null, monthLabel: '' };
+}
+
+function aggregateYtdLines(lines: TrackingLine[]): TrackingLine[] {
+  return mergeTrackingLines(lines.map(withoutMonth));
+}
+
 function parseTrackingData(rows: unknown[][]): TrackingLine[] {
   if (!rows.length) return [];
 
@@ -244,6 +301,17 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
 
   const headers = (rows[headerIndex] || []).map(normalizeHeader);
   const colMap = {
+    month: findColumn(headers, (header) => (
+      !header.includes('medio')
+      && (
+        header === 'mes'
+        || header === 'periodo'
+        || header.includes('month')
+        || header.includes('mes fiscal')
+        || header.includes('# mes')
+        || header.startsWith('mes')
+      )
+    )),
     vertical: findColumn(headers, (header) => header === 'vertical'),
     medio: findColumn(headers, (header) => header.includes('medio')),
     region: findColumn(headers, (header) => header.includes('region')),
@@ -292,9 +360,12 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
       const classified = classifyLine({ vertical, medio, region, zona });
       const facturacionLy = colMap.facturacionLy >= 0 ? parseAmount(row[colMap.facturacionLy]) : 0;
       const marginLy = colMap.marginLy >= 0 ? parsePercent(row[colMap.marginLy]) : null;
+      const month = colMap.month >= 0 ? parseFiscalMonth(row[colMap.month]) : null;
 
       return {
-        key: `${index}|${vertical}|${medio}|${region}|${zona}`,
+        key: `${index}|${month?.index ?? 'ytd'}|${vertical}|${medio}|${region}|${zona}`,
+        monthIndex: month?.index ?? null,
+        monthLabel: month?.label ?? '',
         vertical,
         medio,
         region,
@@ -475,6 +546,7 @@ function lineSortValue(line: TrackingLine, key: TableSortKey): string | number |
   const sales = vsPct(line.facturacion, line.budget);
   const mg = ratioPct(line.gm, line.facturacion);
   const mgBg = ratioPct(line.gmBudget, line.budget);
+  if (key === 'month') return line.monthIndex ?? 99;
   if (key === 'vertical') return line.vertical;
   if (key === 'medio') return line.medio;
   if (key === 'region') return line.region;
@@ -496,6 +568,8 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<TrackingLine[]>([]);
+  const [viewMode, setViewMode] = useState<TrackingViewMode>('ytd');
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedResponsable, setSelectedResponsable] = useState<string | null>(null);
   const [selectedSubresponsable, setSelectedSubresponsable] = useState<string | null>(null);
@@ -506,7 +580,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
     end?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-  }, [selectedArea, selectedResponsable, selectedSubresponsable]);
+  }, [selectedArea, selectedMonth, selectedResponsable, selectedSubresponsable]);
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -515,6 +589,8 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       setLines(parsed);
       setFileName(name);
       setError(null);
+      setViewMode('ytd');
+      setSelectedMonth(null);
       setSelectedArea(null);
       setSelectedResponsable(null);
       setSelectedSubresponsable(null);
@@ -526,36 +602,56 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     }
   };
 
-  const company = useMemo(() => {
-    const block = emptyMetrics('teamsports', 'Teamsports');
-    lines.forEach((line) => addLine(block, line));
-    return block;
+  const hasMonths = useMemo(() => lines.some((line) => line.monthIndex !== null), [lines]);
+  const ytdLines = useMemo(() => aggregateYtdLines(lines), [lines]);
+
+  const monthNodes = useMemo(() => {
+    return groupMetrics(
+      lines.filter((line) => line.monthIndex !== null),
+      (line) => line.monthLabel,
+    ).sort((a, b) => {
+      const orderA = FISCAL_MONTHS.find((month) => month.label === a.label)?.index ?? 99;
+      const orderB = FISCAL_MONTHS.find((month) => month.label === b.label)?.index ?? 99;
+      return orderA - orderB;
+    });
   }, [lines]);
 
-  const areaNodes = useMemo(() => groupMetrics(lines, (line) => line.area), [lines]);
+  const scopedLines = useMemo(() => {
+    if (viewMode === 'ytd') return ytdLines;
+    if (selectedMonth === null) return [];
+    return lines.filter((line) => line.monthIndex === selectedMonth);
+  }, [lines, selectedMonth, viewMode, ytdLines]);
+
+  const company = useMemo(() => {
+    const block = emptyMetrics('teamsports', 'Teamsports');
+    ytdLines.forEach((line) => addLine(block, line));
+    return block;
+  }, [ytdLines]);
+
+  const areaNodes = useMemo(() => groupMetrics(scopedLines, (line) => line.area), [scopedLines]);
 
   const responsableNodes = useMemo(() => {
     if (!selectedArea) return [];
     return groupMetrics(
-      lines.filter((line) => line.area === selectedArea),
+      scopedLines.filter((line) => line.area === selectedArea),
       (line) => line.responsable,
     );
-  }, [lines, selectedArea]);
+  }, [scopedLines, selectedArea]);
 
   const subresponsableNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable) return [];
     return groupMetrics(
-      lines.filter((line) => line.area === selectedArea && line.responsable === selectedResponsable),
+      scopedLines.filter((line) => line.area === selectedArea && line.responsable === selectedResponsable),
       (line) => line.subresponsable,
     );
-  }, [lines, selectedArea, selectedResponsable]);
+  }, [scopedLines, selectedArea, selectedResponsable]);
 
   const extraKind = extraLevelKind(selectedArea, selectedSubresponsable);
 
   const extraNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable || !selectedSubresponsable || !extraKind) return [];
     const nodes = groupMetrics(
-      lines.filter((line) => (
+      scopedLines.filter((line) => (
         line.area === selectedArea
         && line.responsable === selectedResponsable
         && line.subresponsable === selectedSubresponsable
@@ -571,17 +667,19 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       });
     }
     return nodes;
-  }, [extraKind, lines, selectedArea, selectedResponsable, selectedSubresponsable]);
+  }, [extraKind, scopedLines, selectedArea, selectedResponsable, selectedSubresponsable]);
 
   const detailLines = useMemo(() => {
-    return lines.filter((line) => {
+    const source = viewMode === 'ytd' ? ytdLines : lines.filter((line) => line.monthIndex !== null);
+    return source.filter((line) => {
+      if (viewMode === 'monthly' && selectedMonth !== null && line.monthIndex !== selectedMonth) return false;
       if (selectedArea && line.area !== selectedArea) return false;
       if (selectedResponsable && line.responsable !== selectedResponsable) return false;
       if (selectedSubresponsable && line.subresponsable !== selectedSubresponsable) return false;
       if (extraKind && selectedExtra && extraLevelValue(line, extraKind) !== selectedExtra) return false;
       return true;
     });
-  }, [extraKind, lines, selectedArea, selectedExtra, selectedResponsable, selectedSubresponsable]);
+  }, [extraKind, lines, selectedArea, selectedExtra, selectedMonth, selectedResponsable, selectedSubresponsable, viewMode, ytdLines]);
 
   const sortedDetailLines = useMemo(() => {
     return [...detailLines].sort((a, b) => {
@@ -601,12 +699,14 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     setSort((prev) => (
       prev.key === key
         ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
-        : { key, direction: key === 'vertical' || key === 'medio' || key === 'region' || key === 'zona' ? 'asc' : 'desc' }
+        : { key, direction: key === 'month' || key === 'vertical' || key === 'medio' || key === 'region' || key === 'zona' ? 'asc' : 'desc' }
     ));
   };
 
   const downloadTable = () => {
-    const header = ['Área', 'Responsable', 'Subresponsable', 'Vertical', 'Medio', 'Región', 'Zona', 'Facturación', 'Budget', 'Dif. fact.', 'vs Budget %', 'GM', 'GM Budget', 'Dif. GM', '% mg', '% mg Bg', 'Δ mg pp', 'vs LY %'];
+    const header = viewMode === 'monthly'
+      ? ['Mes', 'Área', 'Responsable', 'Subresponsable', 'Vertical', 'Medio', 'Región', 'Zona', 'Facturación', 'Budget', 'Dif. fact.', 'vs Budget %', 'GM', 'GM Budget', 'Dif. GM', '% mg', '% mg Bg', 'Δ mg pp', 'vs LY %']
+      : ['Área', 'Responsable', 'Subresponsable', 'Vertical', 'Medio', 'Región', 'Zona', 'Facturación', 'Budget', 'Dif. fact.', 'vs Budget %', 'GM', 'GM Budget', 'Dif. GM', '% mg', '% mg Bg', 'Δ mg pp', 'vs LY %'];
     const rows = sortedDetailLines.map((line) => {
       const sales = vsPct(line.facturacion, line.budget);
       const mg = ratioPct(line.gm, line.facturacion);
@@ -614,6 +714,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       const mgDelta = mg !== null && mgBg !== null ? mg - mgBg : null;
       const ly = vsPct(line.facturacion, line.facturacionLy);
       return [
+        ...(viewMode === 'monthly' ? [line.monthLabel || 'Sin mes'] : []),
         line.area,
         line.responsable,
         line.subresponsable,
@@ -646,7 +747,18 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     URL.revokeObjectURL(url);
   };
 
-  const pathLabel = ['Teamsports', selectedArea, selectedResponsable, selectedSubresponsable, selectedExtra].filter(Boolean).join(' › ');
+  const selectedMonthLabel = selectedMonth ? FISCAL_MONTHS.find((month) => month.index === selectedMonth)?.label : null;
+  const pathLabel = ['Teamsports', selectedMonthLabel, selectedArea, selectedResponsable, selectedSubresponsable, selectedExtra].filter(Boolean).join(' › ');
+
+  const switchView = (mode: TrackingViewMode) => {
+    setViewMode(mode);
+    setSelectedMonth(null);
+    setSelectedArea(null);
+    setSelectedResponsable(null);
+    setSelectedSubresponsable(null);
+    setSelectedExtra(null);
+    setSort({ key: mode === 'monthly' ? 'month' : 'diffFact', direction: mode === 'monthly' ? 'asc' : 'desc' });
+  };
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
@@ -662,17 +774,43 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       </div>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
-        <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Árbol de izquierda a derecha: Teamsports → área → responsable → subresponsable. Juanjo abre Norte y Portugal; en Pro Clubs, después del subresponsable ves el vertical.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
+            <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              {viewMode === 'monthly'
+                ? 'Vista mensual: Teamsports → mes (1 = Abril) → área → responsable. El número 1 es abril, el 12 es marzo.'
+                : 'Vista YTD: Teamsports → área → responsable → subresponsable. Juanjo abre Norte y Portugal; en Pro Clubs, después del subresponsable ves el vertical.'}
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-1">
+            <button
+              type="button"
+              onClick={() => switchView('ytd')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === 'ytd' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              YTD
+            </button>
+            <button
+              type="button"
+              onClick={() => switchView('monthly')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === 'monthly' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              Por meses
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
         <FileUpload
           inputId="tracking-input"
-          label="Export Teamsports (CSV o Excel)"
+          label="Export Teamsports (CSV o Excel). Para la vista mensual, incluye una columna Mes (1 = Abril)."
           onFileLoaded={handleFileLoaded}
         />
         {fileName && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {fileName} · {lines.length.toLocaleString('de-DE')} líneas</p>}
@@ -692,14 +830,20 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       {lines.length > 0 && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+            {viewMode === 'monthly' && !hasMonths && (
+              <div className="mb-4 rounded-lg border border-dashed border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3 text-sm text-[var(--text-secondary)]">
+                Este archivo no trae meses. Sube un export con columna <span className="font-semibold">Mes</span> o <span className="font-semibold">Month</span>: el 1 es abril y el 12 es marzo.
+              </div>
+            )}
             <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel}. Pincha una caja para seguir bajando.</p>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard
                   block={company}
-                  eyebrow="Total"
-                  selected={!selectedArea}
+                  eyebrow={viewMode === 'monthly' ? 'Año fiscal' : 'Total'}
+                  selected={viewMode === 'monthly' ? selectedMonth === null && !selectedArea : !selectedArea}
                   onClick={() => {
+                    setSelectedMonth(null);
                     setSelectedArea(null);
                     setSelectedResponsable(null);
                     setSelectedSubresponsable(null);
@@ -708,25 +852,56 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                 />
               </TreeColumn>
 
-              <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+              {viewMode === 'monthly' && hasMonths && (
+                <>
+                  <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+                  <div data-tree-end={!selectedMonth ? 'true' : undefined}>
+                    <TreeColumn title="Mes" hint="1 = Abril">
+                      {monthNodes.map((node) => {
+                        const monthIndex = FISCAL_MONTHS.find((month) => month.label === node.label)?.index ?? null;
+                        return (
+                          <TreeCard
+                            key={node.key}
+                            block={node}
+                            selected={selectedMonth === monthIndex}
+                            onClick={() => {
+                              setSelectedMonth(monthIndex);
+                              setSelectedArea(null);
+                              setSelectedResponsable(null);
+                              setSelectedSubresponsable(null);
+                              setSelectedExtra(null);
+                            }}
+                          />
+                        );
+                      })}
+                    </TreeColumn>
+                  </div>
+                </>
+              )}
 
-              <TreeColumn title="Área" hint="Elige una rama">
-                {areaNodes.map((node) => (
-                  <TreeCard
-                    key={node.key}
-                    block={node}
-                    selected={selectedArea === node.key}
-                    onClick={() => {
-                      setSelectedArea(node.key);
-                      setSelectedResponsable(null);
-                      setSelectedSubresponsable(null);
-                      setSelectedExtra(null);
-                    }}
-                  />
-                ))}
-              </TreeColumn>
+              {(viewMode === 'ytd' || selectedMonth !== null) && (
+                <>
+                  <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
 
-              {selectedArea && (
+                  <TreeColumn title="Área" hint="Elige una rama">
+                    {areaNodes.map((node) => (
+                      <TreeCard
+                        key={node.key}
+                        block={node}
+                        selected={selectedArea === node.key}
+                        onClick={() => {
+                          setSelectedArea(node.key);
+                          setSelectedResponsable(null);
+                          setSelectedSubresponsable(null);
+                          setSelectedExtra(null);
+                        }}
+                      />
+                    ))}
+                  </TreeColumn>
+                </>
+              )}
+
+              {selectedArea && (viewMode === 'ytd' || selectedMonth !== null) && (
                 <>
                   <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
                   <div data-tree-end={!selectedResponsable ? 'true' : undefined}>
@@ -813,6 +988,9 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               <table className="w-full min-w-[1180px] border-collapse text-sm">
                 <thead className="sticky top-0 bg-[var(--bg-soft)] text-xs text-[var(--text-secondary)]">
                   <tr>
+                    {viewMode === 'monthly' && (
+                      <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Mes" sortKey="month" sort={sort} onSort={updateSort} /></th>
+                    )}
                     <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Vertical" sortKey="vertical" sort={sort} onSort={updateSort} /></th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Medio" sortKey="medio" sort={sort} onSort={updateSort} /></th>
                     <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Región" sortKey="region" sort={sort} onSort={updateSort} /></th>
@@ -839,6 +1017,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                     const ly = vsPct(line.facturacion, line.facturacionLy);
                     return (
                       <tr key={line.key} className="border-b border-[var(--border)]">
+                        {viewMode === 'monthly' && <td className="px-3 py-2">{line.monthLabel || '—'}</td>}
                         <td className="px-3 py-2">{line.vertical}</td>
                         <td className="px-3 py-2">{line.medio}</td>
                         <td className="px-3 py-2">{line.region || '—'}</td>
