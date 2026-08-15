@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
-import { ArrowLeft, ChevronRight, FileSpreadsheet } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
 
 interface TrackingToolProps {
   onBack: () => void;
@@ -23,6 +23,7 @@ interface TrackingLine {
   facturacionLy: number;
   gm: number;
   gmBudget: number;
+  gmLy: number;
 }
 
 interface MetricBlock {
@@ -33,8 +34,27 @@ interface MetricBlock {
   facturacionLy: number;
   gm: number;
   gmBudget: number;
+  gmLy: number;
   rows: number;
 }
+
+type SortDirection = 'asc' | 'desc';
+type TableSortKey =
+  | 'vertical'
+  | 'medio'
+  | 'region'
+  | 'zona'
+  | 'facturacion'
+  | 'budget'
+  | 'diffFact'
+  | 'vsBudget'
+  | 'gm'
+  | 'gmBudget'
+  | 'diffGm'
+  | 'mg'
+  | 'mgBg'
+  | 'mgDelta'
+  | 'vsLy';
 
 const AREA_ORDER = ['Grassroots', 'B2B', 'Pro Clubs', 'Sin área'];
 const ZONA_ORDER = ['Norte', 'Portugal'];
@@ -78,6 +98,15 @@ function parseAmount(value: unknown): number {
     : raw.replace(',', '.');
 
   return Number(normalized) || 0;
+}
+
+function parsePercent(value: unknown): number | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return Math.abs(value) <= 1.5 ? value * 100 : value;
+  }
+  if (!cellPresent(value)) return null;
+  return parseAmount(value);
 }
 
 function findColumn(headers: string[], test: (header: string) => boolean): number {
@@ -147,6 +176,7 @@ function emptyMetrics(key: string, label: string): MetricBlock {
     facturacionLy: 0,
     gm: 0,
     gmBudget: 0,
+    gmLy: 0,
     rows: 0,
   };
 }
@@ -157,22 +187,26 @@ function addLine(block: MetricBlock, line: TrackingLine): void {
   block.facturacionLy += line.facturacionLy;
   block.gm += line.gm;
   block.gmBudget += line.gmBudget;
+  block.gmLy += line.gmLy;
   block.rows += 1;
 }
 
-function collapseZona(line: TrackingLine): TrackingLine {
+function collapseLine(line: TrackingLine): TrackingLine {
   const area = normalizeText(line.area);
-  if (area === 'pro clubs' || area === 'b2b') {
-    return { ...line, zona: '' };
-  }
-  return line;
+  const isKingsLeague = normalizeText(line.vertical).includes('kings league');
+  return {
+    ...line,
+    vertical: isKingsLeague ? 'Kings League' : line.vertical,
+    region: isKingsLeague ? '' : line.region,
+    zona: area === 'pro clubs' || area === 'b2b' || isKingsLeague ? '' : line.zona,
+  };
 }
 
 function mergeTrackingLines(lines: TrackingLine[]): TrackingLine[] {
   const grouped = new Map<string, TrackingLine>();
 
   lines.forEach((line) => {
-    const collapsed = collapseZona(line);
+    const collapsed = collapseLine(line);
     const key = [
       collapsed.area,
       collapsed.responsable,
@@ -194,6 +228,7 @@ function mergeTrackingLines(lines: TrackingLine[]): TrackingLine[] {
     existing.facturacionLy += collapsed.facturacionLy;
     existing.gm += collapsed.gm;
     existing.gmBudget += collapsed.gmBudget;
+    existing.gmLy += collapsed.gmLy;
   });
 
   return Array.from(grouped.values());
@@ -222,6 +257,7 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
     facturacionLy: findColumn(headers, (header) => header.includes('importe') && header.includes('a/a')),
     gm: findColumn(headers, (header) => header === 'gm'),
     gmBudget: findColumn(headers, (header) => header.includes('gm') && header.includes('bg')),
+    marginLy: findColumn(headers, (header) => header.includes('margen') && header.includes('a/a')),
   };
 
   if (colMap.facturacion < 0) {
@@ -254,6 +290,8 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
       const region = colMap.region >= 0 ? String(row[colMap.region] ?? '').trim() : '';
       const zona = colMap.zona >= 0 ? String(row[colMap.zona] ?? '').trim() : '';
       const classified = classifyLine({ vertical, medio, region, zona });
+      const facturacionLy = colMap.facturacionLy >= 0 ? parseAmount(row[colMap.facturacionLy]) : 0;
+      const marginLy = colMap.marginLy >= 0 ? parsePercent(row[colMap.marginLy]) : null;
 
       return {
         key: `${index}|${vertical}|${medio}|${region}|${zona}`,
@@ -264,9 +302,10 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
         ...classified,
         facturacion: parseAmount(row[colMap.facturacion]),
         budget: parseAmount(row[colMap.budget]),
-        facturacionLy: colMap.facturacionLy >= 0 ? parseAmount(row[colMap.facturacionLy]) : 0,
+        facturacionLy,
         gm: colMap.gm >= 0 ? parseAmount(row[colMap.gm]) : 0,
         gmBudget: colMap.gmBudget >= 0 ? parseAmount(row[colMap.gmBudget]) : 0,
+        gmLy: marginLy === null ? 0 : facturacionLy * (marginLy / 100),
       };
     })
     .filter((line) => (
@@ -300,12 +339,16 @@ function KpiBar({
   label,
   actual,
   budget,
+  ly,
   kind = 'money',
+  showLyLabel = false,
 }: {
   label: string;
   actual: number | null;
   budget: number | null;
+  ly?: number | null;
   kind?: 'money' | 'margin';
+  showLyLabel?: boolean;
 }) {
   const actualN = actual ?? 0;
   const budgetN = budget ?? 0;
@@ -313,19 +356,30 @@ function KpiBar({
   const fillBase = budgetN === 0 ? 0 : (actualN / Math.abs(budgetN)) * 100;
   const fill = actual === null || budget === null ? 0 : Math.max(4, Math.min(100, fillBase));
   const delta = kind === 'money' ? actualN - budgetN : pct;
+  const lyDelta = kind === 'money'
+    ? vsPct(actualN, ly ?? 0)
+    : (actual !== null && ly !== null && ly !== undefined ? actual - ly : null);
 
   return (
-    <div>
-      <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
-      <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
-        {kind === 'money' ? formatCurrency(actualN) : formatAbsPercent(actual)}
-        <span className="font-medium text-[var(--text-muted)]"> / {kind === 'money' ? formatCurrency(budgetN) : formatAbsPercent(budget)}</span>
-      </p>
-      <p className={`text-[11px] font-semibold tabular-nums ${toneClass(delta)}`}>
-        {kind === 'money' ? `${formatSignedCurrency(actualN - budgetN)} · ${formatPercent(pct)}` : formatPp(delta)}
-      </p>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-        <div className={`h-full rounded-full ${barClass(kind === 'money' ? pct : delta)}`} style={{ width: `${fill}%` }} />
+    <div className="flex gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
+        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
+          {kind === 'money' ? formatCurrency(actualN) : formatAbsPercent(actual)}
+          <span className="font-medium text-[var(--text-muted)]"> / {kind === 'money' ? formatCurrency(budgetN) : formatAbsPercent(budget)}</span>
+        </p>
+        <p className={`text-[11px] font-semibold tabular-nums ${toneClass(delta)}`}>
+          {kind === 'money' ? `${formatSignedCurrency(actualN - budgetN)} · ${formatPercent(pct)}` : formatPp(delta)}
+        </p>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+          <div className={`h-full rounded-full ${barClass(kind === 'money' ? pct : delta)}`} style={{ width: `${fill}%` }} />
+        </div>
+      </div>
+      <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
+        {showLyLabel && <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">vs LY</p>}
+        <p className={`mt-3 text-[11px] font-semibold tabular-nums ${toneClass(lyDelta)}`}>
+          {kind === 'money' ? formatPercent(lyDelta) : formatPp(lyDelta)}
+        </p>
       </div>
     </div>
   );
@@ -355,12 +409,13 @@ function TreeCard({
       {eyebrow && <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{eyebrow}</p>}
       <p className={`font-display text-sm font-semibold ${eyebrow ? 'mt-1' : ''}`}>{block.label}</p>
       <div className="mt-3 space-y-3">
-        <KpiBar label="Gross margin" actual={block.gm} budget={block.gmBudget} />
-        <KpiBar label="Facturación" actual={block.facturacion} budget={block.budget} />
+        <KpiBar label="Gross margin" actual={block.gm} budget={block.gmBudget} ly={block.gmLy} showLyLabel />
+        <KpiBar label="Facturación" actual={block.facturacion} budget={block.budget} ly={block.facturacionLy} />
         <KpiBar
           label="% margen"
           actual={ratioPct(block.gm, block.facturacion)}
           budget={ratioPct(block.gmBudget, block.budget)}
+          ly={ratioPct(block.gmLy, block.facturacionLy)}
           kind="margin"
         />
       </div>
@@ -378,7 +433,7 @@ function TreeColumn({
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-[280px] shrink-0 flex-col gap-2">
+    <div className="flex w-[320px] shrink-0 flex-col gap-2">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{title}</p>
         {hint && <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{hint}</p>}
@@ -386,6 +441,55 @@ function TreeColumn({
       <div className="flex flex-col gap-2">{children}</div>
     </div>
   );
+}
+
+function SortButton({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = 'left',
+}: {
+  label: string;
+  sortKey: TableSortKey;
+  sort: { key: TableSortKey; direction: SortDirection };
+  onSort: (key: TableSortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sort.key === sortKey;
+  const Icon = !active ? ArrowUpDown : sort.direction === 'asc' ? ArrowUp : ArrowDown;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`flex w-full items-center gap-1 ${align === 'right' ? 'justify-end' : 'justify-start'}`}
+    >
+      <span>{label}</span>
+      <Icon className={`h-3 w-3 ${active ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}`} />
+    </button>
+  );
+}
+
+function lineSortValue(line: TrackingLine, key: TableSortKey): string | number | null {
+  const sales = vsPct(line.facturacion, line.budget);
+  const mg = ratioPct(line.gm, line.facturacion);
+  const mgBg = ratioPct(line.gmBudget, line.budget);
+  if (key === 'vertical') return line.vertical;
+  if (key === 'medio') return line.medio;
+  if (key === 'region') return line.region;
+  if (key === 'zona') return line.zona;
+  if (key === 'facturacion') return line.facturacion;
+  if (key === 'budget') return line.budget;
+  if (key === 'diffFact') return line.facturacion - line.budget;
+  if (key === 'vsBudget') return sales;
+  if (key === 'gm') return line.gm;
+  if (key === 'gmBudget') return line.gmBudget;
+  if (key === 'diffGm') return line.gm - line.gmBudget;
+  if (key === 'mg') return mg;
+  if (key === 'mgBg') return mgBg;
+  if (key === 'mgDelta') return mg !== null && mgBg !== null ? mg - mgBg : null;
+  return vsPct(line.facturacion, line.facturacionLy);
 }
 
 export default function TrackingTool({ onBack }: TrackingToolProps) {
@@ -396,6 +500,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [selectedResponsable, setSelectedResponsable] = useState<string | null>(null);
   const [selectedSubresponsable, setSelectedSubresponsable] = useState<string | null>(null);
   const [selectedExtra, setSelectedExtra] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ key: TableSortKey; direction: SortDirection }>({ key: 'diffFact', direction: 'desc' });
   const treeScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -475,8 +580,71 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       if (selectedSubresponsable && line.subresponsable !== selectedSubresponsable) return false;
       if (extraKind && selectedExtra && extraLevelValue(line, extraKind) !== selectedExtra) return false;
       return true;
-    }).sort((a, b) => Math.abs(b.facturacion - b.budget) - Math.abs(a.facturacion - a.budget));
+    });
   }, [extraKind, lines, selectedArea, selectedExtra, selectedResponsable, selectedSubresponsable]);
+
+  const sortedDetailLines = useMemo(() => {
+    return [...detailLines].sort((a, b) => {
+      const left = lineSortValue(a, sort.key);
+      const right = lineSortValue(b, sort.key);
+      if (left === null && right === null) return 0;
+      if (left === null) return 1;
+      if (right === null) return -1;
+      const result = typeof left === 'number' && typeof right === 'number'
+        ? left - right
+        : String(left).localeCompare(String(right), 'es');
+      return sort.direction === 'asc' ? result : -result;
+    });
+  }, [detailLines, sort]);
+
+  const updateSort = (key: TableSortKey) => {
+    setSort((prev) => (
+      prev.key === key
+        ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: key === 'vertical' || key === 'medio' || key === 'region' || key === 'zona' ? 'asc' : 'desc' }
+    ));
+  };
+
+  const downloadTable = () => {
+    const header = ['Área', 'Responsable', 'Subresponsable', 'Vertical', 'Medio', 'Región', 'Zona', 'Facturación', 'Budget', 'Dif. fact.', 'vs Budget %', 'GM', 'GM Budget', 'Dif. GM', '% mg', '% mg Bg', 'Δ mg pp', 'vs LY %'];
+    const rows = sortedDetailLines.map((line) => {
+      const sales = vsPct(line.facturacion, line.budget);
+      const mg = ratioPct(line.gm, line.facturacion);
+      const mgBg = ratioPct(line.gmBudget, line.budget);
+      const mgDelta = mg !== null && mgBg !== null ? mg - mgBg : null;
+      const ly = vsPct(line.facturacion, line.facturacionLy);
+      return [
+        line.area,
+        line.responsable,
+        line.subresponsable,
+        line.vertical,
+        line.medio,
+        line.region,
+        line.zona,
+        line.facturacion,
+        line.budget,
+        line.facturacion - line.budget,
+        sales,
+        line.gm,
+        line.gmBudget,
+        line.gm - line.gmBudget,
+        mg,
+        mgBg,
+        mgDelta,
+        ly,
+      ];
+    });
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';'))
+      .join('\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `seguimiento_${(pathLabel || 'tabla').replace(/[^\w]+/g, '_')}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const pathLabel = ['Teamsports', selectedArea, selectedResponsable, selectedSubresponsable, selectedExtra].filter(Boolean).join(' › ');
 
@@ -625,36 +793,50 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
           </section>
 
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="text-sm font-semibold">Líneas · {pathLabel}</p>
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">
-              En Pro Clubs y B2B la zona no parte las líneas: facturación y budget del mismo vertical/medio se suman juntos.
-            </p>
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Líneas · {pathLabel}</p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  Pincha una columna para ordenar. El export baja exactamente esta vista, con el orden actual.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={downloadTable}
+                className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-xs font-medium text-[var(--text-secondary)] transition hover:border-[var(--accent)]"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Exportar tabla
+              </button>
+            </div>
             <div className="mt-3 max-h-[420px] overflow-auto">
-              <table className="w-full min-w-[980px] border-collapse text-sm">
+              <table className="w-full min-w-[1180px] border-collapse text-sm">
                 <thead className="sticky top-0 bg-[var(--bg-soft)] text-xs text-[var(--text-secondary)]">
                   <tr>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Vertical</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Medio</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Región</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium">Zona</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Facturación</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Budget</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. fact.</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">vs Budget</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">GM</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">GM Bg</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Dif. GM</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">% mg</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">% mg Bg</th>
-                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium">Δ mg</th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Vertical" sortKey="vertical" sort={sort} onSort={updateSort} /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Medio" sortKey="medio" sort={sort} onSort={updateSort} /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Región" sortKey="region" sort={sort} onSort={updateSort} /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-left font-medium"><SortButton label="Zona" sortKey="zona" sort={sort} onSort={updateSort} /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="Facturación" sortKey="facturacion" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="Budget" sortKey="budget" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="Dif. fact." sortKey="diffFact" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="vs Budget" sortKey="vsBudget" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="GM" sortKey="gm" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="GM Bg" sortKey="gmBudget" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="Dif. GM" sortKey="diffGm" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="% mg" sortKey="mg" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="% mg Bg" sortKey="mgBg" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="Δ mg" sortKey="mgDelta" sort={sort} onSort={updateSort} align="right" /></th>
+                    <th className="border-b border-[var(--border)] px-3 py-2 text-right font-medium"><SortButton label="vs LY" sortKey="vsLy" sort={sort} onSort={updateSort} align="right" /></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {detailLines.map((line) => {
+                  {sortedDetailLines.map((line) => {
                     const sales = vsPct(line.facturacion, line.budget);
                     const mg = ratioPct(line.gm, line.facturacion);
                     const mgBg = ratioPct(line.gmBudget, line.budget);
                     const mgDelta = mg !== null && mgBg !== null ? mg - mgBg : null;
+                    const ly = vsPct(line.facturacion, line.facturacionLy);
                     return (
                       <tr key={line.key} className="border-b border-[var(--border)]">
                         <td className="px-3 py-2">{line.vertical}</td>
@@ -671,6 +853,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                         <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(mg)}</td>
                         <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(mgBg)}</td>
                         <td className={`px-3 py-2 text-right font-mono ${toneClass(mgDelta)}`}>{formatPp(mgDelta)}</td>
+                        <td className={`px-3 py-2 text-right font-mono ${toneClass(ly)}`}>{formatPercent(ly)}</td>
                       </tr>
                     );
                   })}
