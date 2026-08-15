@@ -37,6 +37,25 @@ interface MetricBlock {
 }
 
 const AREA_ORDER = ['Grassroots', 'B2B', 'Pro Clubs', 'Sin área'];
+const ZONA_ORDER = ['Norte', 'Portugal'];
+
+function extraLevelKind(area: string | null, subresponsable: string | null): 'zona' | 'vertical' | null {
+  if (!subresponsable) return null;
+  if (area === 'Grassroots' && subresponsable === 'Juanjo') return 'zona';
+  if (area === 'Pro Clubs') return 'vertical';
+  return null;
+}
+
+function extraLevelLabel(kind: 'zona' | 'vertical' | null): string {
+  if (kind === 'zona') return 'Zona';
+  if (kind === 'vertical') return 'Vertical';
+  return '';
+}
+
+function extraLevelValue(line: TrackingLine, kind: 'zona' | 'vertical'): string {
+  if (kind === 'zona') return line.zona || 'Sin zona';
+  return line.vertical || 'Sin vertical';
+}
 
 function normalizeHeader(value: unknown): string {
   return normalizeText(value).replace(/^\*+\s*/, '').replace(/\s+/g, ' ');
@@ -376,12 +395,13 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedResponsable, setSelectedResponsable] = useState<string | null>(null);
   const [selectedSubresponsable, setSelectedSubresponsable] = useState<string | null>(null);
+  const [selectedExtra, setSelectedExtra] = useState<string | null>(null);
   const treeScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
     end?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-  }, [selectedArea, selectedResponsable]);
+  }, [selectedArea, selectedResponsable, selectedSubresponsable]);
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -393,6 +413,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       setSelectedArea(null);
       setSelectedResponsable(null);
       setSelectedSubresponsable(null);
+      setSelectedExtra(null);
     } catch (err) {
       setLines([]);
       setFileName(null);
@@ -424,16 +445,40 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     );
   }, [lines, selectedArea, selectedResponsable]);
 
+  const extraKind = extraLevelKind(selectedArea, selectedSubresponsable);
+
+  const extraNodes = useMemo(() => {
+    if (!selectedArea || !selectedResponsable || !selectedSubresponsable || !extraKind) return [];
+    const nodes = groupMetrics(
+      lines.filter((line) => (
+        line.area === selectedArea
+        && line.responsable === selectedResponsable
+        && line.subresponsable === selectedSubresponsable
+      )),
+      (line) => extraLevelValue(line, extraKind),
+    );
+    if (extraKind === 'zona') {
+      return [...nodes].sort((a, b) => {
+        const orderA = ZONA_ORDER.indexOf(a.label);
+        const orderB = ZONA_ORDER.indexOf(b.label);
+        if (orderA >= 0 || orderB >= 0) return (orderA < 0 ? 99 : orderA) - (orderB < 0 ? 99 : orderB);
+        return a.label.localeCompare(b.label, 'es');
+      });
+    }
+    return nodes;
+  }, [extraKind, lines, selectedArea, selectedResponsable, selectedSubresponsable]);
+
   const detailLines = useMemo(() => {
     return lines.filter((line) => {
       if (selectedArea && line.area !== selectedArea) return false;
       if (selectedResponsable && line.responsable !== selectedResponsable) return false;
       if (selectedSubresponsable && line.subresponsable !== selectedSubresponsable) return false;
+      if (extraKind && selectedExtra && extraLevelValue(line, extraKind) !== selectedExtra) return false;
       return true;
     }).sort((a, b) => Math.abs(b.facturacion - b.budget) - Math.abs(a.facturacion - a.budget));
-  }, [lines, selectedArea, selectedResponsable, selectedSubresponsable]);
+  }, [extraKind, lines, selectedArea, selectedExtra, selectedResponsable, selectedSubresponsable]);
 
-  const pathLabel = ['Teamsports', selectedArea, selectedResponsable, selectedSubresponsable].filter(Boolean).join(' › ');
+  const pathLabel = ['Teamsports', selectedArea, selectedResponsable, selectedSubresponsable, selectedExtra].filter(Boolean).join(' › ');
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
@@ -452,7 +497,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
         <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Árbol de izquierda a derecha: Teamsports → área → responsable → subresponsable. En cada caja: gross margin, facturación y % margen, con importe, budget y diferencia.
+          Árbol de izquierda a derecha: Teamsports → área → responsable → subresponsable. Juanjo abre Norte y Portugal; en Pro Clubs, después del subresponsable ves el vertical.
         </p>
       </section>
 
@@ -490,6 +535,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                     setSelectedArea(null);
                     setSelectedResponsable(null);
                     setSelectedSubresponsable(null);
+                    setSelectedExtra(null);
                   }}
                 />
               </TreeColumn>
@@ -506,6 +552,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                       setSelectedArea(node.key);
                       setSelectedResponsable(null);
                       setSelectedSubresponsable(null);
+                      setSelectedExtra(null);
                     }}
                   />
                 ))}
@@ -524,6 +571,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                           onClick={() => {
                             setSelectedResponsable(node.key);
                             setSelectedSubresponsable(null);
+                            setSelectedExtra(null);
                           }}
                         />
                       ))}
@@ -535,7 +583,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               {selectedResponsable && (
                 <>
                   <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
-                  <div data-tree-end="true">
+                  <div data-tree-end={!selectedSubresponsable || !extraKind ? 'true' : undefined}>
                     <TreeColumn title="Subresponsable" hint={selectedResponsable}>
                       {(subresponsableNodes.length > 0
                         ? subresponsableNodes
@@ -545,7 +593,28 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                           key={node.key}
                           block={node}
                           selected={selectedSubresponsable === node.key}
-                          onClick={() => setSelectedSubresponsable(selectedSubresponsable === node.key ? null : node.key)}
+                          onClick={() => {
+                            setSelectedSubresponsable(node.key);
+                            setSelectedExtra(null);
+                          }}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </div>
+                </>
+              )}
+
+              {extraKind && selectedSubresponsable && extraNodes.length > 0 && (
+                <>
+                  <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+                  <div data-tree-end="true">
+                    <TreeColumn title={extraLevelLabel(extraKind)} hint={selectedSubresponsable}>
+                      {extraNodes.map((node) => (
+                        <TreeCard
+                          key={node.key}
+                          block={node}
+                          selected={selectedExtra === node.key}
+                          onClick={() => setSelectedExtra(selectedExtra === node.key ? null : node.key)}
                         />
                       ))}
                     </TreeColumn>
