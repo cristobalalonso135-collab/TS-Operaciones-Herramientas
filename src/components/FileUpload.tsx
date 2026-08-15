@@ -9,6 +9,9 @@ interface FileUploadProps {
   accept?: string;
   label?: string;
   inputId?: string;
+  multiple?: boolean;
+  keepDropzone?: boolean;
+  hint?: string;
 }
 
 export default function FileUpload({
@@ -17,6 +20,9 @@ export default function FileUpload({
   accept = '.xlsx,.xls,.csv',
   label = 'Sube tu Excel de budget',
   inputId = 'file-input',
+  multiple = false,
+  keepDropzone = false,
+  hint,
 }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -50,22 +56,35 @@ export default function FileUpload({
     [onFileLoaded, onWorkbookLoaded]
   );
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragActive(false);
-      const file = e.dataTransfer.files[0];
-      if (file) processFile(file);
+  const processFiles = useCallback(
+    async (fileList: FileList | File[]) => {
+      const files = Array.from(fileList);
+      for (const file of files) {
+        await processFile(file);
+      }
     },
     [processFile]
   );
 
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragActive(false);
+      if (e.dataTransfer.files.length > 0) {
+        void processFiles(multiple ? e.dataTransfer.files : [e.dataTransfer.files[0]]);
+      }
+    },
+    [multiple, processFiles]
+  );
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) processFile(file);
+      if (e.target.files && e.target.files.length > 0) {
+        void processFiles(multiple ? e.target.files : [e.target.files[0]]);
+      }
+      e.target.value = '';
     },
-    [processFile]
+    [multiple, processFiles]
   );
 
   return (
@@ -86,10 +105,11 @@ export default function FileUpload({
           id={inputId}
           type="file"
           accept={accept}
+          multiple={multiple}
           onChange={handleChange}
           className="hidden"
         />
-        {fileName ? (
+        {fileName && !keepDropzone ? (
           <div className="flex items-center justify-center gap-3">
             <FileSpreadsheet className="h-8 w-8 text-[var(--success)]" />
             <div className="text-left">
@@ -110,9 +130,12 @@ export default function FileUpload({
           <div className="space-y-2">
             <Upload className="mx-auto h-9 w-9 text-[var(--text-secondary)]" />
             <p className="text-sm text-[var(--text-secondary)]">
-              Arrastra el archivo aquí o <span className="font-medium text-[var(--accent)]">selecciónalo</span>
+              Arrastra {multiple ? 'los archivos' : 'el archivo'} aquí o <span className="font-medium text-[var(--accent)]">selecciónalo</span>
             </p>
-            <p className="text-xs text-[var(--text-muted)]">.xlsx, .xls o .csv</p>
+            <p className="text-xs text-[var(--text-muted)]">{hint || '.xlsx, .xls o .csv'}</p>
+            {keepDropzone && fileName && (
+              <p className="text-xs text-[var(--text-secondary)]">Último: {fileName}</p>
+            )}
           </div>
         )}
       </div>

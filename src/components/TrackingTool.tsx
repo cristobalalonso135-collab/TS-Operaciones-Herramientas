@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet, X } from 'lucide-react';
 
 interface TrackingToolProps {
   onBack: () => void;
@@ -38,6 +38,13 @@ interface MetricBlock {
   gmBudget: number;
   gmLy: number;
   rows: number;
+}
+
+interface MonthPack {
+  monthIndex: number;
+  monthLabel: string;
+  fileName: string;
+  lines: TrackingLine[];
 }
 
 type SortDirection = 'asc' | 'desc';
@@ -289,6 +296,36 @@ function withoutMonth(line: TrackingLine): TrackingLine {
 
 function aggregateYtdLines(lines: TrackingLine[]): TrackingLine[] {
   return mergeTrackingLines(lines.map(withoutMonth));
+}
+
+function stampMonth(lines: TrackingLine[], month: { index: number; label: string }): TrackingLine[] {
+  return mergeTrackingLines(lines.map((line) => ({
+    ...line,
+    monthIndex: month.index,
+    monthLabel: month.label,
+  })));
+}
+
+function guessMonthFromFileName(fileName: string): { index: number; label: string } | null {
+  const base = fileName.replace(/\.[^.]+$/, '');
+  const normalized = normalizeText(base).replace(/[_-]+/g, ' ');
+  const named = FISCAL_MONTHS
+    .flatMap((month) => month.names.map((name) => ({ name, month })))
+    .sort((a, b) => b.name.length - a.name.length)
+    .find(({ name }) => (
+      name.length <= 3
+        ? new RegExp(`(?:^| )${name}(?: |$)`).test(normalized)
+        : normalized.includes(name)
+    ));
+  if (named) return { index: named.month.index, label: named.month.label };
+
+  if (/^(1[0-2]|0?[1-9])$/.test(normalized)) {
+    return fiscalMonthByIndex(Number(normalized));
+  }
+
+  const mesMatch = normalized.match(/(?:^| )(?:mes|m)\s*(1[0-2]|0?[1-9])(?: |$)/);
+  if (mesMatch) return fiscalMonthByIndex(Number(mesMatch[1]));
+  return null;
 }
 
 function parseTrackingData(rows: unknown[][]): TrackingLine[] {
@@ -565,9 +602,11 @@ function lineSortValue(line: TrackingLine, key: TableSortKey): string | number |
 }
 
 export default function TrackingTool({ onBack }: TrackingToolProps) {
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [ytdFileName, setYtdFileName] = useState<string | null>(null);
+  const [ytdSourceLines, setYtdSourceLines] = useState<TrackingLine[]>([]);
+  const [monthPacks, setMonthPacks] = useState<MonthPack[]>([]);
+  const [uploadMonth, setUploadMonth] = useState(1);
   const [error, setError] = useState<string | null>(null);
-  const [lines, setLines] = useState<TrackingLine[]>([]);
   const [viewMode, setViewMode] = useState<TrackingViewMode>('ytd');
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
@@ -576,57 +615,110 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [selectedExtra, setSelectedExtra] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: TableSortKey; direction: SortDirection }>({ key: 'diffFact', direction: 'desc' });
   const treeScrollRef = useRef<HTMLDivElement>(null);
+  const uploadMonthRef = useRef(1);
+  const monthPacksRef = useRef<MonthPack[]>([]);
+
+  useEffect(() => {
+    uploadMonthRef.current = uploadMonth;
+  }, [uploadMonth]);
+
+  useEffect(() => {
+    monthPacksRef.current = monthPacks;
+  }, [monthPacks]);
 
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
     end?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
   }, [selectedArea, selectedMonth, selectedResponsable, selectedSubresponsable]);
 
-  const handleFileLoaded = (data: unknown[][], name: string) => {
+  const handleYtdFileLoaded = (data: unknown[][], name: string) => {
     try {
       const parsed = parseTrackingData(data);
       if (parsed.length === 0) throw new Error('El archivo no tiene líneas con importe o budget.');
-      setLines(parsed);
-      setFileName(name);
+      setYtdSourceLines(parsed);
+      setYtdFileName(name);
       setError(null);
-      setViewMode('ytd');
-      setSelectedMonth(null);
       setSelectedArea(null);
       setSelectedResponsable(null);
       setSelectedSubresponsable(null);
       setSelectedExtra(null);
     } catch (err) {
-      setLines([]);
-      setFileName(null);
+      setYtdSourceLines([]);
+      setYtdFileName(null);
       setError(err instanceof Error ? err.message : 'No he podido leer el archivo.');
     }
   };
 
-  const hasMonths = useMemo(() => lines.some((line) => line.monthIndex !== null), [lines]);
-  const ytdLines = useMemo(() => aggregateYtdLines(lines), [lines]);
+  const handleMonthFileLoaded = (data: unknown[][], name: string) => {
+    try {
+      const parsed = parseTrackingData(data);
+      if (parsed.length === 0) throw new Error(`${name} no tiene líneas con importe o budget.`);
+      const guessed = guessMonthFromFileName(name);
+      const month = guessed || fiscalMonthByIndex(uploadMonthRef.current);
+      if (!month) throw new Error('Elige un mes del 1 al 12 (1 = Abril).');
+      const stamped = stampMonth(parsed, month);
+      const packs = [
+        ...monthPacksRef.current.filter((pack) => pack.monthIndex !== month.index),
+        {
+          monthIndex: month.index,
+          monthLabel: month.label,
+          fileName: name,
+          lines: stamped,
+        },
+      ].sort((a, b) => a.monthIndex - b.monthIndex);
+      monthPacksRef.current = packs;
+      setMonthPacks(packs);
+
+      const used = new Set(packs.map((pack) => pack.monthIndex));
+      const following = FISCAL_MONTHS.find((item) => !used.has(item.index))?.index ?? month.index;
+      uploadMonthRef.current = following;
+      setUploadMonth(following);
+      setError(null);
+      setSelectedMonth(month.index);
+      setSelectedArea(null);
+      setSelectedResponsable(null);
+      setSelectedSubresponsable(null);
+      setSelectedExtra(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No he podido leer el archivo.');
+    }
+  };
+
+  const removeMonthPack = (monthIndex: number) => {
+    const next = monthPacksRef.current.filter((pack) => pack.monthIndex !== monthIndex);
+    monthPacksRef.current = next;
+    setMonthPacks(next);
+    setSelectedMonth((prev) => (prev === monthIndex ? null : prev));
+  };
+
+  const monthlyLines = useMemo(() => monthPacks.flatMap((pack) => pack.lines), [monthPacks]);
+  const hasMonths = monthPacks.length > 0;
+  const ytdLines = useMemo(() => aggregateYtdLines(ytdSourceLines), [ytdSourceLines]);
+  const activeHasData = viewMode === 'ytd' ? ytdLines.length > 0 : hasMonths;
 
   const monthNodes = useMemo(() => {
     return groupMetrics(
-      lines.filter((line) => line.monthIndex !== null),
+      monthlyLines,
       (line) => line.monthLabel,
     ).sort((a, b) => {
       const orderA = FISCAL_MONTHS.find((month) => month.label === a.label)?.index ?? 99;
       const orderB = FISCAL_MONTHS.find((month) => month.label === b.label)?.index ?? 99;
       return orderA - orderB;
     });
-  }, [lines]);
+  }, [monthlyLines]);
 
   const scopedLines = useMemo(() => {
     if (viewMode === 'ytd') return ytdLines;
     if (selectedMonth === null) return [];
-    return lines.filter((line) => line.monthIndex === selectedMonth);
-  }, [lines, selectedMonth, viewMode, ytdLines]);
+    return monthlyLines.filter((line) => line.monthIndex === selectedMonth);
+  }, [monthlyLines, selectedMonth, viewMode, ytdLines]);
 
   const company = useMemo(() => {
+    const source = viewMode === 'monthly' ? monthlyLines : ytdLines;
     const block = emptyMetrics('teamsports', 'Teamsports');
-    ytdLines.forEach((line) => addLine(block, line));
+    source.forEach((line) => addLine(block, line));
     return block;
-  }, [ytdLines]);
+  }, [monthlyLines, viewMode, ytdLines]);
 
   const areaNodes = useMemo(() => groupMetrics(scopedLines, (line) => line.area), [scopedLines]);
 
@@ -670,7 +762,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   }, [extraKind, scopedLines, selectedArea, selectedResponsable, selectedSubresponsable]);
 
   const detailLines = useMemo(() => {
-    const source = viewMode === 'ytd' ? ytdLines : lines.filter((line) => line.monthIndex !== null);
+    const source = viewMode === 'ytd' ? ytdLines : monthlyLines;
     return source.filter((line) => {
       if (viewMode === 'monthly' && selectedMonth !== null && line.monthIndex !== selectedMonth) return false;
       if (selectedArea && line.area !== selectedArea) return false;
@@ -679,7 +771,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       if (extraKind && selectedExtra && extraLevelValue(line, extraKind) !== selectedExtra) return false;
       return true;
     });
-  }, [extraKind, lines, selectedArea, selectedExtra, selectedMonth, selectedResponsable, selectedSubresponsable, viewMode, ytdLines]);
+  }, [extraKind, monthlyLines, selectedArea, selectedExtra, selectedMonth, selectedResponsable, selectedSubresponsable, viewMode, ytdLines]);
 
   const sortedDetailLines = useMemo(() => {
     return [...detailLines].sort((a, b) => {
@@ -780,7 +872,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
               {viewMode === 'monthly'
-                ? 'Vista mensual: Teamsports → mes (1 = Abril) → área → responsable. El número 1 es abril, el 12 es marzo.'
+                ? 'Sube un CSV por mes, el mismo formato que el YTD, sin columna de fecha. El 1 es abril y el 12 es marzo. Si el archivo se llama abril o 1, se asigna solo.'
                 : 'Vista YTD: Teamsports → área → responsable → subresponsable. Juanjo abre Norte y Portugal; en Pro Clubs, después del subresponsable ves el vertical.'}
             </p>
           </div>
@@ -808,33 +900,112 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       </section>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <FileUpload
-          inputId="tracking-input"
-          label="Export Teamsports (CSV o Excel). Para la vista mensual, incluye una columna Mes (1 = Abril)."
-          onFileLoaded={handleFileLoaded}
-        />
-        {fileName && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {fileName} · {lines.length.toLocaleString('de-DE')} líneas</p>}
+        {viewMode === 'ytd' ? (
+          <>
+            <FileUpload
+              inputId="tracking-ytd-input"
+              label="Export Teamsports YTD (CSV o Excel)"
+              onFileLoaded={handleYtdFileLoaded}
+            />
+            {ytdFileName && (
+              <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                Cargado: {ytdFileName} · {ytdLines.length.toLocaleString('de-DE')} líneas
+              </p>
+            )}
+          </>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-[var(--text-secondary)]">Mes a cargar</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                Elige el número fiscal y sube ese mes. Si ya está cargado, se sustituye. 1 = Abril.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {FISCAL_MONTHS.map((month) => {
+                const loaded = monthPacks.some((pack) => pack.monthIndex === month.index);
+                const selected = uploadMonth === month.index;
+                return (
+                  <button
+                    key={month.index}
+                    type="button"
+                    onClick={() => {
+                      uploadMonthRef.current = month.index;
+                      setUploadMonth(month.index);
+                    }}
+                    title={month.label}
+                    className={`min-w-[2.25rem] rounded-md border px-2 py-1.5 text-xs font-semibold transition ${
+                      selected
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : loaded
+                          ? 'border-[var(--success)] bg-white text-[var(--success)]'
+                          : 'border-[var(--border)] bg-white text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                    }`}
+                  >
+                    {month.index}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Vas a cargar <span className="font-semibold">{FISCAL_MONTHS.find((month) => month.index === uploadMonth)?.label}</span>.
+            </p>
+            <FileUpload
+              inputId="tracking-month-input"
+              label="CSV o Excel de ese mes (sin columna de fecha)"
+              onFileLoaded={handleMonthFileLoaded}
+              multiple
+              keepDropzone
+              hint="Puedes soltar varios si el nombre lleva el mes: abril.csv, 1.csv, mes 2.csv"
+            />
+            {monthPacks.length > 0 && (
+              <div className="space-y-1.5">
+                {monthPacks.map((pack) => (
+                  <div
+                    key={pack.monthIndex}
+                    className="flex items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2"
+                  >
+                    <p className="min-w-0 text-xs text-[var(--text-secondary)]">
+                      <span className="font-semibold text-[var(--text-primary)]">{pack.monthLabel}</span>
+                      {' · '}
+                      {pack.fileName}
+                      {' · '}
+                      {pack.lines.length.toLocaleString('de-DE')} líneas
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => removeMonthPack(pack.monthIndex)}
+                      className="rounded-md p-1 text-[var(--text-muted)] hover:bg-white hover:text-[var(--danger)]"
+                      aria-label={`Quitar ${pack.monthLabel}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
 
-      {lines.length === 0 && !error && (
+      {!activeHasData && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Carga el CSV para ver el árbol de seguimiento.</p>
+          <p className="mt-3 text-sm font-medium">
+            {viewMode === 'monthly'
+              ? 'Elige un mes (1 = Abril) y sube su CSV. Puedes ir añadiendo el resto después.'
+              : 'Carga el CSV para ver el árbol de seguimiento.'}
+          </p>
         </section>
       )}
 
-      {lines.length > 0 && (
+      {activeHasData && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            {viewMode === 'monthly' && !hasMonths && (
-              <div className="mb-4 rounded-lg border border-dashed border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3 text-sm text-[var(--text-secondary)]">
-                Este archivo no trae meses. Sube un export con columna <span className="font-semibold">Mes</span> o <span className="font-semibold">Month</span>: el 1 es abril y el 12 es marzo.
-              </div>
-            )}
             <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel}. Pincha una caja para seguir bajando.</p>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
