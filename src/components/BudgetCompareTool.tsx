@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
+import {
+  findArea,
+  findResponsable,
+  findSubresponsable,
+  normalizeCountry,
+} from '@/lib/business-classification';
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, BarChart3, Download, FileSpreadsheet } from 'lucide-react';
 
 type SourceKind = 'budget' | 'facturacion';
@@ -178,32 +184,6 @@ const MONTHS = [
 ] as const;
 
 const MONTH_ORDER: Map<string, number> = new Map(MONTHS.map(([, label], index) => [label, index]));
-const CORE_VERTICALS = new Set([
-  'futbol emotion',
-  'football emotion',
-  'basketball emotion',
-  'running emotion',
-  'brandstorming',
-]);
-const GRASSROOTS_VERTICALS = new Set([
-  'real federacion andaluza de futbol',
-  'the pitch',
-]);
-const GRASSROOTS_MEDIOS = new Set([
-  'equipaciones',
-  'equipaciones feds',
-  'equipaciones web b2b',
-  'equipaciones web b2c',
-]);
-const B2B_MEDIOS = new Set([
-  'academy',
-  'b2b',
-  'b2b clearance',
-  'b2b reps',
-]);
-const PRO_CLUBS_CORE_MEDIOS = new Set([
-  'equipaciones pro',
-]);
 
 function normalizeText(value: unknown): string {
   return String(value ?? '')
@@ -215,37 +195,6 @@ function normalizeText(value: unknown): string {
 
 function normalizeHeader(value: unknown): string {
   return normalizeText(value).replace(/\s+/g, ' ');
-}
-
-function normalizeCountry(value: unknown, zonaFallback?: unknown): string {
-  const normalized = normalizeText(value).replace(/ñ/g, 'n');
-  const zona = normalizeText(zonaFallback).replace(/ñ/g, 'n');
-  const aliases: Record<string, string> = {
-    es: 'espana',
-    esp: 'espana',
-    espana: 'espana',
-    fr: 'francia',
-    fra: 'francia',
-    francia: 'francia',
-    it: 'italia',
-    ita: 'italia',
-    italia: 'italia',
-    pt: 'portugal',
-    por: 'portugal',
-    portugal: 'portugal',
-    de: 'alemania',
-    ale: 'alemania',
-    alemania: 'alemania',
-    otros: 'otros',
-    'sin pais': 'sin pais',
-  };
-
-  if (aliases[normalized]) return aliases[normalized];
-  if (aliases[zona]) return aliases[zona];
-  if (zona.includes('francia')) return 'francia';
-  if (zona.includes('italia')) return 'italia';
-  if (zona.includes('portugal')) return 'portugal';
-  return normalized;
 }
 
 function regionCode(value: unknown, zonaFallback?: unknown): string {
@@ -285,18 +234,6 @@ function normalizeLineForComparison(line: ParsedLine, area: string): ParsedLine 
   }
 
   return { ...line, region: normalizedRegion, zona: line.zona.trim() };
-}
-
-function deriveBusinessArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
-  const vertical = normalizeText(line.vertical);
-  const medio = normalizeText(line.medio);
-
-  if (GRASSROOTS_VERTICALS.has(vertical)) return 'Grassroots';
-  if (!CORE_VERTICALS.has(vertical)) return 'Pro Clubs';
-  if (GRASSROOTS_MEDIOS.has(medio)) return 'Grassroots';
-  if (B2B_MEDIOS.has(medio)) return 'B2B';
-  if (PRO_CLUBS_CORE_MEDIOS.has(medio)) return 'Pro Clubs';
-  return 'Sin área';
 }
 
 function parseAmount(value: unknown): number {
@@ -368,69 +305,6 @@ function rowKey(line: Pick<ParsedLine, 'monthKey' | 'vertical' | 'medio' | 'regi
     line.region,
     line.zona,
   ].map(normalizeText).join('|');
-}
-
-function findArea(line: Pick<ParsedLine, 'vertical' | 'medio'>): string {
-  return deriveBusinessArea(line);
-}
-
-function findResponsable(area: string, line: Pick<ParsedLine, 'region' | 'zona'>): string {
-  const normalizedArea = normalizeText(area);
-  const country = normalizeCountry(line.region, line.zona);
-  const zona = normalizeText(line.zona);
-
-  if (normalizedArea === 'pro clubs') return 'Pablo Domeque';
-
-  if (normalizedArea === 'grassroots') {
-    if (zona.includes('francia')) return 'Maxime';
-    if (zona.includes('italia')) return 'Francesco Nunziato';
-    if (
-      zona === 'portugal' ||
-      zona === 'norte' ||
-      zona === 'levante' ||
-      zona === 'centro-sur' ||
-      zona === 'centro sur'
-    ) return 'Santi Navarro';
-    return 'Pendiente';
-  }
-
-  if (normalizedArea === 'b2b') {
-    return country === 'francia' ? 'Maxime' : 'Santi Navarro';
-  }
-
-  return 'Pendiente';
-}
-
-function findSubresponsable(area: string, line: Pick<ParsedLine, 'vertical' | 'medio' | 'region' | 'zona'>): string {
-  const normalizedArea = normalizeText(area);
-  const vertical = normalizeText(line.vertical);
-  const medio = normalizeText(line.medio);
-  const zona = normalizeText(line.zona);
-  const country = normalizeCountry(line.region, line.zona);
-
-  if (normalizedArea === 'pro clubs') {
-    if (vertical.includes('mallorca') || vertical.includes('deportivo')) return 'Arturo';
-    if (vertical.includes('kings league') || vertical.includes('huesca') || vertical.includes('nastic')) return 'Carlos';
-    if (vertical.includes('real zaragoza')) return 'Pablo';
-    if (medio === 'equipaciones pro') return 'David';
-    return 'Pablo';
-  }
-
-  if (normalizedArea === 'grassroots') {
-    if (!zona) return 'Pendiente';
-    if (zona.includes('francia')) return 'Maxime';
-    if (vertical === 'the pitch') return 'Stefano';
-    if (zona === 'portugal' || zona.includes('norte')) return 'Juanjo';
-    if (zona.includes('levante')) return 'Samu';
-    if (zona.includes('centro-sur') || zona.includes('centro sur')) return 'Tornos';
-    if (zona.includes('italia')) return 'Francesco';
-  }
-
-  if (normalizedArea === 'b2b') {
-    return country === 'francia' ? 'Maxime' : 'Marta';
-  }
-
-  return 'Pendiente';
 }
 
 function formatCurrency(value: number): string {

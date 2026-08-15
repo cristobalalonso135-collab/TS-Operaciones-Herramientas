@@ -9,6 +9,7 @@ import BudgetCompareTool from '@/components/BudgetCompareTool';
 import BudgetFileValidatorTool from '@/components/BudgetFileValidatorTool';
 import DailyBudgetMatchTool from '@/components/DailyBudgetMatchTool';
 import DailyVariationTool from '@/components/DailyVariationTool';
+import TrackingTool from '@/components/TrackingTool';
 import {
   parseExcelData,
   processFullBudget,
@@ -24,7 +25,7 @@ import {
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
-import { Activity, ArrowLeft, BarChart3, Calculator, Download, FileSpreadsheet, GitCompare, Lock, Shuffle, Table2, Unlock } from 'lucide-react';
+import { Activity, ArrowLeft, BarChart3, Calculator, Download, FileSpreadsheet, GitCompare, Lock, Shuffle, Table2, Target, Unlock } from 'lucide-react';
 
 const ALL_MONTHS = 'ALL';
 
@@ -398,7 +399,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch' | 'dailyVariation'>('tools');
+  const [view, setView] = useState<'tools' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch' | 'dailyVariation' | 'tracking'>('tools');
   const [currentStep, setCurrentStep] = useState(0);
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
@@ -622,6 +623,10 @@ export default function Home() {
     return <DailyVariationTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'tracking') {
+    return <TrackingTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const activeTools = [
       {
@@ -667,7 +672,16 @@ export default function Home() {
         detail: 'Curva y saltos',
         icon: Activity,
         tone: 'bg-amber-50 text-[var(--warning)]',
-        delay: 'tools-rise-delay-4',
+        delay: 'tools-rise-delay-5',
+      },
+      {
+        id: 'tracking' as const,
+        title: 'Seguimiento facturación',
+        description: 'Facturación vs budget y margen real vs budget, por responsable. Mismas reglas de área que el comparador.',
+        detail: 'YTD vs budget',
+        icon: Target,
+        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
+        delay: 'tools-rise-delay-6',
       },
     ];
 
