@@ -10,6 +10,7 @@ import BudgetFileValidatorTool from '@/components/BudgetFileValidatorTool';
 import DailyBudgetMatchTool from '@/components/DailyBudgetMatchTool';
 import DailyVariationTool from '@/components/DailyVariationTool';
 import TrackingTool from '@/components/TrackingTool';
+import OperationsDashboard from '@/components/OperationsDashboard';
 import {
   parseExcelData,
   processFullBudget,
@@ -25,7 +26,7 @@ import {
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
-import { Activity, ArrowLeft, BarChart3, Calculator, Download, FileSpreadsheet, GitCompare, Lock, Shuffle, Table2, Target, Unlock } from 'lucide-react';
+import { ArrowLeft, Download, FileSpreadsheet, LayoutDashboard, Lock, Shuffle, Unlock } from 'lucide-react';
 
 const ALL_MONTHS = 'ALL';
 
@@ -399,7 +400,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch' | 'dailyVariation' | 'tracking'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch' | 'dailyVariation' | 'tracking'>('tools');
   const [currentStep, setCurrentStep] = useState(0);
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
@@ -607,6 +608,10 @@ export default function Home() {
     window.alert('Recuerda sustituir los valores de las tiendas de Pro Clubs (mes siguiente) y Francia online (hasta final de FY).');
   };
 
+  if (view === 'dashboard') {
+    return <OperationsDashboard onBack={() => setView('tools')} />;
+  }
+
   if (view === 'budgetCompare') {
     return <BudgetCompareTool onBack={() => setView('tools')} />;
   }
@@ -628,58 +633,61 @@ export default function Home() {
   }
 
   if (view === 'tools') {
-    const activeTools = [
+    const budgetTools = [
       {
         id: 'budget' as const,
+        number: '01',
         title: 'Budget',
         description: 'Parte el budget mensual a días laborables, ajusta negativos y pondera semanas. Exporta el Excel diario.',
         detail: 'Generación del diario',
-        icon: Calculator,
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
         delay: 'tools-rise-delay-1',
       },
       {
         id: 'budgetCompare' as const,
+        number: '02',
         title: 'Comparador budget',
         description: 'Nota sobre 10 de si los meses abiertos de cada línea siguen el mismo % que el resto del año. Te dice qué mover para subir puntos.',
         detail: '¿Está bien cuadrado?',
-        icon: BarChart3,
         tone: 'bg-amber-50 text-[var(--warning)]',
         delay: 'tools-rise-delay-2',
       },
       {
         id: 'budgetValidator' as const,
+        number: '03',
         title: 'Validador budget',
         description: 'Compara el budget general del departamento con el diario. Corrige facturación y COGS al céntimo, mes a mes y celda a celda.',
         detail: 'General vs diario',
-        icon: FileSpreadsheet,
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
         delay: 'tools-rise-delay-3',
       },
       {
         id: 'dailyMatch' as const,
+        number: '04',
         title: 'Cuadre diario',
         description: 'Compara dos archivos diarios (facturación + COGS) hasta una fecha. Útil para validar que un ajustado no ha roto lo ya cerrado.',
         detail: 'Diario vs diario',
-        icon: GitCompare,
         tone: 'bg-[var(--success-soft)] text-[var(--success)]',
         delay: 'tools-rise-delay-4',
       },
       {
         id: 'dailyVariation' as const,
+        number: '05',
         title: 'Suavidad diaria',
         description: 'Sube un diario y mira saltos mes a mes, bordes entre meses y variación día a día. Sirve para ver si la ponderación semanal ha suavizado la curva.',
         detail: 'Curva y saltos',
-        icon: Activity,
         tone: 'bg-amber-50 text-[var(--warning)]',
         delay: 'tools-rise-delay-5',
       },
+    ];
+
+    const controlTools = [
       {
         id: 'tracking' as const,
+        number: '06',
         title: 'Seguimiento facturación',
-        description: 'Facturación vs budget y margen real vs budget, por responsable. Mismas reglas de área que el comparador.',
-        detail: 'YTD y por meses',
-        icon: Target,
+        description: 'Facturación vs budget, margen vs budget y frees Grassroots, por zona y responsable.',
+        detail: 'YTD · meses · frees',
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
         delay: 'tools-rise-delay-6',
       },
@@ -687,16 +695,19 @@ export default function Home() {
 
     const upcomingTools = [
       {
+        number: '07',
+        title: 'Generados web',
+        description: 'Condición comercial del mes siguiente. Todavía no disponible.',
+      },
+      {
+        number: '08',
+        title: 'Deuda',
+        description: 'Cobro y aging. Vender está bien; cobrar cierra el año. Todavía no disponible.',
+      },
+      {
+        number: '09',
         title: 'Forecast',
-        description: 'Proyecciones y seguimiento frente a budget. Todavía no disponible.',
-      },
-      {
-        title: 'Pedidos',
-        description: 'Control operativo de pedidos y cobertura. Todavía no disponible.',
-      },
-      {
-        title: 'Stock',
-        description: 'Visión de stock y alertas de rotura. Todavía no disponible.',
+        description: 'Proyecciones frente a budget. Todavía no disponible.',
       },
     ];
 
@@ -713,23 +724,48 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Workspace de budget y control. Elige la herramienta según lo que necesites cuadrar o generar.
+              Primero el cuadro de mando. Luego el budget, bien cuadrado. Después el control de facturación, margen y frees.
             </p>
           </div>
         </section>
 
-        <section className="space-y-4">
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <h3 className="font-display text-xl font-semibold tracking-tight">Disponibles</h3>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">Listas para usar en el FY 26/27</p>
+        <section>
+          <button
+            type="button"
+            onClick={() => setView('dashboard')}
+            className="tools-rise group flex w-full items-start gap-4 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white sm:gap-5 sm:p-6"
+          >
+            <div className="mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--text-primary)] text-[var(--bg-card)]">
+              <LayoutDashboard className="h-5 w-5" />
             </div>
-          </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="font-display text-lg font-semibold tracking-tight">Cuadro de mando</h4>
+                <span className="rounded-md bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                  6 KPIs · maqueta
+                </span>
+              </div>
+              <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-[var(--text-secondary)]">
+                Vista de operaciones: budget, facturación, margen, frees, generados web y deuda. Todavía sin datos.
+              </p>
+            </div>
+            <span className="mt-1 hidden shrink-0 text-sm font-medium text-[var(--accent)] transition group-hover:translate-x-0.5 sm:inline">
+              Abrir →
+            </span>
+          </button>
+        </section>
 
-          <div className="grid gap-3">
-            {activeTools.map((tool) => {
-              const Icon = tool.icon;
-              return (
+        {([
+          ['Budget', 'Cuadrar y generar el diario', budgetTools],
+          ['Control', 'Seguimiento una vez el budget está cerrado', controlTools],
+        ] as const).map(([groupTitle, groupHint, tools]) => (
+          <section key={groupTitle} className="space-y-4">
+            <div>
+              <h3 className="font-display text-xl font-semibold tracking-tight">{groupTitle}</h3>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">{groupHint}</p>
+            </div>
+            <div className="grid gap-3">
+              {tools.map((tool) => (
                 <button
                   key={tool.id}
                   type="button"
@@ -737,7 +773,7 @@ export default function Home() {
                   className={`tools-rise ${tool.delay} group flex w-full items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/95 p-5 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white sm:gap-5 sm:p-6`}
                 >
                   <div className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${tool.tone}`}>
-                    <Icon className="h-5 w-5" />
+                    <span className="font-display text-base font-semibold leading-none">{tool.number}</span>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -756,15 +792,15 @@ export default function Home() {
                     Abrir →
                   </span>
                 </button>
-              );
-            })}
-          </div>
-        </section>
+              ))}
+            </div>
+          </section>
+        ))}
 
         <section className="space-y-4">
           <div>
             <h3 className="font-display text-xl font-semibold tracking-tight">Próximamente</h3>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">En el roadmap, aún no operativas</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">Entrarán en el cuadro de mando cuando tengamos los Excels</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             {upcomingTools.map((tool) => (
@@ -772,10 +808,8 @@ export default function Home() {
                 key={tool.title}
                 className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-card)]/55 p-5"
               >
-                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--bg-soft)] text-[var(--text-muted)]">
-                  <Table2 className="h-5 w-5" />
-                </div>
-                <h4 className="font-display text-base font-semibold text-[var(--text-secondary)]">
+                <p className="font-display text-sm font-semibold text-[var(--text-muted)]">{tool.number}</p>
+                <h4 className="mt-3 font-display text-base font-semibold text-[var(--text-secondary)]">
                   {tool.title}
                 </h4>
                 <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-muted)]">{tool.description}</p>
