@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
+import FreesTrackingView from '@/components/FreesTrackingView';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
 
@@ -41,7 +42,7 @@ interface MetricBlock {
 }
 
 type SortDirection = 'asc' | 'desc';
-type TrackingViewMode = 'ytd' | 'monthly';
+type TrackingViewMode = 'ytd' | 'monthly' | 'frees';
 type TableSortKey =
   | 'month'
   | 'vertical'
@@ -797,9 +798,11 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {viewMode === 'monthly'
-                ? 'Lee la columna Year-Month (Abr. ’26, Jul. ’26…). El 1 es abril y el 12 es marzo. El árbol es Teamsports → mes → área → responsable.'
-                : 'Vista YTD: suma todos los meses del archivo. Teamsports → área → responsable → subresponsable.'}
+              {viewMode === 'frees'
+                ? 'Frees de Grassroots en una carga aparte. % free = frees / (facturación neta + frees). Compara el YTD con el mismo tramo del año pasado y proyecta los negativos que quedan.'
+                : viewMode === 'monthly'
+                  ? 'Lee la columna Year-Month (Abr. ’26, Jul. ’26…). El 1 es abril y el 12 es marzo. El árbol es Teamsports → mes → área → responsable.'
+                  : 'Vista YTD: suma todos los meses del archivo. Teamsports → área → responsable → subresponsable.'}
             </p>
           </div>
           <div className="flex rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-1">
@@ -821,10 +824,23 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             >
               Por meses
             </button>
+            <button
+              type="button"
+              onClick={() => switchView('frees')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === 'frees' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              Frees
+            </button>
           </div>
         </div>
       </section>
 
+      {viewMode === 'frees' ? (
+        <FreesTrackingView />
+      ) : (
+        <>
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
         <FileUpload
           inputId="tracking-input"
@@ -1064,6 +1080,8 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               </table>
             </div>
           </section>
+        </>
+      )}
         </>
       )}
     </div>
