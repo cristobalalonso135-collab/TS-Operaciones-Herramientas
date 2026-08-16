@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
-import { normalizeText } from '@/lib/business-classification';
+import { findArea, normalizeText } from '@/lib/business-classification';
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, FileSpreadsheet } from 'lucide-react';
 
 interface FreeLine {
@@ -23,7 +23,14 @@ interface FreeTotals {
   pct: number | null;
 }
 
-type ZonaSortKey = 'zona' | 'neta' | 'freeCost' | 'bruto' | 'pct' | 'pctLy' | 'pctCierreLy' | 'delta' | 'extra' | 'queda';
+type ZonaSortKey = 'zona' | 'neta' | 'freeCost' | 'bruto' | 'budget' | 'pct' | 'pctLy' | 'pctCierreLy' | 'delta' | 'extra' | 'queda';
+
+interface GrassrootsBudget {
+  fileName: string;
+  byZona: Record<string, number>;
+  total: number;
+  kept: number;
+}
 
 const FISCAL_MONTHS = [
   { index: 1, label: '1 · Abril', names: ['abril', 'april', 'apr', 'abr'] },
@@ -156,6 +163,62 @@ function remainingFrees(ty: FreeTotals, targetPct: number | null, projected: num
   return projected * (targetPct / 100) - ty.freeCost;
 }
 
+function remainingVsBudget(ty: FreeTotals, targetPct: number | null, budget: number): number | null {
+  if (targetPct === null || !Number.isFinite(budget) || budget <= 0) return null;
+  return budget * (targetPct / 100) - ty.freeCost;
+}
+
+function lookupBudget(byZona: Record<string, number>, zona: string): number {
+  if (Object.prototype.hasOwnProperty.call(byZona, zona)) return byZona[zona];
+  const key = normalizeText(zona);
+  const found = Object.entries(byZona).find(([name]) => normalizeText(name) === key);
+  return found ? found[1] : 0;
+}
+
+function findHeader(headers: string[], aliases: string[]): number {
+  return headers.findIndex((header) => aliases.some((alias) => {
+    const needle = normalizeText(alias);
+    return header === needle || header.includes(needle);
+  }));
+}
+
+function parseGrassrootsBudget(rows: unknown[][]): Omit<GrassrootsBudget, 'fileName'> {
+  if (!rows.length) throw new Error('El archivo de budget está vacío.');
+  const headerIndex = rows.findIndex((row) => row.some((cell) => {
+    const header = normalizeText(cell);
+    return header.includes('budget') || header.includes('month') || header === 'vertical';
+  }));
+  if (headerIndex < 0) {
+    throw new Error('No reconozco el budget. Sube el mismo CSV que en Comparador: Month Name, Vertical, Medio de Venta, Zona, Budget.');
+  }
+
+  const headers = (rows[headerIndex] || []).map((cell) => normalizeText(cell));
+  const colMap = {
+    vertical: findHeader(headers, ['vertical']),
+    medio: findHeader(headers, ['medio de venta', 'medio']),
+    zona: findHeader(headers, ['zona']),
+    budget: findHeader(headers, ['budget']),
+  };
+  if (colMap.vertical < 0 || colMap.medio < 0 || colMap.zona < 0 || colMap.budget < 0) {
+    throw new Error('Faltan columnas: Vertical, Medio de Venta, Zona o Budget.');
+  }
+
+  const byZona: Record<string, number> = {};
+  let kept = 0;
+  rows.slice(headerIndex + 1).forEach((row) => {
+    if (!row.some((cell) => cellPresent(cell))) return;
+    const vertical = String(row[colMap.vertical] ?? '').trim();
+    const medio = String(row[colMap.medio] ?? '').trim();
+    if (findArea({ vertical, medio }) !== 'Grassroots') return;
+    const zona = cellPresent(row[colMap.zona]) ? String(row[colMap.zona]).trim() : 'Sin zona';
+    byZona[zona] = (byZona[zona] ?? 0) + parseAmount(row[colMap.budget]);
+    kept += 1;
+  });
+  if (kept === 0) throw new Error('No he encontrado líneas Grassroots en el budget.');
+  const total = Object.values(byZona).reduce((sum, value) => sum + value, 0);
+  return { byZona, total, kept };
+}
+
 function paceLabel(extra: number | null): string {
   if (extra === null) return 'Sin dato';
   if (extra < -500) return 'Retrasada';
@@ -253,7 +316,9 @@ function StatCard({
 export default function FreesTrackingView() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
   const [lines, setLines] = useState<FreeLine[]>([]);
+  const [budget, setBudget] = useState<GrassrootsBudget | null>(null);
   const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'extra', direction: 'desc' });
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
@@ -267,6 +332,17 @@ export default function FreesTrackingView() {
       setLines([]);
       setFileName(null);
       setError(err instanceof Error ? err.message : 'No he podido leer el archivo.');
+    }
+  };
+
+  const handleBudgetLoaded = (data: unknown[][], name: string) => {
+    try {
+      const parsed = parseGrassrootsBudget(data);
+      setBudget({ ...parsed, fileName: name });
+      setBudgetError(null);
+    } catch (err) {
+      setBudget(null);
+      setBudgetError(err instanceof Error ? err.message : 'No he podido leer el budget.');
     }
   };
 
@@ -328,13 +404,17 @@ export default function FreesTrackingView() {
         : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex > analysis.ytdMonth));
       const extra = extraFrees(ty, ly);
       const projected = projectBruto(ty, ly, lyFull, lyRest);
+      const budgetZona = budget ? lookupBudget(budget.byZona, zona) : 0;
       return {
         zona,
         ty,
         ly,
         extra,
+        budget: budgetZona,
         pctCierreLy: lyFull.pct,
-        queda: remainingFrees(ty, lyFull.pct, projected),
+        queda: budget
+          ? remainingVsBudget(ty, lyFull.pct, budgetZona)
+          : remainingFrees(ty, lyFull.pct, projected),
         delta: ty.pct !== null && ly.pct !== null ? ty.pct - ly.pct : null,
       };
     }).sort((a, b) => {
@@ -348,12 +428,13 @@ export default function FreesTrackingView() {
         sort.key === 'neta' ? row.ty.neta
           : sort.key === 'freeCost' ? row.ty.freeCost
             : sort.key === 'bruto' ? row.ty.bruto
-              : sort.key === 'pct' ? row.ty.pct
-                : sort.key === 'pctLy' ? row.ly.pct
-                  : sort.key === 'pctCierreLy' ? row.pctCierreLy
-                    : sort.key === 'extra' ? row.extra
-                      : sort.key === 'queda' ? row.queda
-                        : row.delta
+              : sort.key === 'budget' ? row.budget
+                : sort.key === 'pct' ? row.ty.pct
+                  : sort.key === 'pctLy' ? row.ly.pct
+                    : sort.key === 'pctCierreLy' ? row.pctCierreLy
+                      : sort.key === 'extra' ? row.extra
+                        : sort.key === 'queda' ? row.queda
+                          : row.delta
       );
       const left = pick(a);
       const right = pick(b);
@@ -363,7 +444,7 @@ export default function FreesTrackingView() {
       const result = Number(left) - Number(right);
       return sort.direction === 'asc' ? result : -result;
     });
-  }, [analysis, lines, sort]);
+  }, [analysis, lines, sort, budget]);
 
   const updateSort = (key: ZonaSortKey) => {
     setSort((prev) => (
@@ -375,12 +456,13 @@ export default function FreesTrackingView() {
 
   const downloadZonas = () => {
     if (!analysis) return;
-    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', '% cierre LY', 'Δ pp', 'Extra € vs LY', 'Quedan (cierre LY)'];
+    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', 'Budget Grassroots', '% free TY', '% free LY YTD', '% cierre LY', 'Δ pp', 'Extra € vs LY', 'Quedan'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.ty.neta,
       row.ty.freeCost,
       row.ty.bruto,
+      row.budget,
       row.ty.pct,
       row.ly.pct,
       row.pctCierreLy,
@@ -397,34 +479,62 @@ export default function FreesTrackingView() {
     URL.revokeObjectURL(url);
   };
 
+  const remainingCompany = analysis
+    ? (budget
+      ? remainingVsBudget(analysis.tyYtd, analysis.lyFull.pct, budget.total)
+      : analysis.remainingIfLy)
+    : null;
+  const expectedFrees = analysis && budget && analysis.lyFull.pct !== null
+    ? budget.total * (analysis.lyFull.pct / 100)
+    : null;
+
   const maxPct = analysis
     ? Math.max(20, ...analysis.monthly.flatMap((month) => [month.ty.pct ?? 0, month.ly.pct ?? 0]))
     : 20;
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <FileUpload
-          inputId="tracking-frees-input"
-          label="CSV de frees Grassroots (Year-Month, Zona, Free Product, Fact. Neta)"
-          onFileLoaded={handleFileLoaded}
-        />
-        {fileName && analysis && (
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            Cargado: {fileName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
-            {analysis.lastFy !== null ? ` · comparado con FY ${fyLabel(analysis.lastFy)}` : ''}
-          </p>
-        )}
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-frees-input"
+            label="1. CSV de frees Grassroots (Year-Month, Zona, Free Product, Fact. Neta)"
+            onFileLoaded={handleFileLoaded}
+            keepDropzone
+          />
+          {fileName && analysis && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              Cargado: {fileName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
+              {analysis.lastFy !== null ? ` · comparado con FY ${fyLabel(analysis.lastFy)}` : ''}
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-frees-budget-input"
+            label="2. Budget (el mismo CSV que Comparador: Month Name, Vertical, Medio, Zona, Budget)"
+            onFileLoaded={handleBudgetLoaded}
+            keepDropzone
+          />
+          {budget && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              Cargado: {budget.fileName} · Grassroots {formatCurrency(budget.total)} en {Object.keys(budget.byZona).length} zonas · {budget.kept} líneas (B2B y Pro Clubs fuera)
+            </p>
+          )}
+        </div>
       </section>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
+      {budgetError && (
+        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
+      )}
 
       {lines.length === 0 && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Sube data2.csv. El % free es frees / (facturación neta + frees).</p>
+          <p className="mt-3 text-sm font-medium">Sube data2.csv de frees y, para estimar lo que queda, el budget (data4.csv). Me quedo solo con Grassroots por zona.</p>
         </section>
       )}
 
@@ -478,11 +588,12 @@ export default function FreesTrackingView() {
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Estimación que queda</p>
               <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {analysis.remainingIfLy === null ? '—' : formatCurrency(analysis.remainingIfLy)}
+                {remainingCompany === null ? '—' : formatCurrency(remainingCompany)}
               </p>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                Si cerramos al {formatAbsPercent(analysis.lyFull.pct)} del año pasado. Ya gastados: {formatCurrency(analysis.tyYtd.freeCost)}.
-                {analysis.remainingIfCurrent !== null ? ` Si siguiéramos al ritmo actual (${formatAbsPercent(analysis.tyYtd.pct)}), serían ${formatCurrency(analysis.remainingIfCurrent)}.` : ''}
+                {budget && analysis.lyFull.pct !== null
+                  ? `Al ${formatAbsPercent(analysis.lyFull.pct)} del budget Grassroots (${formatCurrency(budget.total)}). Previstos del año: ${expectedFrees === null ? '—' : formatCurrency(expectedFrees)}. Ya puestos: ${formatCurrency(analysis.tyYtd.freeCost)}.`
+                  : `Sube el budget para estimar vs budget. Mientras, si cerramos al ${formatAbsPercent(analysis.lyFull.pct)} del año pasado. Ya puestos: ${formatCurrency(analysis.tyYtd.freeCost)}.`}
               </p>
             </div>
           </section>
@@ -491,7 +602,7 @@ export default function FreesTrackingView() {
             <div className="mb-3">
               <p className="text-sm font-semibold">Zonas</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                Retrasada = frees pendientes (riesgo de golpe a final de año). Adelantada = ya puestos, no es un sobrecoste. Quedan = si cada zona cierra al % del año pasado.
+                Retrasada = frees pendientes (riesgo de golpe a final de año). Adelantada = ya puestos, no es un sobrecoste. Quedan = % de cierre LY × budget Grassroots de la zona − ya puestos.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -511,13 +622,14 @@ export default function FreesTrackingView() {
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {formatCurrency(row.ty.freeCost)} de {formatCurrency(row.ty.bruto)}
+                    {budget ? ` · budget ${formatCurrency(row.budget)}` : ''}
                   </p>
                   <p className={`mt-3 text-sm font-semibold tabular-nums ${freeTone(row.extra)}`}>
                     {row.extra === null ? '—' : formatSignedCurrency(row.extra)}
                     <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs ritmo LY</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}
+                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}{budget ? ' del budget' : ''}
                   </p>
                 </div>
               ))}
@@ -564,13 +676,14 @@ export default function FreesTrackingView() {
               </button>
             </div>
             <div className="overflow-auto">
-              <table className="w-full min-w-[1100px] border-collapse text-sm">
+              <table className="w-full min-w-[1240px] border-collapse text-sm">
                 <thead className="bg-[var(--bg-soft)] text-xs text-[var(--text-secondary)]">
                   <tr>
                     {([
                       ['zona', 'Zona', 'left'],
                       ['freeCost', 'Frees €', 'right'],
                       ['bruto', 'Facturación €', 'right'],
+                      ['budget', 'Budget €', 'right'],
                       ['pct', '% free', 'right'],
                       ['pctLy', '% LY', 'right'],
                       ['pctCierreLy', '% cierre LY', 'right'],
@@ -600,6 +713,7 @@ export default function FreesTrackingView() {
                       <td className="px-3 py-2">{row.zona}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.freeCost)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.bruto)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{row.budget ? formatCurrency(row.budget) : '—'}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.delta)}`}>{formatAbsPercent(row.ty.pct)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.ly.pct)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.pctCierreLy)}</td>
