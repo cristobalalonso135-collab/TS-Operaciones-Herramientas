@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   title: 'TS Operaciones Herramientas',
   description: 'Herramientas operativas de Teamsports',
   icons: {
-    icon: '/icon.svg?v=gear',
+    icon: '/icon.svg?v=ts-mark',
   },
 };
 
@@ -33,9 +33,15 @@ export default function RootLayout({
         <nav className="border-b border-[var(--border)] bg-[var(--bg-secondary)]/80 backdrop-blur-md px-6 py-4">
           <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--text-primary)] text-sm font-semibold tracking-wide text-[var(--bg-card)]">
-                TS
-              </div>
+              <svg viewBox="0 0 64 64" className="h-10 w-10" aria-hidden>
+                <rect width="64" height="64" rx="16" fill="#171612"/>
+                <rect x="4" y="4" width="56" height="56" rx="13" fill="#1F4B7A"/>
+                <path fill="#F4F1EA" d="M11 15.5h24v7.2H27.4V48h-8.8V22.7H11z"/>
+                <path fill="none" stroke="#F4F1EA" strokeWidth="6.4" strokeLinecap="round" strokeLinejoin="round" d="M53.2 20.6c0-3.3-2.6-5.6-6.8-5.6H39.4c-4.2 0-6.8 2.4-6.8 5.7 0 3.3 2.3 5.3 6.8 5.8l8.4 1.1c4.6.6 7.2 3.1 7.2 6.8 0 4.2-3.4 6.9-8.6 6.9H38.6c-4.8 0-7.8-2.6-7.8-6.4"/>
+                <rect x="13" y="51.4" width="11" height="3.4" rx="1.7" fill="#E8F5EE"/>
+                <rect x="26.5" y="51.4" width="11" height="3.4" rx="1.7" fill="#C9A227"/>
+                <rect x="40" y="51.4" width="11" height="3.4" rx="1.7" fill="#F4F1EA"/>
+              </svg>
               <div>
                 <h1 className="font-display text-lg font-semibold leading-tight tracking-tight">
                   TS Operaciones

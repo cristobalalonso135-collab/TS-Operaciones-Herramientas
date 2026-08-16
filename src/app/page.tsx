@@ -11,6 +11,7 @@ import DailyBudgetMatchTool from '@/components/DailyBudgetMatchTool';
 import DailyVariationTool from '@/components/DailyVariationTool';
 import TrackingTool from '@/components/TrackingTool';
 import OperationsDashboard from '@/components/OperationsDashboard';
+import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   parseExcelData,
   processFullBudget,
@@ -26,9 +27,19 @@ import {
   FISCAL_MONTHS_ORDER,
   getNegativosZonasForMonth,
 } from '@/lib/budget-processor';
-import { ArrowLeft, Download, FileSpreadsheet, LayoutDashboard, Lock, Shuffle, Unlock } from 'lucide-react';
+import { Download, FileSpreadsheet, Lock, Shuffle, Unlock } from 'lucide-react';
 
 const ALL_MONTHS = 'ALL';
+
+const BUDGET_TABS = [
+  { id: 'generate', label: 'Diario' },
+  { id: 'compare', label: 'Comparador' },
+  { id: 'validator', label: 'Validador' },
+  { id: 'match', label: 'Cuadre' },
+  { id: 'variation', label: 'Suavidad' },
+] as const;
+
+type BudgetTabId = (typeof BUDGET_TABS)[number]['id'];
 
 const STEPS = [
   { id: 0, name: 'Distribución diaria', description: 'Mensual a días laborables' },
@@ -400,7 +411,8 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'budgetCompare' | 'budgetValidator' | 'dailyMatch' | 'dailyVariation' | 'tracking'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking'>('tools');
+  const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [currentStep, setCurrentStep] = useState(0);
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
@@ -612,111 +624,44 @@ export default function Home() {
     return <OperationsDashboard onBack={() => setView('tools')} />;
   }
 
-  if (view === 'budgetCompare') {
-    return <BudgetCompareTool onBack={() => setView('tools')} />;
-  }
-
-  if (view === 'budgetValidator') {
-    return <BudgetFileValidatorTool onBack={() => setView('tools')} />;
-  }
-
-  if (view === 'dailyMatch') {
-    return <DailyBudgetMatchTool onBack={() => setView('tools')} />;
-  }
-
-  if (view === 'dailyVariation') {
-    return <DailyVariationTool onBack={() => setView('tools')} />;
-  }
-
   if (view === 'tracking') {
     return <TrackingTool onBack={() => setView('tools')} />;
   }
 
   if (view === 'tools') {
-    const budgetTools = [
+    const hubs = [
+      {
+        id: 'dashboard' as const,
+        number: '01',
+        title: 'Cuadro de mando',
+        description: 'Los 6 KPIs de operaciones en una pantalla. Maqueta, todavía sin datos.',
+        detail: 'Budget · facturación · margen · frees · generados · deuda',
+        tone: 'bg-[var(--text-primary)] text-[var(--bg-card)]',
+      },
       {
         id: 'budget' as const,
-        number: '01',
-        title: 'Budget',
-        description: 'Parte el budget mensual a días laborables, ajusta negativos y pondera semanas. Exporta el Excel diario.',
-        detail: 'Generación del diario',
-        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
-        delay: 'tools-rise-delay-1',
-      },
-      {
-        id: 'budgetCompare' as const,
         number: '02',
-        title: 'Comparador budget',
-        description: 'Nota sobre 10 de si los meses abiertos de cada línea siguen el mismo % que el resto del año. Te dice qué mover para subir puntos.',
-        detail: '¿Está bien cuadrado?',
-        tone: 'bg-amber-50 text-[var(--warning)]',
-        delay: 'tools-rise-delay-2',
-      },
-      {
-        id: 'budgetValidator' as const,
-        number: '03',
-        title: 'Validador budget',
-        description: 'Compara el budget general del departamento con el diario. Corrige facturación y COGS al céntimo, mes a mes y celda a celda.',
-        detail: 'General vs diario',
+        title: 'Budget',
+        description: 'Generar el diario, cuadrarlo, validarlo y mirar la curva. Todo en pestañas.',
+        detail: 'Diario · Comparador · Validador · Cuadre · Suavidad',
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
-        delay: 'tools-rise-delay-3',
       },
-      {
-        id: 'dailyMatch' as const,
-        number: '04',
-        title: 'Cuadre diario',
-        description: 'Compara dos archivos diarios (facturación + COGS) hasta una fecha. Útil para validar que un ajustado no ha roto lo ya cerrado.',
-        detail: 'Diario vs diario',
-        tone: 'bg-[var(--success-soft)] text-[var(--success)]',
-        delay: 'tools-rise-delay-4',
-      },
-      {
-        id: 'dailyVariation' as const,
-        number: '05',
-        title: 'Suavidad diaria',
-        description: 'Sube un diario y mira saltos mes a mes, bordes entre meses y variación día a día. Sirve para ver si la ponderación semanal ha suavizado la curva.',
-        detail: 'Curva y saltos',
-        tone: 'bg-amber-50 text-[var(--warning)]',
-        delay: 'tools-rise-delay-5',
-      },
-    ];
-
-    const controlTools = [
       {
         id: 'tracking' as const,
-        number: '06',
-        title: 'Seguimiento facturación',
-        description: 'Facturación vs budget, margen vs budget y frees Grassroots, por zona y responsable.',
-        detail: 'YTD · meses · frees',
-        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
-        delay: 'tools-rise-delay-6',
-      },
-    ];
-
-    const upcomingTools = [
-      {
-        number: '07',
-        title: 'Generados web',
-        description: 'Condición comercial del mes siguiente. Todavía no disponible.',
-      },
-      {
-        number: '08',
-        title: 'Deuda',
-        description: 'Cobro y aging. Vender está bien; cobrar cierra el año. Todavía no disponible.',
-      },
-      {
-        number: '09',
-        title: 'Forecast',
-        description: 'Proyecciones frente a budget. Todavía no disponible.',
+        number: '03',
+        title: 'Seguimiento',
+        description: 'Facturación vs budget, margen vs budget y frees Grassroots.',
+        detail: 'YTD · Meses · Frees',
+        tone: 'bg-[var(--success-soft)] text-[var(--success)]',
       },
     ];
 
     return (
-      <div className="mx-auto max-w-5xl space-y-10">
+      <div className="mx-auto max-w-3xl space-y-8">
         <section className="tools-rise relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/90 px-6 py-8 shadow-sm sm:px-8">
           <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[var(--accent-soft)] blur-2xl" />
           <div className="pointer-events-none absolute -bottom-24 left-10 h-48 w-48 rounded-full bg-[var(--success-soft)] blur-2xl" />
-          <div className="relative max-w-2xl">
+          <div className="relative max-w-xl">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
               TS Operaciones
             </p>
@@ -724,113 +669,95 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Primero el cuadro de mando. Luego el budget, bien cuadrado. Después el control de facturación, margen y frees.
+              Tres entradas. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
 
-        <section>
-          <button
-            type="button"
-            onClick={() => setView('dashboard')}
-            className="tools-rise group flex w-full items-start gap-4 rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white sm:gap-5 sm:p-6"
-          >
-            <div className="mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--text-primary)] text-[var(--bg-card)]">
-              <LayoutDashboard className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h4 className="font-display text-lg font-semibold tracking-tight">Cuadro de mando</h4>
-                <span className="rounded-md bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
-                  6 KPIs · maqueta
-                </span>
+        <section className="grid gap-3">
+          {hubs.map((hub) => (
+            <button
+              key={hub.id}
+              type="button"
+              onClick={() => {
+                if (hub.id === 'budget') setBudgetTab('generate');
+                setView(hub.id);
+              }}
+              className="tools-rise group flex w-full items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white sm:p-6"
+            >
+              <div className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${hub.tone}`}>
+                <span className="font-display text-base font-semibold leading-none">{hub.number}</span>
               </div>
-              <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-[var(--text-secondary)]">
-                Vista de operaciones: budget, facturación, margen, frees, generados web y deuda. Todavía sin datos.
-              </p>
-            </div>
-            <span className="mt-1 hidden shrink-0 text-sm font-medium text-[var(--accent)] transition group-hover:translate-x-0.5 sm:inline">
-              Abrir →
-            </span>
-          </button>
-        </section>
-
-        {([
-          ['Budget', 'Cuadrar y generar el diario', budgetTools],
-          ['Control', 'Seguimiento una vez el budget está cerrado', controlTools],
-        ] as const).map(([groupTitle, groupHint, tools]) => (
-          <section key={groupTitle} className="space-y-4">
-            <div>
-              <h3 className="font-display text-xl font-semibold tracking-tight">{groupTitle}</h3>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">{groupHint}</p>
-            </div>
-            <div className="grid gap-3">
-              {tools.map((tool) => (
-                <button
-                  key={tool.id}
-                  type="button"
-                  onClick={() => setView(tool.id)}
-                  className={`tools-rise ${tool.delay} group flex w-full items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/95 p-5 text-left transition duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white sm:gap-5 sm:p-6`}
-                >
-                  <div className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${tool.tone}`}>
-                    <span className="font-display text-base font-semibold leading-none">{tool.number}</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="font-display text-lg font-semibold tracking-tight">
-                        {tool.title}
-                      </h4>
-                      <span className="rounded-md bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
-                        {tool.detail}
-                      </span>
-                    </div>
-                    <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-[var(--text-secondary)]">
-                      {tool.description}
-                    </p>
-                  </div>
-                  <span className="mt-1 hidden shrink-0 text-sm font-medium text-[var(--accent)] transition group-hover:translate-x-0.5 sm:inline">
-                    Abrir →
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="font-display text-lg font-semibold tracking-tight">{hub.title}</h4>
+                  <span className="rounded-md bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
+                    {hub.detail}
                   </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
-
-        <section className="space-y-4">
-          <div>
-            <h3 className="font-display text-xl font-semibold tracking-tight">Próximamente</h3>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Entrarán en el cuadro de mando cuando tengamos los Excels</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {upcomingTools.map((tool) => (
-              <div
-                key={tool.title}
-                className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-card)]/55 p-5"
-              >
-                <p className="font-display text-sm font-semibold text-[var(--text-muted)]">{tool.number}</p>
-                <h4 className="mt-3 font-display text-base font-semibold text-[var(--text-secondary)]">
-                  {tool.title}
-                </h4>
-                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-muted)]">{tool.description}</p>
+                </div>
+                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{hub.description}</p>
               </div>
-            ))}
-          </div>
+              <span className="mt-1 hidden shrink-0 text-sm font-medium text-[var(--accent)] transition group-hover:translate-x-0.5 sm:inline">
+                Abrir →
+              </span>
+            </button>
+          ))}
         </section>
+
+        <p className="text-center text-xs text-[var(--text-muted)]">
+          Siguiente en el cuadro de mando: generados web, deuda y forecast.
+        </p>
+      </div>
+    );
+  }
+
+  const goHome = () => setView('tools');
+  const budgetChrome = (
+    <WorkspaceChrome
+      onBack={goHome}
+      tabs={[...BUDGET_TABS]}
+      active={budgetTab}
+      onSelect={(id) => setBudgetTab(id as BudgetTabId)}
+    />
+  );
+
+  if (budgetTab === 'compare') {
+    return (
+      <div className="space-y-4">
+        {budgetChrome}
+        <BudgetCompareTool hideBack onBack={goHome} />
+      </div>
+    );
+  }
+  if (budgetTab === 'validator') {
+    return (
+      <div className="space-y-4">
+        {budgetChrome}
+        <BudgetFileValidatorTool hideBack onBack={goHome} />
+      </div>
+    );
+  }
+  if (budgetTab === 'match') {
+    return (
+      <div className="space-y-4">
+        {budgetChrome}
+        <DailyBudgetMatchTool hideBack onBack={goHome} />
+      </div>
+    );
+  }
+  if (budgetTab === 'variation') {
+    return (
+      <div className="space-y-4">
+        {budgetChrome}
+        <DailyVariationTool hideBack onBack={goHome} />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <button
-          onClick={() => setView('tools')}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Herramientas
-        </button>
+      {budgetChrome}
+      <div className="flex items-center justify-end gap-4">
         <div className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-card)] p-1">
           {STEPS.map((step) => (
             <button

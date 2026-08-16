@@ -166,6 +166,7 @@ interface ClassificationIssue {
 
 interface BudgetCompareToolProps {
   onBack: () => void;
+  hideBack?: boolean;
 }
 
 const MONTHS = [
@@ -1010,7 +1011,7 @@ function GenericSortButton({
   );
 }
 
-export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
+export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToolProps) {
   const [budgetLines, setBudgetLines] = useState<ParsedLine[]>([]);
   const [facturacionLines, setFacturacionLines] = useState<ParsedLine[]>([]);
   const [budgetFile, setBudgetFile] = useState<string | null>(null);
@@ -1449,6 +1450,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
           min-width: 140px;
         }
       `}</style>
+      {!hideBack && (
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={onBack}
@@ -1458,6 +1460,7 @@ export default function BudgetCompareTool({ onBack }: BudgetCompareToolProps) {
           Herramientas
         </button>
       </div>
+      )}
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">

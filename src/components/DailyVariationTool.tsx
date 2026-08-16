@@ -18,6 +18,7 @@ interface WorkbookUpload {
 
 interface DailyVariationToolProps {
   onBack: () => void;
+  hideBack?: boolean;
 }
 
 type SheetKind = 'Facturación' | 'COGS';
@@ -368,7 +369,7 @@ function Sparkline({ points, weekdaysOnly }: { points: DayPoint[]; weekdaysOnly:
   );
 }
 
-export default function DailyVariationTool({ onBack }: DailyVariationToolProps) {
+export default function DailyVariationTool({ onBack, hideBack }: DailyVariationToolProps) {
   const [workbook, setWorkbook] = useState<WorkbookUpload | null>(null);
   const [from, setFrom] = useState(DEFAULT_FROM);
   const [to, setTo] = useState(DEFAULT_TO);
@@ -483,6 +484,7 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
 
   return (
     <div className="space-y-6">
+      {!hideBack && (
       <button
         onClick={onBack}
         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
@@ -490,6 +492,7 @@ export default function DailyVariationTool({ onBack }: DailyVariationToolProps) 
         <ArrowLeft className="h-4 w-4" />
         Herramientas
       </button>
+      )}
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

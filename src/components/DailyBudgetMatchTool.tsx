@@ -18,6 +18,7 @@ interface WorkbookUpload {
 
 interface DailyBudgetMatchToolProps {
   onBack: () => void;
+  hideBack?: boolean;
 }
 
 type SheetKind = 'Facturación' | 'COGS';
@@ -314,7 +315,7 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-export default function DailyBudgetMatchTool({ onBack }: DailyBudgetMatchToolProps) {
+export default function DailyBudgetMatchTool({ onBack, hideBack }: DailyBudgetMatchToolProps) {
   const [fileA, setFileA] = useState<WorkbookUpload | null>(null);
   const [fileB, setFileB] = useState<WorkbookUpload | null>(null);
   const [cutoff, setCutoff] = useState(DEFAULT_CUTOFF);
@@ -379,6 +380,7 @@ export default function DailyBudgetMatchTool({ onBack }: DailyBudgetMatchToolPro
 
   return (
     <div className="space-y-6">
+      {!hideBack && (
       <button
         onClick={onBack}
         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
@@ -386,6 +388,7 @@ export default function DailyBudgetMatchTool({ onBack }: DailyBudgetMatchToolPro
         <ArrowLeft className="h-4 w-4" />
         Herramientas
       </button>
+      )}
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

@@ -99,6 +99,7 @@ interface CogsCorrectionSummary {
 
 interface BudgetFileValidatorToolProps {
   onBack: () => void;
+  hideBack?: boolean;
 }
 
 type ValidatorStep = 1 | 2 | 3;
@@ -1125,7 +1126,7 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
-export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorToolProps) {
+export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFileValidatorToolProps) {
   const [dailyWorkbook, setDailyWorkbook] = useState<WorkbookUpload | null>(null);
   const [planWorkbook, setPlanWorkbook] = useState<WorkbookUpload | null>(null);
   const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
@@ -1508,6 +1509,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
 
   return (
     <div className="space-y-6">
+      {!hideBack && (
       <button
         onClick={onBack}
         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
@@ -1515,6 +1517,7 @@ export default function BudgetFileValidatorTool({ onBack }: BudgetFileValidatorT
         <ArrowLeft className="h-4 w-4" />
         Herramientas
       </button>
+      )}
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
