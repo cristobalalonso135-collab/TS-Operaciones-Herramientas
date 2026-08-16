@@ -333,7 +333,7 @@ export default function FreesTrackingView() {
         ty,
         ly,
         extra,
-        queda: remainingFrees(ty, ty.pct, projected),
+        queda: remainingFrees(ty, lyFull.pct, projected),
         delta: ty.pct !== null && ly.pct !== null ? ty.pct - ly.pct : null,
       };
     }).sort((a, b) => {
@@ -373,7 +373,7 @@ export default function FreesTrackingView() {
 
   const downloadZonas = () => {
     if (!analysis) return;
-    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', 'Δ pp', 'Extra € vs LY', 'Quedan (ritmo actual)'];
+    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', 'Δ pp', 'Extra € vs LY', 'Quedan (cierre LY)'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.ty.neta,
@@ -471,11 +471,11 @@ export default function FreesTrackingView() {
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Estimación que queda</p>
               <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
-                {analysis.remainingIfCurrent === null ? '—' : formatCurrency(analysis.remainingIfCurrent)}
+                {analysis.remainingIfLy === null ? '—' : formatCurrency(analysis.remainingIfLy)}
               </p>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                Si seguimos al {formatAbsPercent(analysis.tyYtd.pct)}. Ya gastados: {formatCurrency(analysis.tyYtd.freeCost)}.
-                {analysis.remainingIfLy !== null ? ` Si volvemos al cierre LY (${formatAbsPercent(analysis.lyFull.pct)}), quedarían ${formatCurrency(analysis.remainingIfLy)}.` : ''}
+                Si cerramos al {formatAbsPercent(analysis.lyFull.pct)} del año pasado. Ya gastados: {formatCurrency(analysis.tyYtd.freeCost)}.
+                {analysis.remainingIfCurrent !== null ? ` Si siguiéramos al ritmo actual (${formatAbsPercent(analysis.tyYtd.pct)}), serían ${formatCurrency(analysis.remainingIfCurrent)}.` : ''}
               </p>
             </div>
           </section>
@@ -484,7 +484,7 @@ export default function FreesTrackingView() {
             <div className="mb-3">
               <p className="text-sm font-semibold">Zonas</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                Adelantada = más frees de lo que tocaba al % del año pasado. Quedan = estimación al ritmo actual.
+                Adelantada = más frees de lo que tocaba al % del año pasado. Quedan = si cada zona cierra al mismo % free que el año pasado.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -507,6 +507,7 @@ export default function FreesTrackingView() {
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     Quedan {row.queda === null ? '—' : formatCurrency(row.queda)}
+                    <span className="text-[var(--text-muted)]"> al % de cierre LY</span>
                   </p>
                 </div>
               ))}
