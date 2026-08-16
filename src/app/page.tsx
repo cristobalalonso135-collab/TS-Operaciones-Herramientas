@@ -650,8 +650,8 @@ export default function Home() {
         id: 'tracking' as const,
         number: '03',
         title: 'Seguimiento',
-        description: 'Facturación vs budget, margen vs budget y frees Grassroots.',
-        detail: 'YTD · Meses · Frees',
+        description: 'Facturación vs budget, margen, frees y generados web.',
+        detail: 'YTD · Meses · Frees · Generados',
         tone: 'bg-[var(--success-soft)] text-[var(--success)]',
       },
     ];
