@@ -33,7 +33,14 @@ interface GenTotals {
   pctB2c: number | null;
 }
 
-type ZonaSortKey = 'zona' | 'genCost' | 'b2cPrev' | 'pctB2c' | 'pctLy' | 'pctZona' | 'extra';
+type ZonaSortKey = 'zona' | 'genCost' | 'b2cPrev' | 'budget' | 'pctB2c' | 'pctLy' | 'pctZona' | 'extra' | 'queda';
+
+interface WebB2cBudget {
+  fileName: string;
+  byZona: Record<string, number>;
+  total: number;
+  kept: number;
+}
 
 const FISCAL_MONTHS = [
   { index: 1, label: '1 · Abril', names: ['abril', 'april', 'apr', 'abr'] },
@@ -144,6 +151,53 @@ function formatAbsPercent(value: number | null, digits = 1): string {
 function extraGen(ty: GenTotals, ly: GenTotals): number | null {
   if (ty.pctB2c === null || ly.pctB2c === null) return null;
   return ty.b2cPrev * ((ty.pctB2c - ly.pctB2c) / 100);
+}
+
+function remainingVsBudget(ty: GenTotals, targetPct: number | null, budget: number): number | null {
+  if (targetPct === null || !Number.isFinite(budget) || budget <= 0) return null;
+  return budget * (targetPct / 100) - ty.genCost;
+}
+
+function lookupBudget(byZona: Record<string, number>, zona: string): number {
+  const key = zonaKey(zona);
+  if (Object.prototype.hasOwnProperty.call(byZona, zona)) return byZona[zona];
+  const found = Object.entries(byZona).find(([name]) => zonaKey(name) === key);
+  return found ? found[1] : 0;
+}
+
+function parseWebB2cBudget(rows: unknown[][]): Omit<WebB2cBudget, 'fileName'> {
+  if (!rows.length) throw new Error('El archivo de budget está vacío.');
+  const headerIndex = rows.findIndex((row) => row.some((cell) => {
+    const header = normalizeText(cell);
+    return header.includes('budget') || header.includes('month') || header === 'vertical';
+  }));
+  if (headerIndex < 0) {
+    throw new Error('No reconozco el budget. Sube el mismo CSV que en Comparador: Month Name, Vertical, Medio de Venta, Zona, Budget.');
+  }
+
+  const headers = (rows[headerIndex] || []).map((cell) => normalizeText(cell));
+  const colMap = {
+    medio: findHeader(headers, ['medio de venta', 'medio']),
+    zona: findHeader(headers, ['zona']),
+    budget: findHeader(headers, ['budget']),
+  };
+  if (colMap.medio < 0 || colMap.zona < 0 || colMap.budget < 0) {
+    throw new Error('Faltan columnas: Medio de Venta, Zona o Budget.');
+  }
+
+  const byZona: Record<string, number> = {};
+  let kept = 0;
+  rows.slice(headerIndex + 1).forEach((row) => {
+    if (!row.some((cell) => cellPresent(cell))) return;
+    const medio = normalizeText(row[colMap.medio]);
+    if (medio !== 'equipaciones web b2c') return;
+    const zona = cellPresent(row[colMap.zona]) ? String(row[colMap.zona]).trim() : 'Sin zona';
+    byZona[zona] = (byZona[zona] ?? 0) + parseAmount(row[colMap.budget]);
+    kept += 1;
+  });
+  if (kept === 0) throw new Error('No he encontrado líneas Equipaciones Web B2C en el budget.');
+  const total = Object.values(byZona).reduce((sum, value) => sum + value, 0);
+  return { byZona, total, kept };
 }
 
 function paceLabel(extra: number | null): string {
@@ -259,8 +313,10 @@ function StatCard({
 export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWebTrackingViewProps) {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
   const [lines, setLines] = useState<GenLine[]>([]);
-  const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'extra', direction: 'desc' });
+  const [budget, setBudget] = useState<WebB2cBudget | null>(null);
+  const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'queda', direction: 'desc' });
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -273,6 +329,17 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       setLines([]);
       setFileName(null);
       setError(err instanceof Error ? err.message : 'No he podido leer el archivo.');
+    }
+  };
+
+  const handleBudgetLoaded = (data: unknown[][], name: string) => {
+    try {
+      const parsed = parseWebB2cBudget(data);
+      setBudget({ ...parsed, fileName: name });
+      setBudgetError(null);
+    } catch (err) {
+      setBudget(null);
+      setBudgetError(err instanceof Error ? err.message : 'No he podido leer el budget.');
     }
   };
 
@@ -332,15 +399,18 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       const zonaFact = hasZonaSales ? lookupZonaSales(zonaSales, zona, null, analysis.ytdMonth) : 0;
       const pctZona = zonaFact > 0 ? (ty.genCost / zonaFact) * 100 : null;
       const pending = ty.b2cPrev > 0 && ty.genCost === 0;
+      const budgetZona = budget ? lookupBudget(budget.byZona, zona) : 0;
       return {
         zona,
         ty,
         ly,
         extra,
+        budget: budgetZona,
         pctCierreLy: lyFull.pctB2c,
         zonaFact,
         pctZona,
         pending,
+        queda: budget ? remainingVsBudget(ty, lyFull.pctB2c, budgetZona) : null,
         delta: ty.pctB2c !== null && ly.pctB2c !== null ? ty.pctB2c - ly.pctB2c : null,
       };
     }).sort((a, b) => {
@@ -353,10 +423,12 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       const pick = (row: typeof a) => (
         sort.key === 'genCost' ? row.ty.genCost
           : sort.key === 'b2cPrev' ? row.ty.b2cPrev
-            : sort.key === 'pctB2c' ? row.ty.pctB2c
-              : sort.key === 'pctLy' ? row.pctCierreLy
-                : sort.key === 'pctZona' ? row.pctZona
-                  : row.extra
+            : sort.key === 'budget' ? row.budget
+              : sort.key === 'pctB2c' ? row.ty.pctB2c
+                : sort.key === 'pctLy' ? row.pctCierreLy
+                  : sort.key === 'pctZona' ? row.pctZona
+                    : sort.key === 'queda' ? row.queda
+                      : row.extra
       );
       const left = pick(a);
       const right = pick(b);
@@ -366,7 +438,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       const result = Number(left) - Number(right);
       return sort.direction === 'asc' ? result : -result;
     });
-  }, [analysis, hasZonaSales, lines, sort, zonaSales]);
+  }, [analysis, budget, hasZonaSales, lines, sort, zonaSales]);
 
   const updateSort = (key: ZonaSortKey) => {
     setSort((prev) => (
@@ -378,16 +450,18 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
 
   const downloadZonas = () => {
     if (!analysis) return;
-    const header = ['Zona', 'Gen. Web TY', 'Web B2C mes -1', '% vs B2C', '% cierre LY', 'Fact. zona TY', '% vs zona', 'Extra € vs LY'];
+    const header = ['Zona', 'Gen. Web TY', 'Web B2C mes -1', 'Budget Web B2C', '% vs B2C', '% cierre LY', 'Fact. zona TY', '% vs zona', 'Extra € vs LY', 'Quedan (cierre LY)'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.ty.genCost,
       row.ty.b2cPrev,
+      row.budget,
       row.ty.pctB2c,
       row.pctCierreLy,
       row.zonaFact || '',
       row.pctZona,
       row.extra,
+      row.queda,
     ])].map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -398,36 +472,60 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
     URL.revokeObjectURL(url);
   };
 
+  const remainingCompany = analysis && budget
+    ? remainingVsBudget(analysis.tyYtd, analysis.lyFull.pctB2c, budget.total)
+    : null;
+  const expectedGen = analysis && budget && analysis.lyFull.pctB2c !== null
+    ? budget.total * (analysis.lyFull.pctB2c / 100)
+    : null;
+
   const maxPct = analysis
     ? Math.max(20, ...analysis.monthly.flatMap((month) => [month.ty.pctB2c ?? 0, month.ly.pctB2c ?? 0].map((value) => Math.min(Math.abs(value), 80))))
     : 20;
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <FileUpload
-          inputId="tracking-generados-input"
-          label="CSV de generados web (Año-Mes, Zona CRM, Gen. Web, Equipaciones Web B2C Mes -1)"
-          onFileLoaded={handleFileLoaded}
-          keepDropzone
-        />
-        {fileName && analysis && (
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            Cargado: {fileName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
-            {analysis.lastFy !== null ? ` · comparado con FY ${fyLabel(analysis.lastFy)}` : ''}
-            {hasZonaSales ? ' · peso sobre zona con Teamsports' : ' · sube Teamsports en YTD para ver el peso sobre la zona'}
-          </p>
-        )}
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-generados-input"
+            label="1. CSV de generados web (Año-Mes, Zona CRM, Gen. Web, Web B2C Mes -1)"
+            onFileLoaded={handleFileLoaded}
+            keepDropzone
+          />
+          {fileName && analysis && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              Cargado: {fileName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
+              {analysis.lastFy !== null ? ` · comparado con FY ${fyLabel(analysis.lastFy)}` : ''}
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-generados-budget-input"
+            label="2. Budget (el mismo CSV que Comparador). Me quedo con Equipaciones Web B2C por zona"
+            onFileLoaded={handleBudgetLoaded}
+            keepDropzone
+          />
+          {budget && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              Cargado: {budget.fileName} · Web B2C {formatCurrency(budget.total)} en {Object.keys(budget.byZona).length} zonas
+            </p>
+          )}
+        </div>
       </section>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
+      {budgetError && (
+        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
+      )}
 
       {lines.length === 0 && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Sube data3.csv. El % es Gen. Web / Equipaciones Web B2C del mes anterior.</p>
+          <p className="mt-3 text-sm font-medium">Sube data3.csv y, para estimar lo que queda, el budget (data4). Aplico el % de cierre LY al budget Web B2C.</p>
         </section>
       )}
 
@@ -459,27 +557,40 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
             />
           </section>
 
-          <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Ritmo vs año pasado</p>
-            <p className={`mt-2 font-display text-2xl font-semibold tabular-nums ${freeTone(analysis.extraEuros)}`}>
-              {paceLabel(analysis.extraEuros)}
-            </p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {analysis.extraEuros === null
-                ? 'No hay comparativa con el año pasado.'
-                : analysis.extraEuros < 0
-                  ? `Vas retrasada: faltan ${formatCurrency(Math.abs(analysis.extraEuros))} de generados respecto al % LY sobre Web B2C. Se factura el mes siguiente: no lo dejes para febrero.`
-                  : analysis.extraEuros > 0
-                    ? `Vas adelantada ${formatCurrency(analysis.extraEuros)}. Ya están puestos vs el % del año pasado.`
-                    : 'Vas en línea con el % del año pasado.'}
-            </p>
+          <section className="grid gap-3 lg:grid-cols-2">
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Ritmo vs mismo tramo LY</p>
+              <p className={`mt-2 font-display text-2xl font-semibold tabular-nums ${freeTone(analysis.extraEuros)}`}>
+                {paceLabel(analysis.extraEuros)}
+              </p>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                {analysis.extraEuros === null
+                  ? 'No hay comparativa con el año pasado.'
+                  : analysis.extraEuros < 0
+                    ? `Vs el % del mismo tramo LY faltan ${formatCurrency(Math.abs(analysis.extraEuros))}.`
+                    : analysis.extraEuros > 0
+                      ? `Vs el mismo tramo LY vas adelantada ${formatCurrency(analysis.extraEuros)}.`
+                      : 'En línea con el mismo tramo del año pasado.'}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Estimación que queda</p>
+              <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                {remainingCompany === null ? '—' : formatCurrency(remainingCompany)}
+              </p>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                {budget && analysis.lyFull.pctB2c !== null
+                  ? `Al ${formatAbsPercent(analysis.lyFull.pctB2c)} de cierre LY sobre el budget Web B2C (${formatCurrency(budget.total)}). Previstos del año: ${expectedGen === null ? '—' : formatCurrency(expectedGen)}. Ya puestos: ${formatCurrency(analysis.tyYtd.genCost)}.`
+                  : `Sube el budget para estimar vs cierre LY. El % de cierre del año pasado es ${formatAbsPercent(analysis.lyFull.pctB2c)}.`}
+              </p>
+            </div>
           </section>
 
           <section>
             <div className="mb-3">
               <p className="text-sm font-semibold">Zonas</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                El % de contrato es sobre Web B2C del mes anterior. El % de zona es esos mismos euros sobre la facturación total de la zona.
+                El % de contrato es sobre Web B2C del mes anterior. Quedan = % de cierre LY × budget Web B2C de la zona − ya puestos. Vs LY = mismo tramo.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -499,15 +610,19 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {formatCurrency(row.ty.genCost)} sobre {formatCurrency(row.ty.b2cPrev)} de Web B2C mes −1
+                    {budget ? ` · budget ${formatCurrency(row.budget)}` : ''}
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {hasZonaSales
                       ? `${formatAbsPercent(row.pctZona)} de la zona (${formatCurrency(row.zonaFact)})`
-                      : 'Sin facturación de zona: sube Teamsports'}
+                      : 'Sin facturación de zona: sube Teamsports en YTD'}
                   </p>
                   <p className={`mt-3 text-sm font-semibold tabular-nums ${freeTone(row.extra)}`}>
                     {row.extra === null ? '—' : formatSignedCurrency(row.extra)}
-                    <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs ritmo LY</span>
+                    <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs mismo tramo LY</span>
+                  </p>
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}{budget ? ' del budget' : ''}
                   </p>
                 </div>
               ))}
@@ -561,10 +676,12 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
                       ['zona', 'Zona', 'left'],
                       ['genCost', 'Gen. Web €', 'right'],
                       ['b2cPrev', 'Web B2C −1 €', 'right'],
+                      ['budget', 'Budget B2C €', 'right'],
                       ['pctB2c', '% vs B2C', 'right'],
                       ['pctLy', '% cierre LY', 'right'],
                       ['pctZona', '% vs zona', 'right'],
-                      ['extra', 'Extra €', 'right'],
+                      ['extra', 'Vs tramo LY', 'right'],
+                      ['queda', 'Quedan €', 'right'],
                     ] as const).map(([key, label, align]) => {
                       const active = sort.key === key;
                       const Icon = !active ? ArrowUpDown : sort.direction === 'asc' ? ArrowUp : ArrowDown;
@@ -589,10 +706,12 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
                       <td className="px-3 py-2">{row.zona}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.genCost)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.b2cPrev)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{row.budget ? formatCurrency(row.budget) : '—'}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.delta)}`}>{formatAbsPercent(row.ty.pctB2c)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.pctCierreLy)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.pctZona)}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.extra)}`}>{row.extra === null ? '—' : formatSignedCurrency(row.extra)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{row.queda === null ? '—' : formatCurrency(row.queda)}</td>
                     </tr>
                   ))}
                 </tbody>
