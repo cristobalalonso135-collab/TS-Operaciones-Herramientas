@@ -23,7 +23,7 @@ interface FreeTotals {
   pct: number | null;
 }
 
-type ZonaSortKey = 'zona' | 'neta' | 'freeCost' | 'bruto' | 'pct' | 'pctLy' | 'delta';
+type ZonaSortKey = 'zona' | 'neta' | 'freeCost' | 'bruto' | 'pct' | 'pctLy' | 'delta' | 'extra' | 'queda';
 
 const FISCAL_MONTHS = [
   { index: 1, label: '1 · Abril', names: ['abril', 'april', 'apr', 'abr'] },
@@ -128,6 +128,41 @@ function formatCurrency(value: number): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €`;
 }
 
+function formatSignedCurrency(value: number): string {
+  const formatted = formatCurrency(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `−${formatted}`;
+  return formatted;
+}
+
+function extraFrees(ty: FreeTotals, ly: FreeTotals): number | null {
+  if (ty.pct === null || ly.pct === null) return null;
+  return ty.bruto * ((ty.pct - ly.pct) / 100);
+}
+
+function paceRatio(part: FreeTotals, full: FreeTotals): number | null {
+  if (full.bruto === 0) return null;
+  return part.bruto / full.bruto;
+}
+
+function projectBruto(ty: FreeTotals, lyYtd: FreeTotals, lyFull: FreeTotals, lyRest: FreeTotals): number {
+  const pace = paceRatio(lyYtd, lyFull);
+  if (pace && pace !== 0) return ty.bruto / pace;
+  return ty.bruto + lyRest.bruto;
+}
+
+function remainingFrees(ty: FreeTotals, targetPct: number | null, projected: number): number | null {
+  if (targetPct === null) return null;
+  return projected * (targetPct / 100) - ty.freeCost;
+}
+
+function paceLabel(extra: number | null): string {
+  if (extra === null) return 'Sin dato';
+  if (extra > 500) return 'Adelantada';
+  if (extra < -500) return 'Retrasada';
+  return 'En línea';
+}
+
 function formatAbsPercent(value: number | null, digits = 1): string {
   if (value === null || !Number.isFinite(value)) return '—';
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
@@ -219,7 +254,7 @@ export default function FreesTrackingView() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<FreeLine[]>([]);
-  const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'pct', direction: 'desc' });
+  const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'extra', direction: 'desc' });
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -247,14 +282,12 @@ export default function FreesTrackingView() {
     const lyYtd = sumLines(lyLines.filter((line) => line.monthIndex <= ytdMonth));
     const lyFull = sumLines(lyLines);
     const lyRest = sumLines(lyLines.filter((line) => line.monthIndex > ytdMonth));
-    const paceFact = lyFull.bruto === 0 ? null : (lyYtd.bruto / lyFull.bruto) * 100;
-    const paceFree = lyFull.freeCost === 0 ? null : (lyYtd.freeCost / lyFull.freeCost) * 100;
-    const projectedBruto = paceFact && paceFact !== 0 ? tyYtd.bruto / (paceFact / 100) : tyYtd.bruto + lyRest.bruto;
-    const remainingBruto = Math.max(0, projectedBruto - tyYtd.bruto);
-    const endIfLyPct = lyFull.pct === null ? null : projectedBruto * (lyFull.pct / 100);
-    const remainingIfLy = endIfLyPct === null ? null : endIfLyPct - tyYtd.freeCost;
-    const endIfCurrentPct = tyYtd.pct === null ? null : projectedBruto * (tyYtd.pct / 100);
-    const remainingIfCurrent = endIfCurrentPct === null ? null : endIfCurrentPct - tyYtd.freeCost;
+    const projected = projectBruto(tyYtd, lyYtd, lyFull, lyRest);
+    const extraEuros = extraFrees(tyYtd, lyYtd);
+    const remainingIfLy = remainingFrees(tyYtd, lyFull.pct, projected);
+    const remainingIfCurrent = remainingFrees(tyYtd, tyYtd.pct, projected);
+    const endIfLyPct = lyFull.pct === null ? null : projected * (lyFull.pct / 100);
+    const endIfCurrentPct = tyYtd.pct === null ? null : projected * (tyYtd.pct / 100);
     const monthly = FISCAL_MONTHS.map((month) => ({
       ...month,
       ty: sumLines(tyLines.filter((line) => line.monthIndex === month.index)),
@@ -270,10 +303,7 @@ export default function FreesTrackingView() {
       lyYtd,
       lyFull,
       lyRest,
-      paceFact,
-      paceFree,
-      projectedBruto,
-      remainingBruto,
+      extraEuros,
       remainingIfLy,
       remainingIfCurrent,
       endIfLyPct,
@@ -290,10 +320,20 @@ export default function FreesTrackingView() {
       const ly = analysis.lastFy === null
         ? emptyTotals()
         : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
+      const lyFull = analysis.lastFy === null
+        ? emptyTotals()
+        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona));
+      const lyRest = analysis.lastFy === null
+        ? emptyTotals()
+        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex > analysis.ytdMonth));
+      const extra = extraFrees(ty, ly);
+      const projected = projectBruto(ty, ly, lyFull, lyRest);
       return {
         zona,
         ty,
         ly,
+        extra,
+        queda: remainingFrees(ty, ty.pct, projected),
         delta: ty.pct !== null && ly.pct !== null ? ty.pct - ly.pct : null,
       };
     }).sort((a, b) => {
@@ -303,18 +343,18 @@ export default function FreesTrackingView() {
         const base = (orderA < 0 ? 99 : orderA) - (orderB < 0 ? 99 : orderB) || a.zona.localeCompare(b.zona, 'es');
         return sort.direction === 'asc' ? base : -base;
       }
-      const left = sort.key === 'neta' ? a.ty.neta
-        : sort.key === 'freeCost' ? a.ty.freeCost
-          : sort.key === 'bruto' ? a.ty.bruto
-            : sort.key === 'pct' ? a.ty.pct
-              : sort.key === 'pctLy' ? a.ly.pct
-                : a.delta;
-      const right = sort.key === 'neta' ? b.ty.neta
-        : sort.key === 'freeCost' ? b.ty.freeCost
-          : sort.key === 'bruto' ? b.ty.bruto
-            : sort.key === 'pct' ? b.ty.pct
-              : sort.key === 'pctLy' ? b.ly.pct
-                : b.delta;
+      const pick = (row: typeof a) => (
+        sort.key === 'neta' ? row.ty.neta
+          : sort.key === 'freeCost' ? row.ty.freeCost
+            : sort.key === 'bruto' ? row.ty.bruto
+              : sort.key === 'pct' ? row.ty.pct
+                : sort.key === 'pctLy' ? row.ly.pct
+                  : sort.key === 'extra' ? row.extra
+                    : sort.key === 'queda' ? row.queda
+                      : row.delta
+      );
+      const left = pick(a);
+      const right = pick(b);
       if (left === null && right === null) return 0;
       if (left === null) return 1;
       if (right === null) return -1;
@@ -333,7 +373,7 @@ export default function FreesTrackingView() {
 
   const downloadZonas = () => {
     if (!analysis) return;
-    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', 'Δ pp'];
+    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', 'Δ pp', 'Extra € vs LY', 'Quedan (ritmo actual)'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.ty.neta,
@@ -342,6 +382,8 @@ export default function FreesTrackingView() {
       row.ty.pct,
       row.ly.pct,
       row.delta,
+      row.extra,
+      row.queda,
     ])].map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -390,91 +432,84 @@ export default function FreesTrackingView() {
               label="% free hoy"
               value={formatAbsPercent(analysis.tyYtd.pct)}
               hint={`${formatCurrency(analysis.tyYtd.freeCost)} de ${formatCurrency(analysis.tyYtd.bruto)}`}
-              tone={freeTone(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)}
+              tone={freeTone(analysis.extraEuros)}
             />
             <StatCard
               label="% free LY mismo tramo"
               value={formatAbsPercent(analysis.lyYtd.pct)}
-              hint={`Abr–${analysis.ytdLabel.split(' · ')[1] || analysis.ytdLabel} FY ${analysis.lastFy ? fyLabel(analysis.lastFy) : '—'}`}
+              hint={`${formatCurrency(analysis.lyYtd.freeCost)} de ${formatCurrency(analysis.lyYtd.bruto)}`}
             />
             <StatCard
-              label="Vs LY YTD"
-              value={formatPp(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)}
-              hint="Más pp = más frees que el año pasado"
-              tone={freeTone(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)}
+              label="Esos pp en dinero"
+              value={analysis.extraEuros === null ? '—' : formatSignedCurrency(analysis.extraEuros)}
+              hint={`${formatPp(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)} sobre la facturación de este año`}
+              tone={freeTone(analysis.extraEuros)}
             />
             <StatCard
               label="% free LY cierre"
               value={formatAbsPercent(analysis.lyFull.pct)}
-              hint={`Año fiscal ${analysis.lastFy ? fyLabel(analysis.lastFy) : '—'} completo`}
+              hint={`${formatCurrency(analysis.lyFull.freeCost)} de ${formatCurrency(analysis.lyFull.bruto)}`}
             />
           </section>
 
           <section className="grid gap-3 lg:grid-cols-2">
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Cómo íbamos el año pasado</p>
-              <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                A estas alturas del FY {analysis.lastFy ? fyLabel(analysis.lastFy) : 'pasado'} ya llevaban
-                {' '}
-                <span className="font-semibold text-[var(--text-primary)]">{formatAbsPercent(analysis.paceFact)}</span>
-                {' '}de la facturación del año y
-                {' '}
-                <span className="font-semibold text-[var(--text-primary)]">{formatAbsPercent(analysis.paceFree)}</span>
-                {' '}de los frees del año.
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Ritmo vs año pasado</p>
+              <p className={`mt-2 font-display text-2xl font-semibold tabular-nums ${freeTone(analysis.extraEuros)}`}>
+                {paceLabel(analysis.extraEuros)}
               </p>
-              <div className="mt-4 space-y-3">
-                <div>
-                  <div className="mb-1 flex justify-between text-xs text-[var(--text-secondary)]">
-                    <span>Facturación LY YTD / año</span>
-                    <span className="tabular-nums">{formatAbsPercent(analysis.paceFact)}</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-                    <div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${Math.min(100, analysis.paceFact ?? 0)}%` }} />
-                  </div>
-                </div>
-                <div>
-                  <div className="mb-1 flex justify-between text-xs text-[var(--text-secondary)]">
-                    <span>Frees LY YTD / año</span>
-                    <span className="tabular-nums">{formatAbsPercent(analysis.paceFree)}</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-                    <div className="h-full rounded-full bg-[var(--danger)]" style={{ width: `${Math.min(100, analysis.paceFree ?? 0)}%` }} />
-                  </div>
-                </div>
-              </div>
-              <p className="mt-3 text-xs text-[var(--text-muted)]">
-                Hoy: {formatCurrency(analysis.tyYtd.neta)} neta · LY mismo tramo: {formatCurrency(analysis.lyYtd.neta)} neta.
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                {analysis.extraEuros === null
+                  ? 'No hay comparativa con el año pasado.'
+                  : analysis.extraEuros > 0
+                    ? `Este año llevas ${formatCurrency(analysis.extraEuros)} más de frees que si hubieras ido al % del año pasado.`
+                    : analysis.extraEuros < 0
+                      ? `Este año llevas ${formatCurrency(Math.abs(analysis.extraEuros))} menos de frees que el ritmo del año pasado.`
+                      : 'Vas al mismo % de frees que el año pasado.'}
               </p>
             </div>
-
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Negativos que quedan</p>
-              <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Proyección a cierre usando el ritmo de facturación del año pasado. Frees ya gastados: {formatCurrency(analysis.tyYtd.freeCost)}.
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Estimación que queda</p>
+              <p className="mt-2 font-display text-2xl font-semibold tabular-nums text-[var(--text-primary)]">
+                {analysis.remainingIfCurrent === null ? '—' : formatCurrency(analysis.remainingIfCurrent)}
               </p>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-[var(--bg-soft)] p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Si cerramos como LY</p>
-                  <p className={`mt-1 text-lg font-semibold tabular-nums ${freeTone(analysis.remainingIfLy)}`}>
-                    {analysis.remainingIfLy === null ? '—' : formatCurrency(Math.max(0, analysis.remainingIfLy))}
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                Si seguimos al {formatAbsPercent(analysis.tyYtd.pct)}. Ya gastados: {formatCurrency(analysis.tyYtd.freeCost)}.
+                {analysis.remainingIfLy !== null ? ` Si volvemos al cierre LY (${formatAbsPercent(analysis.lyFull.pct)}), quedarían ${formatCurrency(analysis.remainingIfLy)}.` : ''}
+              </p>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-3">
+              <p className="text-sm font-semibold">Zonas</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                Adelantada = más frees de lo que tocaba al % del año pasado. Quedan = estimación al ritmo actual.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {zonaRows.filter((row) => row.zona !== 'Sin zona' || row.ty.bruto > 10000).map((row) => (
+                <div key={row.zona} className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-display text-sm font-semibold">{row.zona}</p>
+                    <p className={`text-[11px] font-semibold ${freeTone(row.extra)}`}>{paceLabel(row.extra)}</p>
+                  </div>
+                  <p className="mt-2 text-[12px] font-semibold tabular-nums text-[var(--text-primary)]">
+                    {formatAbsPercent(row.ty.pct)}
+                    <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(row.ly.pct)} LY</span>
                   </p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Cierre {formatAbsPercent(analysis.lyFull.pct)} · {formatCurrency(analysis.endIfLyPct ?? 0)} en el año
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                    {formatCurrency(row.ty.freeCost)} de {formatCurrency(row.ty.bruto)}
+                  </p>
+                  <p className={`mt-3 text-sm font-semibold tabular-nums ${freeTone(row.extra)}`}>
+                    {row.extra === null ? '—' : formatSignedCurrency(row.extra)}
+                    <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs ritmo LY</span>
+                  </p>
+                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)}
                   </p>
                 </div>
-                <div className="rounded-xl bg-[var(--bg-soft)] p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Si seguimos así</p>
-                  <p className={`mt-1 text-lg font-semibold tabular-nums ${freeTone(analysis.remainingIfCurrent)}`}>
-                    {analysis.remainingIfCurrent === null ? '—' : formatCurrency(Math.max(0, analysis.remainingIfCurrent))}
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Cierre {formatAbsPercent(analysis.tyYtd.pct)} · {formatCurrency(analysis.endIfCurrentPct ?? 0)} en el año
-                  </p>
-                </div>
-              </div>
-              <p className="mt-3 text-xs text-[var(--text-muted)]">
-                El año pasado, de {analysis.ytdLabel} a marzo, se fueron {formatCurrency(analysis.lyRest.freeCost)} de frees.
-              </p>
+              ))}
             </div>
           </section>
 
@@ -505,7 +540,7 @@ export default function FreesTrackingView() {
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold">Zonas · mismo tramo vs LY</p>
+                <p className="text-sm font-semibold">Detalle por zona</p>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">Pincha una columna para ordenar.</p>
               </div>
               <button
@@ -518,17 +553,17 @@ export default function FreesTrackingView() {
               </button>
             </div>
             <div className="overflow-auto">
-              <table className="w-full min-w-[820px] border-collapse text-sm">
+              <table className="w-full min-w-[980px] border-collapse text-sm">
                 <thead className="bg-[var(--bg-soft)] text-xs text-[var(--text-secondary)]">
                   <tr>
                     {([
                       ['zona', 'Zona', 'left'],
-                      ['neta', 'Fact. neta', 'right'],
                       ['freeCost', 'Frees', 'right'],
-                      ['bruto', 'Bruto', 'right'],
+                      ['bruto', 'Facturación', 'right'],
                       ['pct', '% free', 'right'],
-                      ['pctLy', '% LY YTD', 'right'],
-                      ['delta', 'Δ pp', 'right'],
+                      ['pctLy', '% LY', 'right'],
+                      ['extra', 'Extra €', 'right'],
+                      ['queda', 'Quedan', 'right'],
                     ] as const).map(([key, label, align]) => {
                       const active = sort.key === key;
                       const Icon = !active ? ArrowUpDown : sort.direction === 'asc' ? ArrowUp : ArrowDown;
@@ -551,12 +586,12 @@ export default function FreesTrackingView() {
                   {zonaRows.map((row) => (
                     <tr key={row.zona} className="border-b border-[var(--border)]">
                       <td className="px-3 py-2">{row.zona}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.neta)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.freeCost)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.bruto)}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.delta)}`}>{formatAbsPercent(row.ty.pct)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.ly.pct)}</td>
-                      <td className={`px-3 py-2 text-right font-mono ${freeTone(row.delta)}`}>{formatPp(row.delta)}</td>
+                      <td className={`px-3 py-2 text-right font-mono ${freeTone(row.extra)}`}>{row.extra === null ? '—' : formatSignedCurrency(row.extra)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{row.queda === null ? '—' : formatCurrency(row.queda)}</td>
                     </tr>
                   ))}
                 </tbody>
