@@ -158,9 +158,16 @@ function remainingFrees(ty: FreeTotals, targetPct: number | null, projected: num
 
 function paceLabel(extra: number | null): string {
   if (extra === null) return 'Sin dato';
-  if (extra > 500) return 'Adelantada';
   if (extra < -500) return 'Retrasada';
+  if (extra > 500) return 'Adelantada';
   return 'En línea';
+}
+
+function freeTone(delta: number | null): string {
+  if (delta === null) return 'text-[var(--text-muted)]';
+  if (delta < -0.05) return 'text-[var(--danger)]';
+  if (delta > 0.05) return 'text-[var(--warning)]';
+  return 'text-[var(--success)]';
 }
 
 function formatAbsPercent(value: number | null, digits = 1): string {
@@ -174,13 +181,6 @@ function formatPp(value: number | null): string {
   if (value > 0) return `+${formatted} pp`;
   if (value < 0) return `−${formatted} pp`;
   return `${formatted} pp`;
-}
-
-function freeTone(delta: number | null): string {
-  if (delta === null) return 'text-[var(--text-muted)]';
-  if (delta > 0.05) return 'text-[var(--danger)]';
-  if (delta < -0.05) return 'text-[var(--success)]';
-  return 'text-[var(--text-secondary)]';
 }
 
 function parseFreesData(rows: unknown[][]): FreeLine[] {
@@ -442,7 +442,11 @@ export default function FreesTrackingView() {
             <StatCard
               label="Esos pp en dinero"
               value={analysis.extraEuros === null ? '—' : formatSignedCurrency(analysis.extraEuros)}
-              hint={`${formatPp(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)} sobre la facturación de este año`}
+              hint={analysis.extraEuros === null
+                ? 'Sin comparativa'
+                : analysis.extraEuros < 0
+                  ? `${formatPp(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)} · pendientes vs el % LY`
+                  : `${formatPp(analysis.tyYtd.pct !== null && analysis.lyYtd.pct !== null ? analysis.tyYtd.pct - analysis.lyYtd.pct : null)} · ya puestos vs el % LY`}
               tone={freeTone(analysis.extraEuros)}
             />
             <StatCard
@@ -461,11 +465,11 @@ export default function FreesTrackingView() {
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
                 {analysis.extraEuros === null
                   ? 'No hay comparativa con el año pasado.'
-                  : analysis.extraEuros > 0
-                    ? `Este año llevas ${formatCurrency(analysis.extraEuros)} más de frees que si hubieras ido al % del año pasado.`
-                    : analysis.extraEuros < 0
-                      ? `Este año llevas ${formatCurrency(Math.abs(analysis.extraEuros))} menos de frees que el ritmo del año pasado.`
-                      : 'Vas al mismo % de frees que el año pasado.'}
+                  : analysis.extraEuros < 0
+                    ? `Vas retrasada: faltan ${formatCurrency(Math.abs(analysis.extraEuros))} de frees respecto al % del año pasado. Eso es lo que no quieres arrastrar a febrero.`
+                    : analysis.extraEuros > 0
+                      ? `Vas adelantada ${formatCurrency(analysis.extraEuros)}. No es un coste extra: son frees del contrato ya puestos.`
+                      : 'Vas en línea con el % del año pasado.'}
               </p>
             </div>
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -484,7 +488,7 @@ export default function FreesTrackingView() {
             <div className="mb-3">
               <p className="text-sm font-semibold">Zonas</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                Adelantada = más frees de lo que tocaba al % del año pasado. Quedan = si cada zona cierra al mismo % free que el año pasado.
+                Retrasada = frees pendientes (riesgo de golpe a final de año). Adelantada = ya puestos, no es un sobrecoste. Quedan = si cada zona cierra al % del año pasado.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
