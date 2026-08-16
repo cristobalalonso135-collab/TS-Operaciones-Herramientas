@@ -23,7 +23,7 @@ interface FreeTotals {
   pct: number | null;
 }
 
-type ZonaSortKey = 'zona' | 'neta' | 'freeCost' | 'bruto' | 'pct' | 'pctLy' | 'delta' | 'extra' | 'queda';
+type ZonaSortKey = 'zona' | 'neta' | 'freeCost' | 'bruto' | 'pct' | 'pctLy' | 'pctCierreLy' | 'delta' | 'extra' | 'queda';
 
 const FISCAL_MONTHS = [
   { index: 1, label: '1 · Abril', names: ['abril', 'april', 'apr', 'abr'] },
@@ -333,6 +333,7 @@ export default function FreesTrackingView() {
         ty,
         ly,
         extra,
+        pctCierreLy: lyFull.pct,
         queda: remainingFrees(ty, lyFull.pct, projected),
         delta: ty.pct !== null && ly.pct !== null ? ty.pct - ly.pct : null,
       };
@@ -349,9 +350,10 @@ export default function FreesTrackingView() {
             : sort.key === 'bruto' ? row.ty.bruto
               : sort.key === 'pct' ? row.ty.pct
                 : sort.key === 'pctLy' ? row.ly.pct
-                  : sort.key === 'extra' ? row.extra
-                    : sort.key === 'queda' ? row.queda
-                      : row.delta
+                  : sort.key === 'pctCierreLy' ? row.pctCierreLy
+                    : sort.key === 'extra' ? row.extra
+                      : sort.key === 'queda' ? row.queda
+                        : row.delta
       );
       const left = pick(a);
       const right = pick(b);
@@ -373,7 +375,7 @@ export default function FreesTrackingView() {
 
   const downloadZonas = () => {
     if (!analysis) return;
-    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', 'Δ pp', 'Extra € vs LY', 'Quedan (cierre LY)'];
+    const header = ['Zona', 'Fact. neta TY', 'Frees TY', 'Bruto TY', '% free TY', '% free LY YTD', '% cierre LY', 'Δ pp', 'Extra € vs LY', 'Quedan (cierre LY)'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.ty.neta,
@@ -381,6 +383,7 @@ export default function FreesTrackingView() {
       row.ty.bruto,
       row.ty.pct,
       row.ly.pct,
+      row.pctCierreLy,
       row.delta,
       row.extra,
       row.queda,
@@ -500,7 +503,11 @@ export default function FreesTrackingView() {
                   </div>
                   <p className="mt-2 text-[12px] font-semibold tabular-nums text-[var(--text-primary)]">
                     {formatAbsPercent(row.ty.pct)}
-                    <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(row.ly.pct)} LY</span>
+                    <span className="font-medium text-[var(--text-muted)]"> hoy</span>
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                    Cierre LY {formatAbsPercent(row.pctCierreLy)}
+                    <span className="text-[var(--text-muted)]"> · mismo tramo {formatAbsPercent(row.ly.pct)}</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {formatCurrency(row.ty.freeCost)} de {formatCurrency(row.ty.bruto)}
@@ -510,8 +517,7 @@ export default function FreesTrackingView() {
                     <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs ritmo LY</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)}
-                    <span className="text-[var(--text-muted)]"> al % de cierre LY</span>
+                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}
                   </p>
                 </div>
               ))}
@@ -558,17 +564,18 @@ export default function FreesTrackingView() {
               </button>
             </div>
             <div className="overflow-auto">
-              <table className="w-full min-w-[980px] border-collapse text-sm">
+              <table className="w-full min-w-[1100px] border-collapse text-sm">
                 <thead className="bg-[var(--bg-soft)] text-xs text-[var(--text-secondary)]">
                   <tr>
                     {([
                       ['zona', 'Zona', 'left'],
-                      ['freeCost', 'Frees', 'right'],
-                      ['bruto', 'Facturación', 'right'],
+                      ['freeCost', 'Frees €', 'right'],
+                      ['bruto', 'Facturación €', 'right'],
                       ['pct', '% free', 'right'],
                       ['pctLy', '% LY', 'right'],
+                      ['pctCierreLy', '% cierre LY', 'right'],
                       ['extra', 'Extra €', 'right'],
-                      ['queda', 'Quedan', 'right'],
+                      ['queda', 'Quedan €', 'right'],
                     ] as const).map(([key, label, align]) => {
                       const active = sort.key === key;
                       const Icon = !active ? ArrowUpDown : sort.direction === 'asc' ? ArrowUp : ArrowDown;
@@ -595,6 +602,7 @@ export default function FreesTrackingView() {
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.bruto)}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.delta)}`}>{formatAbsPercent(row.ty.pct)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.ly.pct)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.pctCierreLy)}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.extra)}`}>{row.extra === null ? '—' : formatSignedCurrency(row.extra)}</td>
                       <td className="px-3 py-2 text-right font-mono">{row.queda === null ? '—' : formatCurrency(row.queda)}</td>
                     </tr>
