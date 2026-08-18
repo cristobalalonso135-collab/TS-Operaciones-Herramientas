@@ -121,7 +121,7 @@ function addLineToTotals(block: FreeTotals, line: FreeLine): void {
 function finalizeTotals(block: FreeTotals): FreeTotals {
   return {
     ...block,
-    pct: block.bruto === 0 ? null : (block.freeCost / block.bruto) * 100,
+    pct: block.neta === 0 ? null : (block.freeCost / block.neta) * 100,
   };
 }
 
@@ -144,7 +144,7 @@ function formatSignedCurrency(value: number): string {
 
 function extraFrees(ty: FreeTotals, ly: FreeTotals): number | null {
   if (ty.pct === null || ly.pct === null) return null;
-  return ty.bruto * ((ty.pct - ly.pct) / 100);
+  return ty.neta * ((ty.pct - ly.pct) / 100);
 }
 
 function paceRatio(part: FreeTotals, full: FreeTotals): number | null {
@@ -562,13 +562,13 @@ export default function FreesTrackingView({
             <StatCard
               label="% free hoy"
               value={formatAbsPercent(analysis.tyYtd.pct)}
-              hint={`${formatCurrency(analysis.tyYtd.freeCost)} de ${formatCurrency(analysis.tyYtd.bruto)}`}
+              hint={`${formatCurrency(analysis.tyYtd.freeCost)} de ${formatCurrency(analysis.tyYtd.neta)}`}
               tone={freeTone(analysis.extraEuros)}
             />
             <StatCard
               label="% free LY mismo tramo"
               value={formatAbsPercent(analysis.lyYtd.pct)}
-              hint={`${formatCurrency(analysis.lyYtd.freeCost)} de ${formatCurrency(analysis.lyYtd.bruto)}`}
+              hint={`${formatCurrency(analysis.lyYtd.freeCost)} de ${formatCurrency(analysis.lyYtd.neta)}`}
             />
             <StatCard
               label="Esos pp en dinero"
@@ -583,7 +583,7 @@ export default function FreesTrackingView({
             <StatCard
               label="% free LY cierre"
               value={formatAbsPercent(analysis.lyFull.pct)}
-              hint={`${formatCurrency(analysis.lyFull.freeCost)} de ${formatCurrency(analysis.lyFull.bruto)}`}
+              hint={`${formatCurrency(analysis.lyFull.freeCost)} de ${formatCurrency(analysis.lyFull.neta)}`}
             />
           </section>
 
@@ -639,7 +639,7 @@ export default function FreesTrackingView({
                     <span className="text-[var(--text-muted)]"> · mismo tramo {formatAbsPercent(row.ly.pct)}</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                    {formatCurrency(row.ty.freeCost)} de {formatCurrency(row.ty.bruto)}
+                    {formatCurrency(row.ty.freeCost)} de {formatCurrency(row.ty.neta)}
                     {activeBudget ? ` · budget ${formatCurrency(row.budget)}` : ''}
                   </p>
                   <p className={`mt-3 text-sm font-semibold tabular-nums ${freeTone(row.extra)}`}>
@@ -700,7 +700,7 @@ export default function FreesTrackingView({
                     {([
                       ['zona', 'Zona', 'left'],
                       ['freeCost', 'Frees €', 'right'],
-                      ['bruto', 'Facturación €', 'right'],
+                      ['neta', 'Facturación €', 'right'],
                       ['budget', 'Budget €', 'right'],
                       ['pct', '% free', 'right'],
                       ['pctLy', '% LY', 'right'],
@@ -730,7 +730,7 @@ export default function FreesTrackingView({
                     <tr key={row.zona} className="border-b border-[var(--border)]">
                       <td className="px-3 py-2">{row.zona}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.freeCost)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.bruto)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.ty.neta)}</td>
                       <td className="px-3 py-2 text-right font-mono">{row.budget ? formatCurrency(row.budget) : '—'}</td>
                       <td className={`px-3 py-2 text-right font-mono ${freeTone(row.delta)}`}>{formatAbsPercent(row.ty.pct)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.ly.pct)}</td>

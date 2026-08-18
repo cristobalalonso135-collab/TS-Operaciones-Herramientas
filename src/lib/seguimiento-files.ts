@@ -151,16 +151,22 @@ export function rangeFromFiscalMonths(fyStart: number, fromMonth: number, toMont
   const startCal = calendarMonth(fyStart, startMonth);
   const endCal = calendarMonth(fyStart, endMonth);
   return {
-    start: new Date(startCal.year, startCal.month - 1, 1),
-    end: new Date(endCal.year, endCal.month, 0),
+    start: new Date(startCal.year, startCal.month - 1, 1, 0, 0, 0, 0),
+    end: new Date(endCal.year, endCal.month, 0, 23, 59, 59, 999),
   };
 }
 
 export function shiftRange(range: DateRange, years: number): DateRange {
-  return {
-    start: new Date(range.start.getFullYear() + years, range.start.getMonth(), range.start.getDate()),
-    end: new Date(range.end.getFullYear() + years, range.end.getMonth(), range.end.getDate()),
-  };
+  const shift = (date: Date) => new Date(
+    date.getFullYear() + years,
+    date.getMonth(),
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds(),
+  );
+  return { start: shift(range.start), end: shift(range.end) };
 }
 
 export function calendarMonth(fyStart: number, monthIndex: number): { year: number; month: number } {
@@ -182,25 +188,6 @@ export function filterByRange<T extends { fyStart: number; monthIndex: number }>
 
 function headerIndexOf(rows: unknown[][], test: (header: string) => boolean): number {
   return rows.findIndex((row) => row.some((cell) => test(normalizeHeader(cell))));
-}
-
-function dimKey(line: { vertical: string; medio: string; region: string; zona: string; monthIndex: number }): string {
-  return [
-    line.monthIndex,
-    normalizeText(line.vertical),
-    normalizeText(line.medio),
-    normalizeText(line.region),
-    normalizeText(line.zona),
-  ].join('|');
-}
-
-function dimKeyLoose(line: { vertical: string; medio: string; zona: string; monthIndex: number }): string {
-  return [
-    line.monthIndex,
-    normalizeText(line.vertical),
-    normalizeText(line.medio),
-    normalizeText(line.zona),
-  ].join('|');
 }
 
 export function parseOperationRows(rows: unknown[][]): OperationLine[] {
@@ -487,105 +474,91 @@ export function buildTrackingLines(
 ): { lines: TrackingBuildLine[]; currentFy: number | null } {
   const tyRange = range;
   const lyRange = shiftRange(range, -1);
-  const tyOperation = filterByRange(operation, tyRange);
-  const lyOperation = filterByRange(operation, lyRange);
-  const tyMonths = new Set(tyOperation.map((line) => line.monthIndex));
-  const budgetInRange = filterByRange(budget, tyRange).filter((line) => tyMonths.has(line.monthIndex));
 
-  const budgetExact = new Map<string, { budget: number; gmBudget: number }>();
-  const budgetLoose = new Map<string, { budget: number; gmBudget: number }>();
-  budgetInRange.forEach((line) => {
-    const exact = dimKey(line);
-    const loose = dimKeyLoose(line);
-    const prevExact = budgetExact.get(exact) ?? { budget: 0, gmBudget: 0 };
-    budgetExact.set(exact, {
-      budget: prevExact.budget + line.budget,
-      gmBudget: prevExact.gmBudget + line.gmBudget,
+  const toBuildLine = (
+    line: { fyStart: number; monthIndex: number; monthLabel: string; vertical: string; medio: string; region: string; zona: string },
+    amounts: { facturacion?: number; gm?: number; budget?: number; gmBudget?: number },
+  ): TrackingBuildLine => {
+    const classifiedLine = classifyLine({
+      vertical: line.vertical,
+      medio: line.medio,
+      region: line.region,
+      zona: line.zona,
     });
-    const prevLoose = budgetLoose.get(loose) ?? { budget: 0, gmBudget: 0 };
-    budgetLoose.set(loose, {
-      budget: prevLoose.budget + line.budget,
-      gmBudget: prevLoose.gmBudget + line.gmBudget,
+    return collapseForTracking({
+      key: `${line.fyStart}|${line.monthIndex}|${line.vertical}|${line.medio}|${line.region}|${line.zona}`,
+      fyStart: line.fyStart,
+      monthIndex: line.monthIndex,
+      monthLabel: line.monthLabel,
+      vertical: line.vertical,
+      medio: line.medio,
+      region: line.region,
+      zona: line.zona,
+      ...classifiedLine,
+      facturacion: amounts.facturacion ?? 0,
+      budget: amounts.budget ?? 0,
+      facturacionLy: 0,
+      gm: amounts.gm ?? 0,
+      gmBudget: amounts.gmBudget ?? 0,
+      gmLy: 0,
     });
-  });
-
-  const toMerged = (rows: OperationLine[], attachBudget: boolean): TrackingBuildLine[] => {
-    const aggregated = new Map<string, OperationLine>();
-    rows.forEach((line) => {
-      const key = dimKey(line);
-      const existing = aggregated.get(key);
-      if (!existing) {
-        aggregated.set(key, { ...line });
-        return;
-      }
-      existing.facturacion += line.facturacion;
-      existing.gm += line.gm;
-      existing.free += line.free;
-      existing.gen += line.gen;
-    });
-
-    const classified = Array.from(aggregated.values()).map((line, index) => {
-      const classifiedLine = classifyLine({
-        vertical: line.vertical,
-        medio: line.medio,
-        region: line.region,
-        zona: line.zona,
-      });
-      const matched = attachBudget
-        ? (budgetExact.get(dimKey(line)) ?? budgetLoose.get(dimKeyLoose(line)))
-        : null;
-      return collapseForTracking({
-        key: `${index}|${line.fyStart}|${line.monthIndex}|${line.vertical}|${line.medio}|${line.zona}`,
-        fyStart: line.fyStart,
-        monthIndex: line.monthIndex,
-        monthLabel: line.monthLabel,
-        vertical: line.vertical,
-        medio: line.medio,
-        region: line.region,
-        zona: line.zona,
-        ...classifiedLine,
-        facturacion: line.facturacion,
-        budget: matched?.budget ?? 0,
-        facturacionLy: 0,
-        gm: line.gm,
-        gmBudget: matched?.gmBudget ?? 0,
-        gmLy: 0,
-      });
-    });
-
-    const merged = new Map<string, TrackingBuildLine>();
-    classified.forEach((line) => {
-      const key = trackingMergeKey(line);
-      const existing = merged.get(key);
-      if (!existing) {
-        merged.set(key, { ...line, key });
-        return;
-      }
-      existing.facturacion += line.facturacion;
-      existing.gm += line.gm;
-      existing.budget += line.budget;
-      existing.gmBudget += line.gmBudget;
-    });
-    return Array.from(merged.values());
   };
 
-  const tyMerged = toMerged(tyOperation, true);
-  const lyMerged = toMerged(lyOperation, false);
+  const mergeLine = (
+    map: Map<string, TrackingBuildLine>,
+    line: TrackingBuildLine,
+    kind: 'actual' | 'budget',
+  ) => {
+    const key = trackingMergeKey(line);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, { ...line, key });
+      return;
+    }
+    if (kind === 'actual') {
+      existing.facturacion += line.facturacion;
+      existing.gm += line.gm;
+      return;
+    }
+    existing.budget += line.budget;
+    existing.gmBudget += line.gmBudget;
+  };
+
+  const tyOperation = filterByRange(operation, tyRange);
+  const tyActualMonths = new Set(tyOperation.map((line) => line.monthIndex));
+
+  const tyMap = new Map<string, TrackingBuildLine>();
+  tyOperation.forEach((line) => {
+    mergeLine(tyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm }), 'actual');
+  });
+  filterByRange(budget, tyRange).forEach((line) => {
+    mergeLine(tyMap, toBuildLine(line, { budget: line.budget, gmBudget: line.gmBudget }), 'budget');
+  });
+
   const lyMap = new Map<string, TrackingBuildLine>();
-  lyMerged.forEach((line) => {
-    lyMap.set(lyMatchKey(line), line);
+  filterByRange(operation, lyRange).forEach((line) => {
+    mergeLine(lyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm }), 'actual');
   });
 
-  const lines = tyMerged.map((line) => {
-    const ly = lyMap.get(lyMatchKey(line));
-    return {
-      ...line,
-      facturacionLy: ly?.facturacion ?? 0,
-      gmLy: ly?.gm ?? 0,
-    };
+  const lyByMatch = new Map<string, TrackingBuildLine>();
+  lyMap.forEach((line) => {
+    lyByMatch.set(lyMatchKey(line), line);
   });
 
-  return { lines, currentFy: currentFyStart(tyMerged) };
+  const lines = Array.from(tyMap.values())
+    .filter((line) => (
+      line.facturacion !== 0 || line.budget !== 0 || line.gm !== 0 || line.gmBudget !== 0
+    ))
+    .map((line) => {
+      const ly = tyActualMonths.has(line.monthIndex) ? lyByMatch.get(lyMatchKey(line)) : undefined;
+      return {
+        ...line,
+        facturacionLy: ly?.facturacion ?? 0,
+        gmLy: ly?.gm ?? 0,
+      };
+    });
+
+  return { lines, currentFy: currentFyStart(lines) };
 }
 
 export function snapshotFromFileName(name: string): Date | null {

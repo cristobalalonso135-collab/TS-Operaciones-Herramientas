@@ -318,7 +318,24 @@ function withoutMonth(line: TrackingLine): TrackingLine {
 }
 
 function aggregateYtdLines(lines: TrackingLine[]): TrackingLine[] {
-  return mergeTrackingLines(lines.map(withoutMonth));
+  const tyMonths = new Set(
+    lines
+      .filter((line) => line.facturacion !== 0 || line.gm !== 0)
+      .map((line) => line.monthIndex),
+  );
+  return mergeTrackingLines(lines.map((line) => {
+    const keep = line.monthIndex !== null && tyMonths.has(line.monthIndex);
+    return withoutMonth({
+      ...line,
+      budget: keep ? line.budget : 0,
+      gmBudget: keep ? line.gmBudget : 0,
+      facturacionLy: keep ? line.facturacionLy : 0,
+      gmLy: keep ? line.gmLy : 0,
+    });
+  })).filter((line) => (
+    line.facturacion !== 0 || line.budget !== 0 || line.gm !== 0 || line.gmBudget !== 0
+    || line.facturacionLy !== 0 || line.gmLy !== 0
+  ));
 }
 
 function parseTrackingData(rows: unknown[][]): TrackingLine[] {
@@ -634,15 +651,6 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   }, [selectedArea, selectedMonth, selectedResponsable, selectedSubresponsable]);
 
   useEffect(() => {
-    const months = operation
-      .filter((line) => line.fyStart === fyStart)
-      .map((line) => line.monthIndex);
-    if (months.length === 0) return;
-    setFromMonth(1);
-    setToMonth(Math.max(...months));
-  }, [fyStart, operation]);
-
-  useEffect(() => {
     setSelectedMonth(null);
     setSelectedArea(null);
     setSelectedResponsable(null);
@@ -774,11 +782,10 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   }, [monthlyLines, selectedMonth, viewMode, ytdLines]);
 
   const company = useMemo(() => {
-    const source = viewMode === 'monthly' ? monthlyLines : ytdLines;
     const block = emptyMetrics('teamsports', 'Teamsports');
-    source.forEach((line) => addLine(block, line));
+    ytdLines.forEach((line) => addLine(block, line));
     return block;
-  }, [monthlyLines, viewMode, ytdLines]);
+  }, [ytdLines]);
 
   const areaNodes = useMemo(() => groupMetrics(scopedLines, (line) => line.area), [scopedLines]);
 
@@ -931,7 +938,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Facturación vs budget del mismo tramo de meses, no del año entero. Al subir el CSV, Hasta se pone en el último mes con dato.
+              El ejercicio es abril 2026 → marzo 2027. Facturación, budget y vs LY se comparan en los meses que ya tienen dato, no contra el año entero. El 25/26 del CSV solo sirve para el LY.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-3">
               <label className="text-xs font-medium text-[var(--text-secondary)]">
@@ -973,15 +980,12 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                 type="button"
                 onClick={() => {
                   setFyStart(DEFAULT_FY);
-                  setFromMonth(1);
-                  const months = operation
-                    .filter((line) => line.fyStart === DEFAULT_FY)
-                    .map((line) => line.monthIndex);
-                  setToMonth(months.length > 0 ? Math.max(...months) : DEFAULT_TO_MONTH);
+                  setFromMonth(DEFAULT_FROM_MONTH);
+                  setToMonth(DEFAULT_TO_MONTH);
                 }}
                 className="rounded-md border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)]"
               >
-                YTD
+                Abr ’26 → Mar ’27
               </button>
             </div>
           </div>
@@ -1135,7 +1139,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       {activeHasData && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. El budget es de esos meses, no de todo el año. Pincha una caja para seguir bajando.</p>
+            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. Facturación, budget y vs LY van por los mismos meses con dato. Pincha una caja para seguir bajando.</p>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard
