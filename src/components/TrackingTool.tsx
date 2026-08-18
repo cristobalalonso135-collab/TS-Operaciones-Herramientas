@@ -564,6 +564,15 @@ function sortZonaBlocks(nodes: MetricBlock[]): MetricBlock[] {
   });
 }
 
+function csvNumber(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) return '';
+  return value.toLocaleString('es-ES', {
+    useGrouping: false,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
 function downloadCsv(fileName: string, header: string[], rows: (string | number | null)[][]): void {
   const csv = [header, ...rows]
     .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';'))
@@ -632,7 +641,7 @@ function collectTreeRows(
   ) => {
     const ruta = ['Teamsports', area, responsable, subresponsable, extra].filter(Boolean).join(' › ');
     rows.push([
-      nivel,
+      String(nivel),
       ...(monthLabel ? [monthLabel] : []),
       'Teamsports',
       area,
@@ -641,7 +650,7 @@ function collectTreeRows(
       extra,
       extraKind,
       ruta,
-      ...treeMetricCells(withDebt(block, area, nivel)),
+      ...treeMetricCells(withDebt(block, area, nivel)).map((value) => csvNumber(value)),
     ]);
   };
 
@@ -1270,17 +1279,17 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         line.medio,
         line.region,
         line.zona,
-        line.facturacion,
-        line.budget,
-        line.facturacion - line.budget,
-        sales,
-        line.gm,
-        line.gmBudget,
-        line.gm - line.gmBudget,
-        mg,
-        mgBg,
-        mgDelta,
-        ly,
+        csvNumber(line.facturacion),
+        csvNumber(line.budget),
+        csvNumber(line.facturacion - line.budget),
+        csvNumber(sales),
+        csvNumber(line.gm),
+        csvNumber(line.gmBudget),
+        csvNumber(line.gm - line.gmBudget),
+        csvNumber(mg),
+        csvNumber(mgBg),
+        csvNumber(mgDelta),
+        csvNumber(ly),
       ];
     });
     downloadCsv(`seguimiento_${(pathLabel || 'tabla').replace(/[^\w]+/g, '_')}.csv`, header, rows);
