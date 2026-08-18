@@ -69,6 +69,8 @@ interface MetricBlock {
   genLy: number;
   webB2cPrev: number;
   webB2cPrevLy: number;
+  grassrootsFacturacion: number;
+  grassrootsFacturacionLy: number;
   deuda: number;
   deudaVencida: number;
   zonas: string[];
@@ -304,6 +306,8 @@ function emptyMetrics(key: string, label: string): MetricBlock {
     genLy: 0,
     webB2cPrev: 0,
     webB2cPrevLy: 0,
+    grassrootsFacturacion: 0,
+    grassrootsFacturacionLy: 0,
     deuda: 0,
     deudaVencida: 0,
     zonas: [],
@@ -316,6 +320,10 @@ function emptyMetrics(key: string, label: string): MetricBlock {
 function pushUnique(list: string[], value: string): void {
   if (!value) return;
   if (!list.some((item) => normalizeText(item) === normalizeText(value))) list.push(value);
+}
+
+function isGrassrootsArea(area: string): boolean {
+  return normalizeText(area) === 'grassroots';
 }
 
 function isCommercialArea(area: string): boolean {
@@ -336,13 +344,15 @@ function addLine(block: MetricBlock, line: TrackingLine): void {
   block.gm += line.gm;
   block.gmBudget += line.gmBudget;
   block.gmLy += line.gmLy;
-  if (!isCommercialArea(line.area)) {
+  if (isGrassrootsArea(line.area)) {
     block.free += line.free;
     block.freeLy += line.freeLy;
     block.gen += line.gen;
     block.genLy += line.genLy;
     block.webB2cPrev += line.webB2cPrev ?? 0;
     block.webB2cPrevLy += line.webB2cPrevLy ?? 0;
+    block.grassrootsFacturacion += line.facturacion;
+    block.grassrootsFacturacionLy += line.facturacionLy;
   }
   pushUnique(block.zonas, line.zona);
   pushUnique(block.areas, line.area);
@@ -735,8 +745,8 @@ function TreeCard({
             label="Frees"
             amount={-block.free}
             amountLy={-block.freeLy}
-            base={block.facturacion - block.free}
-            baseLy={block.facturacionLy - block.freeLy}
+            base={block.grassrootsFacturacion - block.free}
+            baseLy={block.grassrootsFacturacionLy - block.freeLy}
             baseLabel="bruta"
             invert
             accent="free"
@@ -1043,24 +1053,27 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
 
   const responsableNodes = useMemo(() => {
     if (!selectedArea) return [];
+    const attachDebt = viewMode === 'ytd' && selectedArea === 'Grassroots';
     return groupMetrics(
       scopedLines.filter((line) => line.area === selectedArea),
       (line) => line.responsable,
-    ).map((node) => (viewMode === 'ytd' ? applyDebt(node, debtClients) : node));
+    ).map((node) => (attachDebt ? applyDebt(node, debtClients) : node));
   }, [debtClients, scopedLines, selectedArea, viewMode]);
 
   const subresponsableNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable) return [];
+    const attachDebt = viewMode === 'ytd' && selectedArea === 'Grassroots';
     return groupMetrics(
       scopedLines.filter((line) => line.area === selectedArea && line.responsable === selectedResponsable),
       (line) => line.subresponsable,
-    ).map((node) => (viewMode === 'ytd' ? applyDebt(node, debtClients) : node));
+    ).map((node) => (attachDebt ? applyDebt(node, debtClients) : node));
   }, [debtClients, scopedLines, selectedArea, selectedResponsable, viewMode]);
 
   const extraKind = extraLevelKind(selectedArea, selectedSubresponsable);
 
   const extraNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable || !selectedSubresponsable || !extraKind) return [];
+    const attachDebt = viewMode === 'ytd' && selectedArea === 'Grassroots';
     const nodes = groupMetrics(
       scopedLines.filter((line) => (
         line.area === selectedArea
@@ -1076,9 +1089,9 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         if (orderA >= 0 || orderB >= 0) return (orderA < 0 ? 99 : orderA) - (orderB < 0 ? 99 : orderB);
         return a.label.localeCompare(b.label, 'es');
       });
-      return viewMode === 'ytd' ? sorted.map((node) => applyDebt(node, debtClients)) : sorted;
+      return attachDebt ? sorted.map((node) => applyDebt(node, debtClients)) : sorted;
     }
-    return viewMode === 'ytd' ? nodes.map((node) => applyDebt(node, debtClients)) : nodes;
+    return attachDebt ? nodes.map((node) => applyDebt(node, debtClients)) : nodes;
   }, [debtClients, extraKind, scopedLines, selectedArea, selectedResponsable, selectedSubresponsable, viewMode]);
 
   const detailLines = useMemo(() => {

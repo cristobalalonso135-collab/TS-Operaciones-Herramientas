@@ -79,7 +79,7 @@ function normalizeHeader(value: unknown): string {
 }
 
 function parseAmount(value: unknown): number {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
   if (!cellPresent(value)) return 0;
   const raw = String(value).replace(/€/g, '').replace(/%/g, '').replace(/\s/g, '').trim();
   const hasComma = raw.includes(',');
@@ -87,7 +87,8 @@ function parseAmount(value: unknown): number {
   const normalized = hasComma && hasDot
     ? raw.replace(/\./g, '').replace(',', '.')
     : raw.replace(',', '.');
-  return Number(normalized) || 0;
+  const amount = Number(normalized) || 0;
+  return Math.round(amount * 100) / 100;
 }
 
 function findHeader(headers: string[], aliases: string[]): number {
