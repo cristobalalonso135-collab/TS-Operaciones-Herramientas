@@ -103,25 +103,18 @@ type KpiTargets = {
 const DEFAULT_KPI_TARGETS: KpiTargets = { free: 10, gen: 12 };
 const KPI_BAND_PP = 1.5;
 const KPI_BAND_WARN_PP = 2.5;
-const DEBT_YEAR_DAYS = 365;
 const DEBT_TARGET_DAYS = 55;
 const DEBT_DUE_TARGET_DAYS = 10;
 const DEBT_WARN_DAYS = 10;
-const DEBT_TARGET_PCT = (DEBT_TARGET_DAYS / DEBT_YEAR_DAYS) * 100;
-const DEBT_DUE_TARGET_PCT = (DEBT_DUE_TARGET_DAYS / DEBT_YEAR_DAYS) * 100;
-const DEBT_WARN_PCT = (DEBT_WARN_DAYS / DEBT_YEAR_DAYS) * 100;
 
-function todayStamp(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function daysOnBook(stock: number, periodSales: number, periodDays: number): number | null {
+  if (periodSales === 0 || periodDays <= 0) return null;
+  return (stock / periodSales) * periodDays;
 }
 
-function annualizedPct(stock: number, periodSales: number, periodDays: number): number | null {
-  if (periodSales === 0 || periodDays <= 0) return null;
-  return (stock / periodSales) * (periodDays / DEBT_YEAR_DAYS) * 100;
+function formatDays(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${value.toLocaleString('de-DE', { maximumFractionDigits: 0 })} días`;
 }
 
 function parseKpiTargets(raw: string | null): KpiTargets {
@@ -1082,10 +1075,12 @@ function KpiOverviewPanel({
   const genVsLy = genPct !== null && genPctLy !== null ? genPct - genPctLy : null;
   const genTone = bandTone(genPct, targets.gen);
 
-  const debtPct = hasDebt ? annualizedPct(block.deuda, block.facturacion, periodDays) : null;
-  const debtDuePct = hasDebt ? annualizedPct(block.deudaVencida, block.facturacion, periodDays) : null;
-  const debtTone = ceilingTone(debtPct, DEBT_TARGET_PCT, DEBT_WARN_PCT);
-  const debtDueTone = ceilingTone(debtDuePct, DEBT_DUE_TARGET_PCT, DEBT_WARN_PCT);
+  const debtPct = hasDebt ? ratioPct(block.deuda, block.facturacion) : null;
+  const debtDuePct = hasDebt ? ratioPct(block.deudaVencida, block.facturacion) : null;
+  const dso = hasDebt ? daysOnBook(block.deuda, block.facturacion, periodDays) : null;
+  const dsoDue = hasDebt ? daysOnBook(block.deudaVencida, block.facturacion, periodDays) : null;
+  const debtTone = ceilingTone(dso, DEBT_TARGET_DAYS, DEBT_WARN_DAYS);
+  const debtDueTone = ceilingTone(dsoDue, DEBT_DUE_TARGET_DAYS, DEBT_WARN_DAYS);
 
   return (
     <section className="rounded-2xl border border-[var(--border)] bg-white/70 p-4 shadow-sm">
@@ -1096,7 +1091,7 @@ function KpiOverviewPanel({
         </div>
         <p className="max-w-xl text-[11px] leading-snug text-[var(--text-muted)]">
           Frees y generados: dentro de ±{KPI_BAND_PP.toLocaleString('de-DE', { minimumFractionDigits: 1 })} pp del objetivo (arriba o abajo, igual de mal).
-          Deuda: {formatAbsPercent(DEBT_TARGET_PCT, 0)} de una neta de año (siempre el mismo techo). Vencida: {formatAbsPercent(DEBT_DUE_TARGET_PCT, 0)}.
+          Deuda = deuda ÷ facturación de este tramo. El semáforo mira días de cobro (techo {DEBT_TARGET_DAYS}; vencida {DEBT_DUE_TARGET_DAYS}).
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -1152,10 +1147,10 @@ function KpiOverviewPanel({
         <OverviewCard
           label="Deuda / facturación"
           value={hasDebt ? formatAbsPercent(debtPct) : '—'}
-          compare={hasDebt ? `${formatCurrency(block.deuda)} · techo ${formatAbsPercent(DEBT_TARGET_PCT, 0)}` : 'Sin Excel de deuda'}
-          delta={hasDebt ? `${formatPp(debtPct !== null ? debtPct - DEBT_TARGET_PCT : null)} vs obj` : 'Sube el archivo 3'}
-          ly={hasDebt ? 'Neta anualizada · mismo % da igual el tramo' : 'Foto de cartera, no vs LY'}
-          fill={targetFill(debtPct, DEBT_TARGET_PCT)}
+          compare={hasDebt ? `${formatCurrency(block.deuda)} / ${formatCurrency(block.facturacion)}` : 'Sin Excel de deuda'}
+          delta={hasDebt ? `${formatDays(dso)} · techo ${DEBT_TARGET_DAYS} días` : 'Sube el archivo 3'}
+          ly={hasDebt ? 'Misma división que ves: deuda ÷ neta del tramo' : 'Foto de cartera, no vs LY'}
+          fill={targetFill(dso, DEBT_TARGET_DAYS)}
           tone={debtTone}
           accent="var(--kpi-debt)"
           extra={hasDebt ? (
@@ -1165,15 +1160,15 @@ function KpiOverviewPanel({
                 {formatAbsPercent(debtDuePct)}
               </p>
               <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                {formatCurrency(block.deudaVencida)} · techo {formatAbsPercent(DEBT_DUE_TARGET_PCT, 0)}
+                {formatCurrency(block.deudaVencida)} / {formatCurrency(block.facturacion)}
               </p>
               <p className={`mt-0.5 text-[12px] font-semibold tabular-nums ${overviewToneClass(debtDueTone)}`}>
-                {formatPp(debtDuePct !== null ? debtDuePct - DEBT_DUE_TARGET_PCT : null)} vs obj
+                {formatDays(dsoDue)} · techo {DEBT_DUE_TARGET_DAYS} días
               </p>
               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--kpi-debt-soft)]">
                 <div
                   className={`h-full rounded-full ${overviewBarClass(debtDueTone)}`}
-                  style={{ width: `${targetFill(debtDuePct, DEBT_DUE_TARGET_PCT)}%` }}
+                  style={{ width: `${targetFill(dsoDue, DEBT_DUE_TARGET_DAYS)}%` }}
                 />
               </div>
             </div>
@@ -1900,7 +1895,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="tracking-debt-input"
-            label={`3. Deuda (03 ${todayStamp()}.xlsx)`}
+            label="3. Deuda (03 (fecha hoy).xlsx)"
             hint="Zona, Cliente, Deuda total, Vencida, No vencida"
             onFileLoaded={() => undefined}
             onWorkbookLoaded={handleDebtLoaded}
