@@ -8,11 +8,14 @@ import DeudaTrackingView, { parseDebtData, pickDebtSheet, type DebtClient } from
 import { classifyLine, normalizeText } from '@/lib/business-classification';
 import {
   buildTrackingLines,
+  filterByRange,
   freesFromOperation,
   generadosFromOperation,
   grassrootsBudgetFrom,
   parseBudgetRows,
   parseOperationRows,
+  rangeFromFiscalMonths,
+  shiftRange,
   snapshotFromFileName,
   webB2cBudgetFrom,
   type BudgetLine,
@@ -594,6 +597,14 @@ function lineSortValue(line: TrackingLine, key: TableSortKey): string | number |
   return vsPct(line.facturacion, line.facturacionLy);
 }
 
+const DEFAULT_FY = 2026;
+const DEFAULT_FROM_MONTH = 1;
+const DEFAULT_TO_MONTH = 12;
+
+function fyLabel(start: number): string {
+  return `${String(start).slice(-2)}/${String(start + 1).slice(-2)}`;
+}
+
 export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [operation, setOperation] = useState<OperationLine[]>([]);
   const [operationName, setOperationName] = useState<string | null>(null);
@@ -605,6 +616,9 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [debtSnapshot, setDebtSnapshot] = useState<Date | null>(null);
   const [debtName, setDebtName] = useState<string | null>(null);
   const [debtError, setDebtError] = useState<string | null>(null);
+  const [fromMonth, setFromMonth] = useState(DEFAULT_FROM_MONTH);
+  const [toMonth, setToMonth] = useState(DEFAULT_TO_MONTH);
+  const [fyStart, setFyStart] = useState(DEFAULT_FY);
   const [viewMode, setViewMode] = useState<TrackingViewMode>('ytd');
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
@@ -618,6 +632,14 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
     end?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
   }, [selectedArea, selectedMonth, selectedResponsable, selectedSubresponsable]);
+
+  useEffect(() => {
+    setSelectedMonth(null);
+    setSelectedArea(null);
+    setSelectedResponsable(null);
+    setSelectedSubresponsable(null);
+    setSelectedExtra(null);
+  }, [fromMonth, fyStart, toMonth]);
 
   const handleOperationLoaded = (data: unknown[][], name: string) => {
     try {
@@ -665,10 +687,22 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     }
   };
 
-  const built = useMemo(() => buildTrackingLines(operation, budgetRows), [budgetRows, operation]);
+  const dateRange = useMemo(
+    () => rangeFromFiscalMonths(fyStart, fromMonth, toMonth),
+    [fromMonth, fyStart, toMonth],
+  );
+  const lyRange = useMemo(() => shiftRange(dateRange, -1), [dateRange]);
+
+  const built = useMemo(() => buildTrackingLines(operation, budgetRows, dateRange), [budgetRows, dateRange, operation]);
   const lines = built.lines as TrackingLine[];
-  const freeLines = useMemo(() => freesFromOperation(operation), [operation]);
-  const genLines = useMemo(() => generadosFromOperation(operation), [operation]);
+  const freeLines = useMemo(() => {
+    const all = freesFromOperation(operation);
+    return [...filterByRange(all, dateRange), ...filterByRange(all, lyRange)];
+  }, [dateRange, lyRange, operation]);
+  const genLines = useMemo(() => {
+    const all = generadosFromOperation(operation);
+    return [...filterByRange(all, dateRange), ...filterByRange(all, lyRange)];
+  }, [dateRange, lyRange, operation]);
   const grassrootsBudget = useMemo(() => {
     if (!budgetName || budgetRows.length === 0) return null;
     try {
@@ -883,8 +917,56 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Sube los tres archivos arriba. Yo cruzo por zona y mes: operación trae facturación, LY, frees y generados; el budget el “quedan”; la deuda la foto de cobro.
+              Elige de qué mes a qué mes. El 1 es abril y el 12 es marzo. Predeterminado: Abril ’26 → Marzo ’27.
             </p>
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <label className="text-xs font-medium text-[var(--text-secondary)]">
+                Ejercicio
+                <select
+                  value={fyStart}
+                  onChange={(event) => setFyStart(Number(event.target.value))}
+                  className="mt-1 block rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  <option value={2025}>25/26</option>
+                  <option value={2026}>26/27</option>
+                </select>
+              </label>
+              <label className="text-xs font-medium text-[var(--text-secondary)]">
+                Desde
+                <select
+                  value={fromMonth}
+                  onChange={(event) => setFromMonth(Number(event.target.value))}
+                  className="mt-1 block rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  {FISCAL_MONTHS.map((month) => (
+                    <option key={`from-${month.index}`} value={month.index}>{month.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-medium text-[var(--text-secondary)]">
+                Hasta
+                <select
+                  value={toMonth}
+                  onChange={(event) => setToMonth(Number(event.target.value))}
+                  className="mt-1 block rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  {FISCAL_MONTHS.map((month) => (
+                    <option key={`to-${month.index}`} value={month.index}>{month.label}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setFyStart(DEFAULT_FY);
+                  setFromMonth(DEFAULT_FROM_MONTH);
+                  setToMonth(DEFAULT_TO_MONTH);
+                }}
+                className="rounded-md border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)]"
+              >
+                Abril → Marzo
+              </button>
+            </div>
           </div>
           <div className="flex rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-1">
             <button
@@ -947,7 +1029,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
           />
           {operationName && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              {operationName} · {operation.length.toLocaleString('de-DE')} líneas · FY actual {ytdLines.length.toLocaleString('de-DE')}
+              {operationName} · {filterByRange(operation, dateRange).length.toLocaleString('de-DE')} líneas FY {fyLabel(fyStart)} · {ytdLines.length.toLocaleString('de-DE')} agrupadas
             </p>
           )}
         </div>

@@ -17,6 +17,7 @@ export interface OperationLine {
 export interface BudgetLine {
   monthIndex: number;
   monthLabel: string;
+  fyStart: number;
   vertical: string;
   medio: string;
   region: string;
@@ -126,15 +127,57 @@ export function parseFiscalMonth(value: unknown): { index: number; label: string
 export function parseCalendarYear(value: unknown): number | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getFullYear();
   const text = String(value ?? '');
-  const apostrophe = text.match(/'(\d{2})\b/);
-  if (apostrophe) return 2000 + Number(apostrophe[1]);
   const full = text.match(/\b(20\d{2}|19\d{2})\b/);
   if (full) return Number(full[1]);
+  const short = text.match(/[''`´’](\d{2})\b/) || text.match(/(?:^|\s)(\d{2})\s*$/);
+  if (short) return 2000 + Number(short[1]);
   return null;
 }
 
 export function fyStartFrom(calendarYear: number, monthIndex: number): number {
   return monthIndex >= 10 ? calendarYear - 1 : calendarYear;
+}
+
+export interface DateRange {
+  start: Date;
+  end: Date;
+}
+
+export function rangeFromFiscalMonths(fyStart: number, fromMonth: number, toMonth: number): DateRange {
+  const from = Math.min(Math.max(1, fromMonth), 12);
+  const to = Math.max(Math.min(12, toMonth), 1);
+  const startMonth = Math.min(from, to);
+  const endMonth = Math.max(from, to);
+  const startCal = calendarMonth(fyStart, startMonth);
+  const endCal = calendarMonth(fyStart, endMonth);
+  return {
+    start: new Date(startCal.year, startCal.month - 1, 1),
+    end: new Date(endCal.year, endCal.month, 0),
+  };
+}
+
+export function shiftRange(range: DateRange, years: number): DateRange {
+  return {
+    start: new Date(range.start.getFullYear() + years, range.start.getMonth(), range.start.getDate()),
+    end: new Date(range.end.getFullYear() + years, range.end.getMonth(), range.end.getDate()),
+  };
+}
+
+export function calendarMonth(fyStart: number, monthIndex: number): { year: number; month: number } {
+  const month = ((monthIndex + 2) % 12) + 1;
+  const year = monthIndex >= 10 ? fyStart + 1 : fyStart;
+  return { year, month };
+}
+
+export function monthOverlapsRange(fyStart: number, monthIndex: number, range: DateRange): boolean {
+  const { year, month } = calendarMonth(fyStart, monthIndex);
+  const monthStart = new Date(year, month - 1, 1);
+  const monthEnd = new Date(year, month, 0);
+  return monthStart <= range.end && monthEnd >= range.start;
+}
+
+export function filterByRange<T extends { fyStart: number; monthIndex: number }>(lines: T[], range: DateRange): T[] {
+  return lines.filter((line) => monthOverlapsRange(line.fyStart, line.monthIndex, range));
 }
 
 function headerIndexOf(rows: unknown[][], test: (header: string) => boolean): number {
@@ -242,11 +285,14 @@ export function parseBudgetRows(rows: unknown[][]): BudgetLine[] {
       const monthValue = row[colMap.month];
       const month = parseFiscalMonth(monthValue);
       if (!month) return null;
+      const calendarYear = parseCalendarYear(monthValue);
+      const fyStart = calendarYear === null ? 2026 : fyStartFrom(calendarYear, month.index);
       const vertical = String(row[colMap.vertical] ?? '').trim();
       if (!vertical) return null;
       return {
         monthIndex: month.index,
         monthLabel: month.label,
+        fyStart,
         vertical,
         medio: String(row[colMap.medio] ?? '').trim(),
         region: colMap.region >= 0 ? String(row[colMap.region] ?? '').trim() : '',
@@ -437,10 +483,17 @@ function lyMatchKey(line: TrackingBuildLine): string {
 export function buildTrackingLines(
   operation: OperationLine[],
   budget: BudgetLine[],
+  range: DateRange,
 ): { lines: TrackingBuildLine[]; currentFy: number | null } {
+  const tyRange = range;
+  const lyRange = shiftRange(range, -1);
+  const tyOperation = filterByRange(operation, tyRange);
+  const lyOperation = filterByRange(operation, lyRange);
+  const budgetInRange = filterByRange(budget, tyRange);
+
   const budgetExact = new Map<string, { budget: number; gmBudget: number }>();
   const budgetLoose = new Map<string, { budget: number; gmBudget: number }>();
-  budget.forEach((line) => {
+  budgetInRange.forEach((line) => {
     const exact = dimKey(line);
     const loose = dimKeyLoose(line);
     const prevExact = budgetExact.get(exact) ?? { budget: 0, gmBudget: 0 };
@@ -455,68 +508,69 @@ export function buildTrackingLines(
     });
   });
 
-  const classified = operation.map((line, index) => {
-    const classifiedLine = classifyLine({
-      vertical: line.vertical,
-      medio: line.medio,
-      region: line.region,
-      zona: line.zona,
+  const toMerged = (rows: OperationLine[], attachBudget: boolean): TrackingBuildLine[] => {
+    const classified = rows.map((line, index) => {
+      const classifiedLine = classifyLine({
+        vertical: line.vertical,
+        medio: line.medio,
+        region: line.region,
+        zona: line.zona,
+      });
+      const matched = attachBudget
+        ? (budgetExact.get(dimKey(line)) ?? budgetLoose.get(dimKeyLoose(line)))
+        : null;
+      return collapseForTracking({
+        key: `${index}|${line.fyStart}|${line.monthIndex}|${line.vertical}|${line.medio}|${line.zona}`,
+        fyStart: line.fyStart,
+        monthIndex: line.monthIndex,
+        monthLabel: line.monthLabel,
+        vertical: line.vertical,
+        medio: line.medio,
+        region: line.region,
+        zona: line.zona,
+        ...classifiedLine,
+        facturacion: line.facturacion,
+        budget: matched?.budget ?? 0,
+        facturacionLy: 0,
+        gm: line.gm,
+        gmBudget: matched?.gmBudget ?? 0,
+        gmLy: 0,
+      });
     });
-    const matched = budgetExact.get(dimKey(line)) ?? budgetLoose.get(dimKeyLoose(line));
-    return collapseForTracking({
-      key: `${index}|${line.fyStart}|${line.monthIndex}|${line.vertical}|${line.medio}|${line.zona}`,
-      fyStart: line.fyStart,
-      monthIndex: line.monthIndex,
-      monthLabel: line.monthLabel,
-      vertical: line.vertical,
-      medio: line.medio,
-      region: line.region,
-      zona: line.zona,
-      ...classifiedLine,
-      facturacion: line.facturacion,
-      budget: matched?.budget ?? 0,
-      facturacionLy: 0,
-      gm: line.gm,
-      gmBudget: matched?.gmBudget ?? 0,
-      gmLy: 0,
+
+    const merged = new Map<string, TrackingBuildLine>();
+    classified.forEach((line) => {
+      const key = trackingMergeKey(line);
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { ...line, key });
+        return;
+      }
+      existing.facturacion += line.facturacion;
+      existing.gm += line.gm;
+      existing.budget += line.budget;
+      existing.gmBudget += line.gmBudget;
     });
-  });
+    return Array.from(merged.values());
+  };
 
-  const merged = new Map<string, TrackingBuildLine>();
-  classified.forEach((line) => {
-    const key = trackingMergeKey(line);
-    const existing = merged.get(key);
-    if (!existing) {
-      merged.set(key, { ...line, key });
-      return;
-    }
-    existing.facturacion += line.facturacion;
-    existing.gm += line.gm;
-    existing.budget += line.budget;
-    existing.gmBudget += line.gmBudget;
-  });
-
-  const all = Array.from(merged.values());
-  const currentFy = currentFyStart(all);
-  if (currentFy === null) return { lines: [], currentFy: null };
-
+  const tyMerged = toMerged(tyOperation, true);
+  const lyMerged = toMerged(lyOperation, false);
   const lyMap = new Map<string, TrackingBuildLine>();
-  all.filter((line) => line.fyStart === currentFy - 1).forEach((line) => {
+  lyMerged.forEach((line) => {
     lyMap.set(lyMatchKey(line), line);
   });
 
-  const lines = all
-    .filter((line) => line.fyStart === currentFy)
-    .map((line) => {
-      const ly = lyMap.get(lyMatchKey(line));
-      return {
-        ...line,
-        facturacionLy: ly?.facturacion ?? 0,
-        gmLy: ly?.gm ?? 0,
-      };
-    });
+  const lines = tyMerged.map((line) => {
+    const ly = lyMap.get(lyMatchKey(line));
+    return {
+      ...line,
+      facturacionLy: ly?.facturacion ?? 0,
+      gmLy: ly?.gm ?? 0,
+    };
+  });
 
-  return { lines, currentFy };
+  return { lines, currentFy: currentFyStart(tyMerged) };
 }
 
 export function snapshotFromFileName(name: string): Date | null {
