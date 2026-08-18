@@ -198,6 +198,38 @@ export function parseDebtData(rows: unknown[][]): { clients: DebtClient[]; snaps
   return { clients, snapshot: parseSnapshotDate(rows) };
 }
 
+export function sumDebtForScope(
+  clients: DebtClient[],
+  scope: { zonas: string[]; areas: string[]; medios: string[] },
+): { total: number; vencida: number } {
+  const zonas = scope.zonas.map((zona) => normalizeText(zona));
+  const areas = scope.areas.map((area) => normalizeText(area));
+  const medios = scope.medios.map((medio) => normalizeText(medio));
+  const companyLevel = new Set(areas).size > 1;
+
+  return clients.reduce((sum, client) => {
+    const zona = normalizeText(client.zona);
+    const matches = (() => {
+      if (zona === 'pro clubs') return areas.includes('pro clubs');
+      if (zona === 'b2b reps') {
+        if (!areas.includes('b2b')) return false;
+        if (medios.length === 0) return companyLevel;
+        return medios.includes('b2b reps');
+      }
+      if (zona === 'b2b') {
+        if (!areas.includes('b2b')) return false;
+        if (medios.length === 0) return true;
+        return medios.some((medio) => medio !== 'b2b reps');
+      }
+      if (zona === 'italia') return zonas.some((value) => value.includes('italia'));
+      if (zona === 'juridico' || zona === 'reps' || zona === 'sin zona') return companyLevel;
+      return zonas.includes(zona);
+    })();
+    if (!matches) return sum;
+    return { total: sum.total + client.total, vencida: sum.vencida + client.vencida };
+  }, { total: 0, vencida: 0 });
+}
+
 function salesForZona(sales: DebtSalesLine[], zona: string): number {
   const key = normalizeText(zona);
   return sales.reduce((sum, line) => {

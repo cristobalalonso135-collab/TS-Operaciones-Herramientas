@@ -427,6 +427,10 @@ export interface TrackingBuildLine {
   gm: number;
   gmBudget: number;
   gmLy: number;
+  free: number;
+  freeLy: number;
+  gen: number;
+  genLy: number;
 }
 
 function collapseForTracking(line: TrackingBuildLine): TrackingBuildLine {
@@ -477,7 +481,7 @@ export function buildTrackingLines(
 
   const toBuildLine = (
     line: { fyStart: number; monthIndex: number; monthLabel: string; vertical: string; medio: string; region: string; zona: string },
-    amounts: { facturacion?: number; gm?: number; budget?: number; gmBudget?: number },
+    amounts: { facturacion?: number; gm?: number; budget?: number; gmBudget?: number; free?: number; gen?: number },
   ): TrackingBuildLine => {
     const classifiedLine = classifyLine({
       vertical: line.vertical,
@@ -501,6 +505,10 @@ export function buildTrackingLines(
       gm: amounts.gm ?? 0,
       gmBudget: amounts.gmBudget ?? 0,
       gmLy: 0,
+      free: amounts.free ?? 0,
+      freeLy: 0,
+      gen: amounts.gen ?? 0,
+      genLy: 0,
     });
   };
 
@@ -518,6 +526,8 @@ export function buildTrackingLines(
     if (kind === 'actual') {
       existing.facturacion += line.facturacion;
       existing.gm += line.gm;
+      existing.free += line.free;
+      existing.gen += line.gen;
       return;
     }
     existing.budget += line.budget;
@@ -526,7 +536,7 @@ export function buildTrackingLines(
 
   const tyMap = new Map<string, TrackingBuildLine>();
   filterByRange(operation, tyRange).forEach((line) => {
-    mergeLine(tyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm }), 'actual');
+    mergeLine(tyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm, free: line.free, gen: line.gen }), 'actual');
   });
   filterByRange(budget, tyRange).forEach((line) => {
     mergeLine(tyMap, toBuildLine(line, { budget: line.budget, gmBudget: line.gmBudget }), 'budget');
@@ -534,7 +544,7 @@ export function buildTrackingLines(
 
   const lyMap = new Map<string, TrackingBuildLine>();
   filterByRange(operation, lyRange).forEach((line) => {
-    mergeLine(lyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm }), 'actual');
+    mergeLine(lyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm, free: line.free, gen: line.gen }), 'actual');
   });
 
   const lyByMatch = new Map<string, TrackingBuildLine>();
@@ -545,6 +555,7 @@ export function buildTrackingLines(
   const lines = Array.from(tyMap.values())
     .filter((line) => (
       line.facturacion !== 0 || line.budget !== 0 || line.gm !== 0 || line.gmBudget !== 0
+      || line.free !== 0 || line.gen !== 0
     ))
     .map((line) => {
       const ly = lyByMatch.get(lyMatchKey(line));
@@ -552,6 +563,8 @@ export function buildTrackingLines(
         ...line,
         facturacionLy: ly?.facturacion ?? 0,
         gmLy: ly?.gm ?? 0,
+        freeLy: ly?.free ?? 0,
+        genLy: ly?.gen ?? 0,
       };
     });
 

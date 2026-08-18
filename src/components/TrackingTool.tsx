@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import FreesTrackingView from '@/components/FreesTrackingView';
 import GeneradosWebTrackingView from '@/components/GeneradosWebTrackingView';
-import DeudaTrackingView, { parseDebtData, pickDebtSheet, type DebtClient } from '@/components/DeudaTrackingView';
+import DeudaTrackingView, { parseDebtData, pickDebtSheet, sumDebtForScope, type DebtClient } from '@/components/DeudaTrackingView';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
 import {
   buildTrackingLines,
@@ -44,6 +44,10 @@ interface TrackingLine {
   gm: number;
   gmBudget: number;
   gmLy: number;
+  free: number;
+  freeLy: number;
+  gen: number;
+  genLy: number;
 }
 
 interface MetricBlock {
@@ -55,6 +59,15 @@ interface MetricBlock {
   gm: number;
   gmBudget: number;
   gmLy: number;
+  free: number;
+  freeLy: number;
+  gen: number;
+  genLy: number;
+  deuda: number;
+  deudaVencida: number;
+  zonas: string[];
+  areas: string[];
+  medios: string[];
   rows: number;
 }
 
@@ -255,8 +268,22 @@ function emptyMetrics(key: string, label: string): MetricBlock {
     gm: 0,
     gmBudget: 0,
     gmLy: 0,
+    free: 0,
+    freeLy: 0,
+    gen: 0,
+    genLy: 0,
+    deuda: 0,
+    deudaVencida: 0,
+    zonas: [],
+    areas: [],
+    medios: [],
     rows: 0,
   };
+}
+
+function pushUnique(list: string[], value: string): void {
+  if (!value) return;
+  if (!list.some((item) => normalizeText(item) === normalizeText(value))) list.push(value);
 }
 
 function addLine(block: MetricBlock, line: TrackingLine): void {
@@ -266,7 +293,24 @@ function addLine(block: MetricBlock, line: TrackingLine): void {
   block.gm += line.gm;
   block.gmBudget += line.gmBudget;
   block.gmLy += line.gmLy;
+  block.free += line.free;
+  block.freeLy += line.freeLy;
+  block.gen += line.gen;
+  block.genLy += line.genLy;
+  pushUnique(block.zonas, line.zona);
+  pushUnique(block.areas, line.area);
+  pushUnique(block.medios, line.medio);
   block.rows += 1;
+}
+
+function applyDebt(block: MetricBlock, clients: DebtClient[]): MetricBlock {
+  if (clients.length === 0) return block;
+  const debt = sumDebtForScope(clients, {
+    zonas: block.zonas,
+    areas: block.areas,
+    medios: block.medios,
+  });
+  return { ...block, deuda: debt.total, deudaVencida: debt.vencida };
 }
 
 function collapseLine(line: TrackingLine): TrackingLine {
@@ -308,6 +352,10 @@ function mergeTrackingLines(lines: TrackingLine[]): TrackingLine[] {
     existing.gm += collapsed.gm;
     existing.gmBudget += collapsed.gmBudget;
     existing.gmLy += collapsed.gmLy;
+    existing.free += collapsed.free;
+    existing.freeLy += collapsed.freeLy;
+    existing.gen += collapsed.gen;
+    existing.genLy += collapsed.genLy;
   });
 
   return Array.from(grouped.values());
@@ -320,7 +368,7 @@ function withoutMonth(line: TrackingLine): TrackingLine {
 function aggregateYtdLines(lines: TrackingLine[]): TrackingLine[] {
   return mergeTrackingLines(lines.map(withoutMonth)).filter((line) => (
     line.facturacion !== 0 || line.budget !== 0 || line.gm !== 0 || line.gmBudget !== 0
-    || line.facturacionLy !== 0 || line.gmLy !== 0
+    || line.facturacionLy !== 0 || line.gmLy !== 0 || line.free !== 0 || line.gen !== 0
   ));
 }
 
@@ -413,6 +461,10 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
         gm: colMap.gm >= 0 ? parseAmount(row[colMap.gm]) : 0,
         gmBudget: colMap.gmBudget >= 0 ? parseAmount(row[colMap.gmBudget]) : 0,
         gmLy: marginLy === null ? 0 : facturacionLy * (marginLy / 100),
+        free: 0,
+        freeLy: 0,
+        gen: 0,
+        genLy: 0,
       };
     })
     .filter((line) => (
@@ -492,6 +544,90 @@ function KpiBar({
   );
 }
 
+function KpiShareBar({
+  label,
+  amount,
+  amountLy,
+  base,
+  baseLy,
+  invert = false,
+}: {
+  label: string;
+  amount: number;
+  amountLy: number;
+  base: number;
+  baseLy: number;
+  invert?: boolean;
+}) {
+  const pct = ratioPct(amount, base);
+  const pctLy = ratioPct(amountLy, baseLy);
+  const deltaPp = pct !== null && pctLy !== null ? pct - pctLy : null;
+  const extra = deltaPp === null ? null : base * (deltaPp / 100);
+  const lyEuros = vsPct(amount, amountLy);
+  const tone = invert && extra !== null ? -extra : extra;
+  const lyTone = invert && lyEuros !== null ? -lyEuros : lyEuros;
+  const fill = pct === null ? 0 : Math.max(4, Math.min(100, Math.abs(pct) * 4));
+
+  return (
+    <div className="flex gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
+        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
+          {formatCurrency(amount)}
+          <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} fact</span>
+        </p>
+        <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
+          {extra === null ? '—' : `${formatSignedCurrency(extra)} · ${formatPp(deltaPp)} vs % LY`}
+        </p>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+          <div className={`h-full rounded-full ${barClass(tone)}`} style={{ width: `${fill}%` }} />
+        </div>
+      </div>
+      <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
+        <p className={`mt-3 text-[11px] font-semibold tabular-nums ${toneClass(lyTone)}`}>
+          {formatPercent(lyEuros)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function KpiDebtBar({
+  amount,
+  vencida,
+  base,
+}: {
+  amount: number;
+  vencida: number;
+  base: number;
+}) {
+  const pct = ratioPct(amount, base);
+  const pctVencida = ratioPct(vencida, amount);
+  const fill = pct === null ? 0 : Math.max(4, Math.min(100, Math.abs(pct) * 2));
+  const tone = pct === null ? null : -pct;
+
+  return (
+    <div className="flex gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-medium text-[var(--text-secondary)]">Deuda</p>
+        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
+          {formatCurrency(amount)}
+          <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} fact</span>
+        </p>
+        <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
+          {formatCurrency(vencida)} vencida · {formatAbsPercent(pctVencida)}
+        </p>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+          <div className={`h-full rounded-full ${barClass(tone)}`} style={{ width: `${fill}%` }} />
+        </div>
+      </div>
+      <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
+        <p className="mt-3 text-[11px] font-semibold tabular-nums text-[var(--text-muted)]">foto</p>
+      </div>
+    </div>
+  );
+}
+
 function TreeCard({
   block,
   selected,
@@ -525,6 +661,29 @@ function TreeCard({
           ly={ratioPct(block.gmLy, block.facturacionLy)}
           kind="margin"
         />
+        {(block.free !== 0 || block.freeLy !== 0) && (
+          <KpiShareBar
+            label="Frees"
+            amount={-block.free}
+            amountLy={-block.freeLy}
+            base={block.facturacion}
+            baseLy={block.facturacionLy}
+            invert
+          />
+        )}
+        {(block.gen !== 0 || block.genLy !== 0) && (
+          <KpiShareBar
+            label="Generados web"
+            amount={-block.gen}
+            amountLy={-block.genLy}
+            base={block.facturacion}
+            baseLy={block.facturacionLy}
+            invert
+          />
+        )}
+        {block.deuda !== 0 && (
+          <KpiDebtBar amount={block.deuda} vencida={block.deudaVencida} base={block.facturacion} />
+        )}
       </div>
     </button>
   );
@@ -540,7 +699,7 @@ function TreeColumn({
   children: ReactNode;
 }) {
   return (
-    <div className="flex w-[320px] shrink-0 flex-col gap-2">
+    <div className="flex w-[340px] shrink-0 flex-col gap-2">
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{title}</p>
         {hint && <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{hint}</p>}
@@ -770,26 +929,31 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const company = useMemo(() => {
     const block = emptyMetrics('teamsports', 'Teamsports');
     ytdLines.forEach((line) => addLine(block, line));
-    return block;
-  }, [ytdLines]);
+    return applyDebt(block, debtClients);
+  }, [debtClients, ytdLines]);
 
-  const areaNodes = useMemo(() => groupMetrics(scopedLines, (line) => line.area), [scopedLines]);
+  const areaNodes = useMemo(
+    () => groupMetrics(scopedLines, (line) => line.area).map((node) => (
+      viewMode === 'ytd' ? applyDebt(node, debtClients) : node
+    )),
+    [debtClients, scopedLines, viewMode],
+  );
 
   const responsableNodes = useMemo(() => {
     if (!selectedArea) return [];
     return groupMetrics(
       scopedLines.filter((line) => line.area === selectedArea),
       (line) => line.responsable,
-    );
-  }, [scopedLines, selectedArea]);
+    ).map((node) => (viewMode === 'ytd' ? applyDebt(node, debtClients) : node));
+  }, [debtClients, scopedLines, selectedArea, viewMode]);
 
   const subresponsableNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable) return [];
     return groupMetrics(
       scopedLines.filter((line) => line.area === selectedArea && line.responsable === selectedResponsable),
       (line) => line.subresponsable,
-    );
-  }, [scopedLines, selectedArea, selectedResponsable]);
+    ).map((node) => (viewMode === 'ytd' ? applyDebt(node, debtClients) : node));
+  }, [debtClients, scopedLines, selectedArea, selectedResponsable, viewMode]);
 
   const extraKind = extraLevelKind(selectedArea, selectedSubresponsable);
 
@@ -804,15 +968,16 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       (line) => extraLevelValue(line, extraKind),
     );
     if (extraKind === 'zona') {
-      return [...nodes].sort((a, b) => {
+      const sorted = [...nodes].sort((a, b) => {
         const orderA = ZONA_ORDER.indexOf(a.label);
         const orderB = ZONA_ORDER.indexOf(b.label);
         if (orderA >= 0 || orderB >= 0) return (orderA < 0 ? 99 : orderA) - (orderB < 0 ? 99 : orderB);
         return a.label.localeCompare(b.label, 'es');
       });
+      return viewMode === 'ytd' ? sorted.map((node) => applyDebt(node, debtClients)) : sorted;
     }
-    return nodes;
-  }, [extraKind, scopedLines, selectedArea, selectedResponsable, selectedSubresponsable]);
+    return viewMode === 'ytd' ? nodes.map((node) => applyDebt(node, debtClients)) : nodes;
+  }, [debtClients, extraKind, scopedLines, selectedArea, selectedResponsable, selectedSubresponsable, viewMode]);
 
   const detailLines = useMemo(() => {
     const source = viewMode === 'ytd' ? ytdLines : monthlyLines;
@@ -1125,7 +1290,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       {activeHasData && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. Facturación y budget del filtro. Pincha una caja para seguir bajando.</p>
+            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. GM y facturación vs budget. Frees y generados vs % de facturación y vs LY. Deuda vs facturación de la caja. Pincha para bajar.</p>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard
