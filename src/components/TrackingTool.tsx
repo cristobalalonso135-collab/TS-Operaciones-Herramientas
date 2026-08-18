@@ -331,6 +331,10 @@ function isCommercialArea(area: string): boolean {
   return normalized === 'b2b' || normalized === 'pro clubs';
 }
 
+function skipsTreeDebt(name: string): boolean {
+  return normalizeText(name) === 'stefano';
+}
+
 function showsShareKpis(block: MetricBlock): boolean {
   const areas = block.areas.filter(Boolean);
   if (areas.length === 0) return true;
@@ -623,9 +627,10 @@ function collectTreeRows(
   debtClients: DebtClient[],
   attachDebt: boolean,
 ): (string | number | null)[][] {
-  const withDebt = (block: MetricBlock, area: string, nivel: number): MetricBlock => {
+  const withDebt = (block: MetricBlock, area: string, nivel: number, subresponsable: string): MetricBlock => {
     if (!attachDebt || debtClients.length === 0) return block;
     if (nivel >= 3 && area !== 'Grassroots') return block;
+    if (skipsTreeDebt(subresponsable)) return block;
     return applyDebt(block, debtClients);
   };
 
@@ -650,7 +655,7 @@ function collectTreeRows(
       extra,
       extraKind,
       ruta,
-      ...treeMetricCells(withDebt(block, area, nivel)).map((value) => csvNumber(value)),
+      ...treeMetricCells(withDebt(block, area, nivel, subresponsable)).map((value) => csvNumber(value)),
     ]);
   };
 
@@ -1189,7 +1194,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     return groupMetrics(
       scopedLines.filter((line) => line.area === selectedArea),
       (line) => line.responsable,
-    ).map((node) => (attachDebt ? applyDebt(node, debtClients) : node));
+    ).map((node) => (attachDebt && !skipsTreeDebt(node.label) ? applyDebt(node, debtClients) : node));
   }, [debtClients, scopedLines, selectedArea, viewMode]);
 
   const subresponsableNodes = useMemo(() => {
@@ -1198,15 +1203,14 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     return groupMetrics(
       scopedLines.filter((line) => line.area === selectedArea && line.responsable === selectedResponsable),
       (line) => line.subresponsable,
-    ).map((node) => (attachDebt ? applyDebt(node, debtClients) : node));
+    ).map((node) => (attachDebt && !skipsTreeDebt(node.label) ? applyDebt(node, debtClients) : node));
   }, [debtClients, scopedLines, selectedArea, selectedResponsable, viewMode]);
 
   const extraKind = extraLevelKind(selectedArea, selectedSubresponsable);
 
   const extraNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable || !selectedSubresponsable || !extraKind) return [];
-    const attachDebt = viewMode === 'ytd' && selectedArea === 'Grassroots';
-    const nodes = groupMetrics(
+    const attachDebt = viewMode === 'ytd' && selectedArea === 'Grassroots' && !skipsTreeDebt(selectedSubresponsable);
       scopedLines.filter((line) => (
         line.area === selectedArea
         && line.responsable === selectedResponsable
