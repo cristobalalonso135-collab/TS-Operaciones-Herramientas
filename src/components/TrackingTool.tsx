@@ -602,7 +602,6 @@ function KpiShareBar({
   base,
   baseLy,
   baseLabel,
-  invert = false,
   accent,
 }: {
   label: string;
@@ -617,10 +616,7 @@ function KpiShareBar({
   const pct = ratioPct(amount, base);
   const pctLy = ratioPct(amountLy, baseLy);
   const deltaPp = pct !== null && pctLy !== null ? pct - pctLy : null;
-  const extra = deltaPp === null ? null : base * (deltaPp / 100);
   const lyEuros = vsPct(amount, amountLy);
-  const tone = invert && extra !== null ? -extra : extra;
-  const lyTone = invert && lyEuros !== null ? -lyEuros : lyEuros;
   const fill = pct === null ? 0 : Math.max(4, Math.min(100, Math.abs(pct) * 4));
   const color = accent === 'free' ? 'var(--kpi-free)' : 'var(--kpi-gen)';
   const soft = accent === 'free' ? 'var(--kpi-free-soft)' : 'var(--kpi-gen-soft)';
@@ -629,19 +625,20 @@ function KpiShareBar({
     <div className="flex gap-2 border-l-2 pl-2" style={{ borderColor: color }}>
       <div className="min-w-0 flex-1">
         <p className="text-[11px] font-medium" style={{ color }}>{label}</p>
-        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
+        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight" style={{ color }}>
           {formatCurrency(amount)}
-          <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} {baseLabel}</span>
-        </p>
-        <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
-          {extra === null ? '—' : `${formatSignedCurrency(extra)} · ${formatPp(deltaPp)} vs % LY`}
+          <span className="font-medium opacity-70"> / {formatAbsPercent(pct)}</span>
         </p>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full" style={{ background: soft }}>
           <div className="h-full rounded-full" style={{ width: `${fill}%`, background: color }} />
         </div>
+        <p className="mt-1 text-[11px] font-semibold tabular-nums" style={{ color }}>
+          {formatCurrency(base)} {baseLabel}
+          {deltaPp === null ? '' : ` · ${formatPp(deltaPp)} vs LY`}
+        </p>
       </div>
       <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
-        <p className={`mt-3 text-[11px] font-semibold tabular-nums ${toneClass(lyTone)}`}>
+        <p className="mt-3 text-[11px] font-semibold tabular-nums" style={{ color }}>
           {formatPercent(lyEuros)}
         </p>
       </div>
@@ -661,17 +658,16 @@ function KpiDebtBar({
   const pct = ratioPct(amount, base);
   const pctVencida = ratioPct(vencida, amount);
   const fill = pct === null ? 0 : Math.max(4, Math.min(100, Math.abs(pct) * 2));
-  const tone = pct === null ? null : -pct;
 
   return (
     <div className="flex gap-2 border-l-2 border-[var(--kpi-debt)] pl-2">
       <div className="min-w-0 flex-1">
         <p className="text-[11px] font-medium text-[var(--kpi-debt)]">Deuda</p>
-        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
+        <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--kpi-debt)]">
           {formatCurrency(amount)}
-          <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} fact</span>
+          <span className="font-medium opacity-70"> / {formatAbsPercent(pct)} neta</span>
         </p>
-        <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
+        <p className="text-[11px] font-semibold tabular-nums text-[var(--kpi-debt)]">
           {formatCurrency(vencida)} vencida · {formatAbsPercent(pctVencida)}
         </p>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--kpi-debt-soft)]">
@@ -679,7 +675,7 @@ function KpiDebtBar({
         </div>
       </div>
       <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
-        <p className="mt-3 text-[11px] font-semibold tabular-nums text-[var(--text-muted)]">foto</p>
+        <p className="mt-3 text-[11px] font-semibold tabular-nums text-[var(--kpi-debt)]">—</p>
       </div>
     </div>
   );
