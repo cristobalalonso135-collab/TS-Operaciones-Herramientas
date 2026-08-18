@@ -708,10 +708,25 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     () => rangeFromFiscalMonths(fyStart, fromMonth, toMonth),
     [fromMonth, fyStart, toMonth],
   );
+  const lastDataMonth = useMemo(() => {
+    const months = filterByRange(operation, dateRange)
+      .filter((line) => line.facturacion !== 0 || line.gm !== 0)
+      .map((line) => line.monthIndex);
+    return months.length > 0 ? Math.max(...months) : null;
+  }, [dateRange, operation]);
+  const compareToMonth = lastDataMonth === null
+    ? Math.max(fromMonth, toMonth)
+    : Math.min(Math.max(fromMonth, toMonth), lastDataMonth);
+  const ytdRange = useMemo(
+    () => rangeFromFiscalMonths(fyStart, fromMonth, compareToMonth),
+    [compareToMonth, fromMonth, fyStart],
+  );
   const lyRange = useMemo(() => shiftRange(dateRange, -1), [dateRange]);
 
   const built = useMemo(() => buildTrackingLines(operation, budgetRows, dateRange), [budgetRows, dateRange, operation]);
+  const ytdBuilt = useMemo(() => buildTrackingLines(operation, budgetRows, ytdRange), [budgetRows, operation, ytdRange]);
   const lines = built.lines as TrackingLine[];
+  const ytdSource = ytdBuilt.lines as TrackingLine[];
   const freeLines = useMemo(() => {
     const all = freesFromOperation(operation);
     return [...filterByRange(all, dateRange), ...filterByRange(all, lyRange)];
@@ -739,13 +754,13 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const error = operationError;
   const periodLabel = useMemo(() => {
     const start = FISCAL_MONTHS.find((month) => month.index === Math.min(fromMonth, toMonth));
-    const end = FISCAL_MONTHS.find((month) => month.index === Math.max(fromMonth, toMonth));
-    return `${start?.label ?? fromMonth} → ${end?.label ?? toMonth} · FY ${fyLabel(fyStart)}`;
-  }, [fromMonth, fyStart, toMonth]);
+    const end = FISCAL_MONTHS.find((month) => month.index === compareToMonth);
+    return `${start?.label ?? fromMonth} → ${end?.label ?? compareToMonth} · FY ${fyLabel(fyStart)}`;
+  }, [compareToMonth, fromMonth, fyStart, toMonth]);
 
   const monthlyLines = useMemo(() => lines.filter((line) => line.monthIndex !== null), [lines]);
   const hasMonths = monthlyLines.length > 0;
-  const ytdLines = useMemo(() => aggregateYtdLines(lines), [lines]);
+  const ytdLines = useMemo(() => aggregateYtdLines(ytdSource), [ytdSource]);
   const zonaSales = useMemo(() => (
     (hasMonths ? monthlyLines : ytdLines).map((line) => ({
       zona: line.zona,
@@ -938,7 +953,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              El ejercicio es abril 2026 → marzo 2027. Facturación, budget y vs LY se comparan en los meses que ya tienen dato, no contra el año entero. El 25/26 del CSV solo sirve para el LY.
+              Puedes dejar Hasta en marzo. Las cajas comparan facturación, budget y LY solo hasta el último mes con dato. El 25/26 del CSV solo sirve para el vs LY.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-3">
               <label className="text-xs font-medium text-[var(--text-secondary)]">
@@ -1139,7 +1154,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       {activeHasData && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. Facturación, budget y vs LY van por los mismos meses con dato. Pincha una caja para seguir bajando.</p>
+            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · comparado {periodLabel}. El vs budget no usa marzo si aún no hay facturación. Pincha una caja para seguir bajando.</p>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard
