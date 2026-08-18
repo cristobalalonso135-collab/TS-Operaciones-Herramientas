@@ -4,8 +4,20 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import FreesTrackingView from '@/components/FreesTrackingView';
 import GeneradosWebTrackingView from '@/components/GeneradosWebTrackingView';
-import DeudaTrackingView from '@/components/DeudaTrackingView';
+import DeudaTrackingView, { parseDebtData, pickDebtSheet, type DebtClient } from '@/components/DeudaTrackingView';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
+import {
+  buildTrackingLines,
+  freesFromOperation,
+  generadosFromOperation,
+  grassrootsBudgetFrom,
+  parseBudgetRows,
+  parseOperationRows,
+  snapshotFromFileName,
+  webB2cBudgetFrom,
+  type BudgetLine,
+  type OperationLine,
+} from '@/lib/seguimiento-files';
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
 
 interface TrackingToolProps {
@@ -361,7 +373,6 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
     vertical: colMap.vertical,
     medio: colMap.medio,
     facturacion: colMap.facturacion,
-    budget: colMap.budget,
   }).filter(([, index]) => index < 0).map(([name]) => name);
 
   if (missing.length > 0) {
@@ -584,9 +595,16 @@ function lineSortValue(line: TrackingLine, key: TableSortKey): string | number |
 }
 
 export default function TrackingTool({ onBack }: TrackingToolProps) {
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [lines, setLines] = useState<TrackingLine[]>([]);
+  const [operation, setOperation] = useState<OperationLine[]>([]);
+  const [operationName, setOperationName] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [budgetRows, setBudgetRows] = useState<BudgetLine[]>([]);
+  const [budgetName, setBudgetName] = useState<string | null>(null);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [debtClients, setDebtClients] = useState<DebtClient[]>([]);
+  const [debtSnapshot, setDebtSnapshot] = useState<Date | null>(null);
+  const [debtName, setDebtName] = useState<string | null>(null);
+  const [debtError, setDebtError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<TrackingViewMode>('ytd');
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
@@ -601,24 +619,73 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     end?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
   }, [selectedArea, selectedMonth, selectedResponsable, selectedSubresponsable]);
 
-  const handleFileLoaded = (data: unknown[][], name: string) => {
+  const handleOperationLoaded = (data: unknown[][], name: string) => {
     try {
-      const parsed = parseTrackingData(data);
-      if (parsed.length === 0) throw new Error('El archivo no tiene líneas con importe o budget.');
-      setLines(parsed);
-      setFileName(name);
-      setError(null);
+      const parsed = parseOperationRows(data);
+      setOperation(parsed);
+      setOperationName(name);
+      setOperationError(null);
       setSelectedMonth(null);
       setSelectedArea(null);
       setSelectedResponsable(null);
       setSelectedSubresponsable(null);
       setSelectedExtra(null);
     } catch (err) {
-      setLines([]);
-      setFileName(null);
-      setError(err instanceof Error ? err.message : 'No he podido leer el archivo.');
+      setOperation([]);
+      setOperationName(null);
+      setOperationError(err instanceof Error ? err.message : 'No he podido leer la operación.');
     }
   };
+
+  const handleBudgetLoaded = (data: unknown[][], name: string) => {
+    try {
+      const parsed = parseBudgetRows(data);
+      setBudgetRows(parsed);
+      setBudgetName(name);
+      setBudgetError(null);
+    } catch (err) {
+      setBudgetRows([]);
+      setBudgetName(null);
+      setBudgetError(err instanceof Error ? err.message : 'No he podido leer el budget.');
+    }
+  };
+
+  const handleDebtLoaded = (sheets: Record<string, unknown[][]>, name: string) => {
+    try {
+      const parsed = parseDebtData(pickDebtSheet(sheets));
+      setDebtClients(parsed.clients);
+      setDebtSnapshot(parsed.snapshot ?? snapshotFromFileName(name));
+      setDebtName(name);
+      setDebtError(null);
+    } catch (err) {
+      setDebtClients([]);
+      setDebtSnapshot(null);
+      setDebtName(null);
+      setDebtError(err instanceof Error ? err.message : 'No he podido leer la deuda.');
+    }
+  };
+
+  const built = useMemo(() => buildTrackingLines(operation, budgetRows), [budgetRows, operation]);
+  const lines = built.lines as TrackingLine[];
+  const freeLines = useMemo(() => freesFromOperation(operation), [operation]);
+  const genLines = useMemo(() => generadosFromOperation(operation), [operation]);
+  const grassrootsBudget = useMemo(() => {
+    if (!budgetName || budgetRows.length === 0) return null;
+    try {
+      return grassrootsBudgetFrom(budgetRows, budgetName);
+    } catch {
+      return null;
+    }
+  }, [budgetName, budgetRows]);
+  const webB2cBudget = useMemo(() => {
+    if (!budgetName || budgetRows.length === 0) return null;
+    try {
+      return webB2cBudgetFrom(budgetRows, budgetName);
+    } catch {
+      return null;
+    }
+  }, [budgetName, budgetRows]);
+  const error = operationError;
 
   const monthlyLines = useMemo(() => lines.filter((line) => line.monthIndex !== null), [lines]);
   const hasMonths = monthlyLines.length > 0;
@@ -816,15 +883,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {viewMode === 'deuda'
-                ? 'Foto de hoy: cuánto te deben. Lo vencido es el problema. Si ya hay Teamsports, también ves a cuántos días de venta equivale.'
-                : viewMode === 'generados'
-                ? 'Generados web: % sobre Equipaciones Web B2C del mes anterior. Si ya subiste Teamsports, también ves el peso sobre la facturación total de la zona.'
-                : viewMode === 'frees'
-                ? 'Frees de Grassroots en una carga aparte. % free = frees / (facturación neta + frees). Compara el YTD con el mismo tramo del año pasado y proyecta los negativos que quedan.'
-                : viewMode === 'monthly'
-                  ? 'Lee la columna Year-Month (Abr. ’26, Jul. ’26…). El 1 es abril y el 12 es marzo. El árbol es Teamsports → mes → área → responsable.'
-                  : 'Vista YTD: suma todos los meses del archivo. Teamsports → área → responsable → subresponsable.'}
+              Sube los tres archivos arriba. Yo cruzo por zona y mes: operación trae facturación, LY, frees y generados; el budget el “quedan”; la deuda la foto de cobro.
             </p>
           </div>
           <div className="flex rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-1">
@@ -877,41 +936,99 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         </div>
       </section>
 
-      {viewMode === 'frees' ? (
-        <FreesTrackingView />
-      ) : viewMode === 'generados' ? (
-        <GeneradosWebTrackingView zonaSales={zonaSales} />
-      ) : viewMode === 'deuda' ? (
-        <DeudaTrackingView salesLines={debtSales} />
-      ) : (
-        <>
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <FileUpload
-          inputId="tracking-input"
-          label="Export Teamsports (CSV o Excel), con Year-Month si quieres la vista mensual"
-          onFileLoaded={handleFileLoaded}
-        />
-        {fileName && (
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            Cargado: {fileName} · {ytdLines.length.toLocaleString('de-DE')} líneas
-            {hasMonths ? ` · ${new Set(monthlyLines.map((line) => line.monthIndex)).size} meses` : ''}
-          </p>
-        )}
+      <section className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-operation-input"
+            label="1. Operación (data.csv)"
+            hint="Year-Month, Vertical, Medio, Zona, Importe, Gm, Free, Gen. Web"
+            onFileLoaded={handleOperationLoaded}
+            keepDropzone
+          />
+          {operationName && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {operationName} · {operation.length.toLocaleString('de-DE')} líneas · FY actual {ytdLines.length.toLocaleString('de-DE')}
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-budget-input"
+            label="2. Budget (data2.csv)"
+            hint="Año Mes, Vertical, Medio, Zona, Budget, GM Bg"
+            onFileLoaded={handleBudgetLoaded}
+            keepDropzone
+          />
+          {budgetName && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {budgetName} · {budgetRows.length.toLocaleString('de-DE')} líneas
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-debt-input"
+            label="3. Deuda (Excel)"
+            hint="Zona, Cliente, Deuda total, Vencida, No vencida"
+            onFileLoaded={() => undefined}
+            onWorkbookLoaded={handleDebtLoaded}
+            keepDropzone
+          />
+          {debtName && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {debtName} · {debtClients.length.toLocaleString('de-DE')} clientes
+            </p>
+          )}
+        </div>
       </section>
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+      {(operationError || budgetError || debtError) && (
+        <div className="space-y-2">
+          {operationError && (
+            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{operationError}</div>
+          )}
+          {budgetError && (
+            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
+          )}
+          {debtError && (
+            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{debtError}</div>
+          )}
+        </div>
       )}
+
+      {viewMode === 'frees' ? (
+        <FreesTrackingView
+          hideUploads
+          preloadedLines={freeLines}
+          preloadedName={operationName}
+          preloadedBudget={grassrootsBudget}
+        />
+      ) : viewMode === 'generados' ? (
+        <GeneradosWebTrackingView
+          hideUploads
+          zonaSales={zonaSales}
+          preloadedLines={genLines}
+          preloadedName={operationName}
+          preloadedBudget={webB2cBudget}
+        />
+      ) : viewMode === 'deuda' ? (
+        <DeudaTrackingView
+          hideUpload
+          salesLines={debtSales}
+          preloadedClients={debtClients}
+          preloadedSnapshot={debtSnapshot}
+          preloadedName={debtName}
+        />
+      ) : (
+        <>
 
       {!activeHasData && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
           <p className="mt-3 text-sm font-medium">
-            {viewMode === 'monthly' && lines.length > 0 && !hasMonths
+            {viewMode === 'monthly' && operation.length > 0 && !hasMonths
               ? 'Este archivo no trae Year-Month. Añade esa columna (Abr. ’26, Jul. ’26…) para ver los meses.'
-              : viewMode === 'monthly'
-                ? 'Sube el CSV con la columna Year-Month. El 1 es abril.'
-                : 'Carga el CSV para ver el árbol de seguimiento.'}
+              : 'Sube el CSV de operación. El 1 es abril. El budget y la deuda cruzan después.'}
           </p>
         </section>
       )}

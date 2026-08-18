@@ -313,13 +313,29 @@ function StatCard({
   );
 }
 
-export default function FreesTrackingView() {
+interface FreesTrackingViewProps {
+  preloadedLines?: FreeLine[];
+  preloadedName?: string | null;
+  preloadedBudget?: GrassrootsBudget | null;
+  hideUploads?: boolean;
+}
+
+export default function FreesTrackingView({
+  preloadedLines,
+  preloadedName = null,
+  preloadedBudget = null,
+  hideUploads = false,
+}: FreesTrackingViewProps) {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [lines, setLines] = useState<FreeLine[]>([]);
   const [budget, setBudget] = useState<GrassrootsBudget | null>(null);
   const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'extra', direction: 'desc' });
+
+  const activeLines = preloadedLines && preloadedLines.length > 0 ? preloadedLines : lines;
+  const activeName = preloadedLines && preloadedLines.length > 0 ? preloadedName : fileName;
+  const activeBudget = preloadedBudget ?? budget;
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -347,12 +363,12 @@ export default function FreesTrackingView() {
   };
 
   const analysis = useMemo(() => {
-    if (lines.length === 0) return null;
-    const fyStarts = Array.from(new Set(lines.map((line) => line.fyStart))).sort((a, b) => a - b);
+    if (activeLines.length === 0) return null;
+    const fyStarts = Array.from(new Set(activeLines.map((line) => line.fyStart))).sort((a, b) => a - b);
     const currentFy = fyStarts[fyStarts.length - 1];
     const lastFy = fyStarts.find((year) => year === currentFy - 1) ?? fyStarts[fyStarts.length - 2] ?? null;
-    const tyLines = lines.filter((line) => line.fyStart === currentFy);
-    const lyLines = lastFy === null ? [] : lines.filter((line) => line.fyStart === lastFy);
+    const tyLines = activeLines.filter((line) => line.fyStart === currentFy);
+    const lyLines = lastFy === null ? [] : activeLines.filter((line) => line.fyStart === lastFy);
     const ytdMonth = Math.max(...tyLines.map((line) => line.monthIndex));
     const tyYtd = sumLines(tyLines.filter((line) => line.monthIndex <= ytdMonth));
     const lyYtd = sumLines(lyLines.filter((line) => line.monthIndex <= ytdMonth));
@@ -369,7 +385,7 @@ export default function FreesTrackingView() {
       ty: sumLines(tyLines.filter((line) => line.monthIndex === month.index)),
       ly: sumLines(lyLines.filter((line) => line.monthIndex === month.index)),
     }));
-    const zonas = Array.from(new Set(lines.map((line) => line.zona)));
+    const zonas = Array.from(new Set(activeLines.map((line) => line.zona)));
     return {
       currentFy,
       lastFy,
@@ -387,24 +403,24 @@ export default function FreesTrackingView() {
       monthly,
       zonas,
     };
-  }, [lines]);
+  }, [activeLines]);
 
   const zonaRows = useMemo(() => {
     if (!analysis) return [];
     return analysis.zonas.map((zona) => {
-      const ty = sumLines(lines.filter((line) => line.fyStart === analysis.currentFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
+      const ty = sumLines(activeLines.filter((line) => line.fyStart === analysis.currentFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
       const ly = analysis.lastFy === null
         ? emptyTotals()
-        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
+        : sumLines(activeLines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
       const lyFull = analysis.lastFy === null
         ? emptyTotals()
-        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona));
+        : sumLines(activeLines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona));
       const lyRest = analysis.lastFy === null
         ? emptyTotals()
-        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex > analysis.ytdMonth));
+        : sumLines(activeLines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex > analysis.ytdMonth));
       const extra = extraFrees(ty, ly);
       const projected = projectBruto(ty, ly, lyFull, lyRest);
-      const budgetZona = budget ? lookupBudget(budget.byZona, zona) : 0;
+      const budgetZona = activeBudget ? lookupBudget(activeBudget.byZona, zona) : 0;
       return {
         zona,
         ty,
@@ -412,7 +428,7 @@ export default function FreesTrackingView() {
         extra,
         budget: budgetZona,
         pctCierreLy: lyFull.pct,
-        queda: budget
+        queda: activeBudget
           ? remainingVsBudget(ty, lyFull.pct, budgetZona)
           : remainingFrees(ty, lyFull.pct, projected),
         delta: ty.pct !== null && ly.pct !== null ? ty.pct - ly.pct : null,
@@ -444,7 +460,7 @@ export default function FreesTrackingView() {
       const result = Number(left) - Number(right);
       return sort.direction === 'asc' ? result : -result;
     });
-  }, [analysis, lines, sort, budget]);
+  }, [analysis, activeLines, sort, activeBudget]);
 
   const updateSort = (key: ZonaSortKey) => {
     setSort((prev) => (
@@ -480,12 +496,12 @@ export default function FreesTrackingView() {
   };
 
   const remainingCompany = analysis
-    ? (budget
-      ? remainingVsBudget(analysis.tyYtd, analysis.lyFull.pct, budget.total)
+    ? (activeBudget
+      ? remainingVsBudget(analysis.tyYtd, analysis.lyFull.pct, activeBudget.total)
       : analysis.remainingIfLy)
     : null;
-  const expectedFrees = analysis && budget && analysis.lyFull.pct !== null
-    ? budget.total * (analysis.lyFull.pct / 100)
+  const expectedFrees = analysis && activeBudget && analysis.lyFull.pct !== null
+    ? activeBudget.total * (analysis.lyFull.pct / 100)
     : null;
 
   const maxPct = analysis
@@ -494,6 +510,7 @@ export default function FreesTrackingView() {
 
   return (
     <div className="space-y-4">
+      {!hideUploads && (
       <section className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
@@ -502,9 +519,9 @@ export default function FreesTrackingView() {
             onFileLoaded={handleFileLoaded}
             keepDropzone
           />
-          {fileName && analysis && (
+          {activeName && analysis && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              Cargado: {fileName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
+              Cargado: {activeName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
               {analysis.lastFy !== null ? ` · comparado con FY ${fyLabel(analysis.lastFy)}` : ''}
             </p>
           )}
@@ -516,13 +533,14 @@ export default function FreesTrackingView() {
             onFileLoaded={handleBudgetLoaded}
             keepDropzone
           />
-          {budget && (
+          {activeBudget && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              Cargado: {budget.fileName} · Grassroots {formatCurrency(budget.total)} en {Object.keys(budget.byZona).length} zonas · {budget.kept} líneas (B2B y Pro Clubs fuera)
+              Cargado: {activeBudget.fileName} · Grassroots {formatCurrency(activeBudget.total)} en {Object.keys(activeBudget.byZona).length} zonas · {activeBudget.kept} líneas (B2B y Pro Clubs fuera)
             </p>
           )}
         </div>
       </section>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
@@ -531,10 +549,10 @@ export default function FreesTrackingView() {
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
       )}
 
-      {lines.length === 0 && !error && (
+      {activeLines.length === 0 && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Sube data2.csv de frees y, para estimar lo que queda, el budget (data4.csv). Me quedo solo con Grassroots por zona.</p>
+          <p className="mt-3 text-sm font-medium">Sube el CSV de operación arriba. Los frees Grassroots salen de *Free Product.</p>
         </section>
       )}
 
@@ -591,8 +609,8 @@ export default function FreesTrackingView() {
                 {remainingCompany === null ? '—' : formatCurrency(remainingCompany)}
               </p>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                {budget && analysis.lyFull.pct !== null
-                  ? `Al ${formatAbsPercent(analysis.lyFull.pct)} del budget Grassroots (${formatCurrency(budget.total)}). Previstos del año: ${expectedFrees === null ? '—' : formatCurrency(expectedFrees)}. Ya puestos: ${formatCurrency(analysis.tyYtd.freeCost)}.`
+                {activeBudget && analysis.lyFull.pct !== null
+                  ? `Al ${formatAbsPercent(analysis.lyFull.pct)} del budget Grassroots (${formatCurrency(activeBudget.total)}). Previstos del año: ${expectedFrees === null ? '—' : formatCurrency(expectedFrees)}. Ya puestos: ${formatCurrency(analysis.tyYtd.freeCost)}.`
                   : `Sube el budget para estimar vs budget. Mientras, si cerramos al ${formatAbsPercent(analysis.lyFull.pct)} del año pasado. Ya puestos: ${formatCurrency(analysis.tyYtd.freeCost)}.`}
               </p>
             </div>
@@ -622,14 +640,14 @@ export default function FreesTrackingView() {
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {formatCurrency(row.ty.freeCost)} de {formatCurrency(row.ty.bruto)}
-                    {budget ? ` · budget ${formatCurrency(row.budget)}` : ''}
+                    {activeBudget ? ` · budget ${formatCurrency(row.budget)}` : ''}
                   </p>
                   <p className={`mt-3 text-sm font-semibold tabular-nums ${freeTone(row.extra)}`}>
                     {row.extra === null ? '—' : formatSignedCurrency(row.extra)}
                     <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs ritmo LY</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}{budget ? ' del budget' : ''}
+                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}{activeBudget ? ' del budget' : ''}
                   </p>
                 </div>
               ))}

@@ -13,6 +13,10 @@ export interface ZonaMonthSales {
 
 interface GeneradosWebTrackingViewProps {
   zonaSales?: ZonaMonthSales[];
+  preloadedLines?: GenLine[];
+  preloadedName?: string | null;
+  preloadedBudget?: WebB2cBudget | null;
+  hideUploads?: boolean;
 }
 
 interface GenLine {
@@ -310,13 +314,23 @@ function StatCard({
   );
 }
 
-export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWebTrackingViewProps) {
+export default function GeneradosWebTrackingView({
+  zonaSales = [],
+  preloadedLines,
+  preloadedName = null,
+  preloadedBudget = null,
+  hideUploads = false,
+}: GeneradosWebTrackingViewProps) {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [lines, setLines] = useState<GenLine[]>([]);
   const [budget, setBudget] = useState<WebB2cBudget | null>(null);
   const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'queda', direction: 'desc' });
+
+  const activeLines = preloadedLines && preloadedLines.length > 0 ? preloadedLines : lines;
+  const activeName = preloadedLines && preloadedLines.length > 0 ? preloadedName : fileName;
+  const activeBudget = preloadedBudget ?? budget;
 
   const handleFileLoaded = (data: unknown[][], name: string) => {
     try {
@@ -346,12 +360,12 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
   const hasZonaSales = zonaSales.some((row) => row.facturacion !== 0);
 
   const analysis = useMemo(() => {
-    if (lines.length === 0) return null;
-    const fyStarts = Array.from(new Set(lines.map((line) => line.fyStart))).sort((a, b) => a - b);
+    if (activeLines.length === 0) return null;
+    const fyStarts = Array.from(new Set(activeLines.map((line) => line.fyStart))).sort((a, b) => a - b);
     const currentFy = fyStarts[fyStarts.length - 1];
     const lastFy = fyStarts.find((year) => year === currentFy - 1) ?? fyStarts[fyStarts.length - 2] ?? null;
-    const tyLines = lines.filter((line) => line.fyStart === currentFy);
-    const lyLines = lastFy === null ? [] : lines.filter((line) => line.fyStart === lastFy);
+    const tyLines = activeLines.filter((line) => line.fyStart === currentFy);
+    const lyLines = lastFy === null ? [] : activeLines.filter((line) => line.fyStart === lastFy);
     const ytdMonth = Math.max(...tyLines.map((line) => line.monthIndex));
     const tyYtd = sumLines(tyLines.filter((line) => line.monthIndex <= ytdMonth));
     const lyYtd = sumLines(lyLines.filter((line) => line.monthIndex <= ytdMonth));
@@ -368,7 +382,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       ty: sumLines(tyLines.filter((line) => line.monthIndex === month.index)),
       ly: sumLines(lyLines.filter((line) => line.monthIndex === month.index)),
     }));
-    const zonas = Array.from(new Set(lines.map((line) => line.zona)));
+    const zonas = Array.from(new Set(activeLines.map((line) => line.zona)));
     return {
       currentFy,
       lastFy,
@@ -383,23 +397,23 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       monthly,
       zonas,
     };
-  }, [hasZonaSales, lines, zonaSales]);
+  }, [hasZonaSales, activeLines, zonaSales]);
 
   const zonaRows = useMemo(() => {
     if (!analysis) return [];
     return analysis.zonas.map((zona) => {
-      const ty = sumLines(lines.filter((line) => line.fyStart === analysis.currentFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
+      const ty = sumLines(activeLines.filter((line) => line.fyStart === analysis.currentFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
       const ly = analysis.lastFy === null
         ? emptyTotals()
-        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
+        : sumLines(activeLines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona && line.monthIndex <= analysis.ytdMonth));
       const lyFull = analysis.lastFy === null
         ? emptyTotals()
-        : sumLines(lines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona));
+        : sumLines(activeLines.filter((line) => line.fyStart === analysis.lastFy && line.zona === zona));
       const extra = extraGen(ty, ly);
       const zonaFact = hasZonaSales ? lookupZonaSales(zonaSales, zona, null, analysis.ytdMonth) : 0;
       const pctZona = zonaFact > 0 ? (ty.genCost / zonaFact) * 100 : null;
       const pending = ty.b2cPrev > 0 && ty.genCost === 0;
-      const budgetZona = budget ? lookupBudget(budget.byZona, zona) : 0;
+      const budgetZona = activeBudget ? lookupBudget(activeBudget.byZona, zona) : 0;
       return {
         zona,
         ty,
@@ -410,7 +424,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
         zonaFact,
         pctZona,
         pending,
-        queda: budget ? remainingVsBudget(ty, lyFull.pctB2c, budgetZona) : null,
+        queda: activeBudget ? remainingVsBudget(ty, lyFull.pctB2c, budgetZona) : null,
         delta: ty.pctB2c !== null && ly.pctB2c !== null ? ty.pctB2c - ly.pctB2c : null,
       };
     }).sort((a, b) => {
@@ -438,7 +452,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
       const result = Number(left) - Number(right);
       return sort.direction === 'asc' ? result : -result;
     });
-  }, [analysis, budget, hasZonaSales, lines, sort, zonaSales]);
+  }, [analysis, activeBudget, hasZonaSales, activeLines, sort, zonaSales]);
 
   const updateSort = (key: ZonaSortKey) => {
     setSort((prev) => (
@@ -472,11 +486,11 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
     URL.revokeObjectURL(url);
   };
 
-  const remainingCompany = analysis && budget
-    ? remainingVsBudget(analysis.tyYtd, analysis.lyFull.pctB2c, budget.total)
+  const remainingCompany = analysis && activeBudget
+    ? remainingVsBudget(analysis.tyYtd, analysis.lyFull.pctB2c, activeBudget.total)
     : null;
-  const expectedGen = analysis && budget && analysis.lyFull.pctB2c !== null
-    ? budget.total * (analysis.lyFull.pctB2c / 100)
+  const expectedGen = analysis && activeBudget && analysis.lyFull.pctB2c !== null
+    ? activeBudget.total * (analysis.lyFull.pctB2c / 100)
     : null;
 
   const maxPct = analysis
@@ -485,6 +499,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
 
   return (
     <div className="space-y-4">
+      {!hideUploads && (
       <section className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
@@ -493,9 +508,9 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
             onFileLoaded={handleFileLoaded}
             keepDropzone
           />
-          {fileName && analysis && (
+          {activeName && analysis && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              Cargado: {fileName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
+              Cargado: {activeName} · FY {fyLabel(analysis.currentFy)} hasta {analysis.ytdLabel}
               {analysis.lastFy !== null ? ` · comparado con FY ${fyLabel(analysis.lastFy)}` : ''}
             </p>
           )}
@@ -507,13 +522,14 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
             onFileLoaded={handleBudgetLoaded}
             keepDropzone
           />
-          {budget && (
+          {activeBudget && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              Cargado: {budget.fileName} · Web B2C {formatCurrency(budget.total)} en {Object.keys(budget.byZona).length} zonas
+              Cargado: {activeBudget.fileName} · Web B2C {formatCurrency(activeBudget.total)} en {Object.keys(activeBudget.byZona).length} zonas
             </p>
           )}
         </div>
       </section>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
@@ -522,10 +538,10 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
       )}
 
-      {lines.length === 0 && !error && (
+      {activeLines.length === 0 && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Sube data3.csv y, para estimar lo que queda, el budget (data4). Aplico el % de cierre LY al budget Web B2C.</p>
+          <p className="mt-3 text-sm font-medium">Sube el CSV de operación arriba. Los generados salen de *Gen. Web y el B2C del mes anterior.</p>
         </section>
       )}
 
@@ -579,8 +595,8 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
                 {remainingCompany === null ? '—' : formatCurrency(remainingCompany)}
               </p>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                {budget && analysis.lyFull.pctB2c !== null
-                  ? `Al ${formatAbsPercent(analysis.lyFull.pctB2c)} de cierre LY sobre el budget Web B2C (${formatCurrency(budget.total)}). Previstos del año: ${expectedGen === null ? '—' : formatCurrency(expectedGen)}. Ya puestos: ${formatCurrency(analysis.tyYtd.genCost)}.`
+                {activeBudget && analysis.lyFull.pctB2c !== null
+                  ? `Al ${formatAbsPercent(analysis.lyFull.pctB2c)} de cierre LY sobre el budget Web B2C (${formatCurrency(activeBudget.total)}). Previstos del año: ${expectedGen === null ? '—' : formatCurrency(expectedGen)}. Ya puestos: ${formatCurrency(analysis.tyYtd.genCost)}.`
                   : `Sube el budget para estimar vs cierre LY. El % de cierre del año pasado es ${formatAbsPercent(analysis.lyFull.pctB2c)}.`}
               </p>
             </div>
@@ -610,7 +626,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {formatCurrency(row.ty.genCost)} sobre {formatCurrency(row.ty.b2cPrev)} de Web B2C mes −1
-                    {budget ? ` · budget ${formatCurrency(row.budget)}` : ''}
+                    {activeBudget ? ` · budget ${formatCurrency(row.budget)}` : ''}
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {hasZonaSales
@@ -622,7 +638,7 @@ export default function GeneradosWebTrackingView({ zonaSales = [] }: GeneradosWe
                     <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">vs mismo tramo LY</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}{budget ? ' del budget' : ''}
+                    Quedan {row.queda === null ? '—' : formatCurrency(row.queda)} al {formatAbsPercent(row.pctCierreLy)}{activeBudget ? ' del budget' : ''}
                   </p>
                 </div>
               ))}

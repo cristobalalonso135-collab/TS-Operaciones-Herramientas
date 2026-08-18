@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import { normalizeText } from '@/lib/business-classification';
+import { snapshotFromFileName } from '@/lib/seguimiento-files';
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, FileSpreadsheet } from 'lucide-react';
 
 export interface DebtSalesLine {
@@ -15,9 +16,13 @@ export interface DebtSalesLine {
 
 interface DeudaTrackingViewProps {
   salesLines?: DebtSalesLine[];
+  preloadedClients?: DebtClient[];
+  preloadedSnapshot?: Date | null;
+  preloadedName?: string | null;
+  hideUpload?: boolean;
 }
 
-interface DebtClient {
+export interface DebtClient {
   zonaRaw: string;
   zona: string;
   agente: string;
@@ -30,7 +35,7 @@ interface DebtClient {
   pctLimite: number | null;
 }
 
-type ZonaSortKey = 'zona' | 'clientes' | 'total' | 'vencida' | 'noVencida' | 'pctVencida' | 'dias';
+type ZonaSortKey = 'zona' | 'clientes' | 'total' | 'vencida' | 'noVencida' | 'pctVencida' | 'pctDeuda' | 'pctVencidaSales' | 'dias';
 
 const ZONA_ORDER = [
   'Norte',
@@ -123,7 +128,7 @@ function findHeader(headers: string[], aliases: string[]): number {
   }));
 }
 
-function pickDebtSheet(sheets: Record<string, unknown[][]>): unknown[][] {
+export function pickDebtSheet(sheets: Record<string, unknown[][]>): unknown[][] {
   const names = Object.keys(sheets);
   if (names.length === 0) return [];
   const preferred = names.find((name) => {
@@ -140,7 +145,7 @@ function pickDebtSheet(sheets: Record<string, unknown[][]>): unknown[][] {
   return sheets[withHeaders || names[0]] || [];
 }
 
-function parseDebtData(rows: unknown[][]): { clients: DebtClient[]; snapshot: Date | null } {
+export function parseDebtData(rows: unknown[][]): { clients: DebtClient[]; snapshot: Date | null } {
   if (!rows.length) throw new Error('El archivo de deuda está vacío.');
   const headerIndex = rows.findIndex((row) => row.some((cell) => {
     const header = normalizeText(cell);
@@ -260,18 +265,28 @@ function StatCard({
   );
 }
 
-export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingViewProps) {
+export default function DeudaTrackingView({
+  salesLines = [],
+  preloadedClients,
+  preloadedSnapshot = null,
+  preloadedName = null,
+  hideUpload = false,
+}: DeudaTrackingViewProps) {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clients, setClients] = useState<DebtClient[]>([]);
   const [snapshot, setSnapshot] = useState<Date | null>(null);
   const [sort, setSort] = useState<{ key: ZonaSortKey; direction: 'asc' | 'desc' }>({ key: 'vencida', direction: 'desc' });
 
+  const activeClients = preloadedClients && preloadedClients.length > 0 ? preloadedClients : clients;
+  const activeSnapshot = preloadedClients && preloadedClients.length > 0 ? preloadedSnapshot : snapshot;
+  const activeName = preloadedClients && preloadedClients.length > 0 ? preloadedName : fileName;
+
   const handleWorkbookLoaded = (sheets: Record<string, unknown[][]>, name: string) => {
     try {
       const parsed = parseDebtData(pickDebtSheet(sheets));
       setClients(parsed.clients);
-      setSnapshot(parsed.snapshot);
+      setSnapshot(parsed.snapshot ?? snapshotFromFileName(name));
       setFileName(name);
       setError(null);
     } catch (err) {
@@ -282,16 +297,16 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
     }
   };
 
-  const asOf = snapshot ?? new Date();
+  const asOf = activeSnapshot ?? new Date();
   const daysOpen = daysSinceApril(asOf);
   const hasSales = salesLines.some((line) => line.facturacion !== 0);
   const ytdSales = salesLines.reduce((sum, line) => sum + line.facturacion, 0);
 
   const totals = useMemo(() => {
-    const total = clients.reduce((sum, client) => sum + client.total, 0);
-    const vencida = clients.reduce((sum, client) => sum + client.vencida, 0);
-    const noVencida = clients.reduce((sum, client) => sum + client.noVencida, 0);
-    const juridico = clients
+    const total = activeClients.reduce((sum, client) => sum + client.total, 0);
+    const vencida = activeClients.reduce((sum, client) => sum + client.vencida, 0);
+    const noVencida = activeClients.reduce((sum, client) => sum + client.noVencida, 0);
+    const juridico = activeClients
       .filter((client) => client.zona === 'Jurídico')
       .reduce((sum, client) => sum + client.total, 0);
     const operativa = total - juridico;
@@ -300,11 +315,11 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
     const dias = daily && daily !== 0 ? operativa / daily : null;
     const pctYtd = hasSales && ytdSales !== 0 ? (operativa / ytdSales) * 100 : null;
     return { total, vencida, noVencida, juridico, operativa, pctVencida, daily, dias, pctYtd };
-  }, [clients, daysOpen, hasSales, ytdSales]);
+  }, [activeClients, daysOpen, hasSales, ytdSales]);
 
   const zonaRows = useMemo(() => {
     const grouped = new Map<string, { clientes: number; total: number; vencida: number; noVencida: number }>();
-    clients.forEach((client) => {
+    activeClients.forEach((client) => {
       const current = grouped.get(client.zona) ?? { clientes: 0, total: 0, vencida: 0, noVencida: 0 };
       current.clientes += 1;
       current.total += client.total;
@@ -317,7 +332,9 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
       const daily = sales > 0 && daysOpen > 0 ? sales / daysOpen : null;
       const dias = daily ? block.total / daily : null;
       const pctVencida = block.total === 0 ? null : (block.vencida / block.total) * 100;
-      return { zona, ...block, sales, dias, pctVencida };
+      const pctDeuda = sales > 0 ? (block.total / sales) * 100 : null;
+      const pctVencidaSales = sales > 0 ? (block.vencida / sales) * 100 : null;
+      return { zona, ...block, sales, dias, pctVencida, pctDeuda, pctVencidaSales };
     }).sort((a, b) => {
       if (sort.key === 'zona') {
         const orderA = ZONA_ORDER.indexOf(a.zona);
@@ -331,7 +348,9 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
             : sort.key === 'vencida' ? row.vencida
               : sort.key === 'noVencida' ? row.noVencida
                 : sort.key === 'pctVencida' ? row.pctVencida
-                  : row.dias
+                  : sort.key === 'pctDeuda' ? row.pctDeuda
+                    : sort.key === 'pctVencidaSales' ? row.pctVencidaSales
+                      : row.dias
       );
       const left = pick(a);
       const right = pick(b);
@@ -341,11 +360,11 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
       const result = Number(left) - Number(right);
       return sort.direction === 'asc' ? result : -result;
     });
-  }, [clients, daysOpen, hasSales, salesLines, sort]);
+  }, [activeClients, daysOpen, hasSales, salesLines, sort]);
 
   const topVencida = useMemo(() => (
-    [...clients].sort((a, b) => b.vencida - a.vencida).slice(0, 15)
-  ), [clients]);
+    [...activeClients].sort((a, b) => b.vencida - a.vencida).slice(0, 15)
+  ), [activeClients]);
 
   const updateSort = (key: ZonaSortKey) => {
     setSort((prev) => (
@@ -356,7 +375,7 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
   };
 
   const downloadZonas = () => {
-    const header = ['Zona', 'Clientes', 'Deuda total', 'Vencida', 'No vencida', '% vencida', 'Fact. YTD zona', 'Días de venta'];
+    const header = ['Zona', 'Clientes', 'Deuda total', 'Vencida', 'No vencida', '% vencida', '% deuda / fact.', '% vencida / fact.', 'Fact. YTD zona', 'Días de venta'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.clientes,
@@ -364,6 +383,8 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
       row.vencida,
       row.noVencida,
       row.pctVencida,
+      row.pctDeuda,
+      row.pctVencidaSales,
       row.sales || '',
       row.dias,
     ])].map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
@@ -376,12 +397,13 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
     URL.revokeObjectURL(url);
   };
 
-  const snapshotLabel = snapshot
-    ? snapshot.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
+  const snapshotLabel = activeSnapshot
+    ? activeSnapshot.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
     : 'hoy';
 
   return (
     <div className="space-y-4">
+      {!hideUpload && (
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
         <FileUpload
           inputId="tracking-deuda-input"
@@ -390,26 +412,27 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
           onWorkbookLoaded={handleWorkbookLoaded}
           keepDropzone
         />
-        {fileName && (
+        {activeName && (
           <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            Cargado: {fileName} · foto del {snapshotLabel} · {clients.length.toLocaleString('de-DE')} clientes · {daysOpen} días desde el 1 de abril
+            Cargado: {activeName} · foto del {snapshotLabel} · {activeClients.length.toLocaleString('de-DE')} clientes · {daysOpen} días desde el 1 de abril
             {hasSales ? ' · cruzado con facturación Teamsports' : ' · sube Teamsports en YTD para ver los días de venta'}
           </p>
         )}
       </section>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
 
-      {clients.length === 0 && !error && (
+      {activeClients.length === 0 && !error && (
         <section className="rounded-lg border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Sube el Excel de deuda. EQI_NORTE, EQI_CENTRO, EQI_IT… los paso a las zonas de siempre.</p>
+          <p className="mt-3 text-sm font-medium">Sube el Excel de deuda arriba. EQI_NORTE, EQI_CENTRO, EQI_IT… los paso a las zonas de siempre.</p>
         </section>
       )}
 
-      {clients.length > 0 && (
+      {activeClients.length > 0 && (
         <>
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <p className="text-sm text-[var(--text-secondary)]">
@@ -422,7 +445,7 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
             <StatCard
               label="Deuda viva"
               value={formatCurrency(totals.total)}
-              hint={`${clients.length.toLocaleString('de-DE')} clientes · foto ${snapshotLabel}`}
+              hint={`${activeClients.length.toLocaleString('de-DE')} clientes · foto ${snapshotLabel}${hasSales && totals.pctYtd !== null ? ` · ${formatAbsPercent(totals.pctYtd)} de la fact. YTD` : ''}`}
             />
             <StatCard
               label="Vencida · el riesgo"
@@ -465,6 +488,13 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
                     {row.clientes.toLocaleString('de-DE')} clientes · vencida {formatCurrency(row.vencida)} · no vencida {formatCurrency(row.noVencida)}
                   </p>
+                  {hasSales && row.sales > 0 && (
+                    <p className="mt-2 text-[12px] font-semibold tabular-nums text-[var(--text-primary)]">
+                      {formatAbsPercent(row.pctDeuda)} deuda
+                      <span className="ml-2 font-medium text-[var(--danger)]">{formatAbsPercent(row.pctVencidaSales)} vencida</span>
+                      <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">sobre fact. YTD</span>
+                    </p>
+                  )}
                   <p className="mt-3 text-sm font-semibold tabular-nums">
                     {formatDays(row.dias)}
                     <span className="ml-1 text-[11px] font-medium text-[var(--text-muted)]">de venta desde abril</span>
@@ -503,6 +533,8 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
                       ['vencida', 'Vencida €', 'right'],
                       ['noVencida', 'No vencida €', 'right'],
                       ['pctVencida', '% vencida', 'right'],
+                      ['pctDeuda', '% deuda / fact.', 'right'],
+                      ['pctVencidaSales', '% vencida / fact.', 'right'],
                       ['dias', 'Días venta', 'right'],
                     ] as const).map(([key, label, align]) => {
                       const active = sort.key === key;
@@ -531,6 +563,8 @@ export default function DeudaTrackingView({ salesLines = [] }: DeudaTrackingView
                       <td className={`px-3 py-2 text-right font-mono ${vencidaTone(row.pctVencida)}`}>{formatCurrency(row.vencida)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatCurrency(row.noVencida)}</td>
                       <td className={`px-3 py-2 text-right font-mono ${vencidaTone(row.pctVencida)}`}>{formatAbsPercent(row.pctVencida)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.pctDeuda)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatAbsPercent(row.pctVencidaSales)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatDays(row.dias)}</td>
                     </tr>
                   ))}
