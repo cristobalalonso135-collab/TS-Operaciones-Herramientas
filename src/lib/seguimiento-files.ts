@@ -489,7 +489,8 @@ export function buildTrackingLines(
   const lyRange = shiftRange(range, -1);
   const tyOperation = filterByRange(operation, tyRange);
   const lyOperation = filterByRange(operation, lyRange);
-  const budgetInRange = filterByRange(budget, tyRange);
+  const tyMonths = new Set(tyOperation.map((line) => line.monthIndex));
+  const budgetInRange = filterByRange(budget, tyRange).filter((line) => tyMonths.has(line.monthIndex));
 
   const budgetExact = new Map<string, { budget: number; gmBudget: number }>();
   const budgetLoose = new Map<string, { budget: number; gmBudget: number }>();
@@ -509,7 +510,21 @@ export function buildTrackingLines(
   });
 
   const toMerged = (rows: OperationLine[], attachBudget: boolean): TrackingBuildLine[] => {
-    const classified = rows.map((line, index) => {
+    const aggregated = new Map<string, OperationLine>();
+    rows.forEach((line) => {
+      const key = dimKey(line);
+      const existing = aggregated.get(key);
+      if (!existing) {
+        aggregated.set(key, { ...line });
+        return;
+      }
+      existing.facturacion += line.facturacion;
+      existing.gm += line.gm;
+      existing.free += line.free;
+      existing.gen += line.gen;
+    });
+
+    const classified = Array.from(aggregated.values()).map((line, index) => {
       const classifiedLine = classifyLine({
         vertical: line.vertical,
         medio: line.medio,
