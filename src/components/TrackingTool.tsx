@@ -555,6 +555,129 @@ function groupMetrics(lines: TrackingLine[], keyFn: (line: TrackingLine) => stri
   });
 }
 
+function sortZonaBlocks(nodes: MetricBlock[]): MetricBlock[] {
+  return [...nodes].sort((a, b) => {
+    const orderA = ZONA_ORDER.indexOf(a.label);
+    const orderB = ZONA_ORDER.indexOf(b.label);
+    if (orderA >= 0 || orderB >= 0) return (orderA < 0 ? 99 : orderA) - (orderB < 0 ? 99 : orderB);
+    return a.label.localeCompare(b.label, 'es');
+  });
+}
+
+function downloadCsv(fileName: string, header: string[], rows: (string | number | null)[][]): void {
+  const csv = [header, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';'))
+    .join('\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function treeMetricCells(block: MetricBlock): (number | null)[] {
+  const bruto = block.grassrootsFacturacion - block.free;
+  const freeCost = -block.free;
+  const genCost = -block.gen;
+  const mg = ratioPct(block.gm, block.facturacion);
+  const mgBg = ratioPct(block.gmBudget, block.budget);
+  return [
+    block.facturacion,
+    block.budget,
+    block.facturacion - block.budget,
+    vsPct(block.facturacion, block.budget),
+    block.facturacionLy,
+    vsPct(block.facturacion, block.facturacionLy),
+    block.gm,
+    block.gmBudget,
+    block.gm - block.gmBudget,
+    mg,
+    mgBg,
+    mg !== null && mgBg !== null ? mg - mgBg : null,
+    freeCost,
+    bruto,
+    ratioPct(freeCost, bruto),
+    genCost,
+    block.webB2cPrev,
+    ratioPct(genCost, block.webB2cPrev),
+    block.deuda,
+    block.deudaVencida,
+    ratioPct(block.deuda, block.facturacion),
+  ];
+}
+
+function collectTreeRows(
+  source: TrackingLine[],
+  monthLabel: string,
+  debtClients: DebtClient[],
+  attachDebt: boolean,
+): (string | number | null)[][] {
+  const withDebt = (block: MetricBlock, area: string, nivel: number): MetricBlock => {
+    if (!attachDebt || debtClients.length === 0) return block;
+    if (nivel >= 3 && area !== 'Grassroots') return block;
+    return applyDebt(block, debtClients);
+  };
+
+  const rows: (string | number | null)[][] = [];
+  const push = (
+    nivel: number,
+    area: string,
+    responsable: string,
+    subresponsable: string,
+    extra: string,
+    extraKind: string,
+    block: MetricBlock,
+  ) => {
+    const ruta = ['Teamsports', area, responsable, subresponsable, extra].filter(Boolean).join(' › ');
+    rows.push([
+      nivel,
+      ...(monthLabel ? [monthLabel] : []),
+      'Teamsports',
+      area,
+      responsable,
+      subresponsable,
+      extra,
+      extraKind,
+      ruta,
+      ...treeMetricCells(withDebt(block, area, nivel)),
+    ]);
+  };
+
+  const company = emptyMetrics('teamsports', 'Teamsports');
+  source.forEach((line) => addLine(company, line));
+  push(1, '', '', '', '', '', company);
+
+  groupMetrics(source, (line) => line.area).forEach((areaBlock) => {
+    const areaLines = source.filter((line) => line.area === areaBlock.key);
+    push(2, areaBlock.label, '', '', '', '', areaBlock);
+
+    groupMetrics(areaLines, (line) => line.responsable).forEach((respBlock) => {
+      const respLines = areaLines.filter((line) => line.responsable === respBlock.key);
+      push(3, areaBlock.label, respBlock.label, '', '', '', respBlock);
+
+      const subBlocks = groupMetrics(respLines, (line) => line.subresponsable);
+      const needsSubLevel = subBlocks.length > 1 || extraLevelKind(areaBlock.key, subBlocks[0]?.key ?? null) !== null;
+      if (!needsSubLevel) return;
+
+      subBlocks.forEach((subBlock) => {
+        const subLines = respLines.filter((line) => line.subresponsable === subBlock.key);
+        push(4, areaBlock.label, respBlock.label, subBlock.label, '', '', subBlock);
+        const kind = extraLevelKind(areaBlock.key, subBlock.key);
+        if (!kind) return;
+        const extraBlocks = groupMetrics(subLines, (line) => extraLevelValue(line, kind));
+        const ordered = kind === 'zona' ? sortZonaBlocks(extraBlocks) : extraBlocks;
+        ordered.forEach((extraBlock) => {
+          push(5, areaBlock.label, respBlock.label, subBlock.label, extraBlock.label, extraLevelLabel(kind), extraBlock);
+        });
+      });
+    });
+  });
+
+  return rows;
+}
+
 function KpiBar({
   label,
   actual,
@@ -1160,16 +1283,61 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         ly,
       ];
     });
-    const csv = [header, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(';'))
-      .join('\n');
-    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `seguimiento_${(pathLabel || 'tabla').replace(/[^\w]+/g, '_')}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(`seguimiento_${(pathLabel || 'tabla').replace(/[^\w]+/g, '_')}.csv`, header, rows);
+  };
+
+  const downloadTree = () => {
+    const includeMonth = viewMode === 'monthly';
+    const header = [
+      'Nivel',
+      ...(includeMonth ? ['Mes'] : []),
+      'Compañía',
+      'Área',
+      'Responsable',
+      'Subresponsable',
+      'Rama',
+      'Tipo rama',
+      'Ruta',
+      'Facturación',
+      'Budget',
+      'Dif. fact.',
+      'vs Budget %',
+      'Fact. LY',
+      'vs LY %',
+      'GM',
+      'GM Budget',
+      'Dif. GM',
+      '% mg',
+      '% mg Bg',
+      'Δ mg pp',
+      'Frees',
+      'Fact. bruta GR',
+      '% frees',
+      'Generados',
+      'B2C −1',
+      '% gen',
+      'Deuda',
+      'Vencida',
+      '% deuda / neta',
+    ];
+    const chunks = includeMonth
+      ? (selectedMonth === null
+        ? FISCAL_MONTHS
+          .map((month) => ({
+            monthLabel: month.label,
+            lines: monthlyLines.filter((line) => line.monthIndex === month.index),
+          }))
+          .filter((chunk) => chunk.lines.length > 0)
+        : [{
+          monthLabel: FISCAL_MONTHS.find((month) => month.index === selectedMonth)?.label ?? '',
+          lines: scopedLines,
+        }])
+      : [{ monthLabel: '', lines: ytdLines }];
+
+    const rows = chunks.flatMap((chunk) => (
+      collectTreeRows(chunk.lines, chunk.monthLabel, debtClients, viewMode === 'ytd')
+    ));
+    downloadCsv(`seguimiento_arbol_${fyLabel(fyStart).replace('/', '-')}.csv`, header, rows);
   };
 
   const selectedMonthLabel = selectedMonth ? FISCAL_MONTHS.find((month) => month.index === selectedMonth)?.label : null;
@@ -1438,7 +1606,17 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-              <p className="text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. Pincha para bajar.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. Pincha para bajar.</p>
+                <button
+                  type="button"
+                  onClick={downloadTree}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Exportar árbol
+                </button>
+              </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 <p className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">KPIs</p>
                 {TREE_KPIS.map((kpi) => {
