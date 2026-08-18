@@ -524,11 +524,8 @@ export function buildTrackingLines(
     existing.gmBudget += line.gmBudget;
   };
 
-  const tyOperation = filterByRange(operation, tyRange);
-  const tyActualMonths = new Set(tyOperation.map((line) => line.monthIndex));
-
   const tyMap = new Map<string, TrackingBuildLine>();
-  tyOperation.forEach((line) => {
+  filterByRange(operation, tyRange).forEach((line) => {
     mergeLine(tyMap, toBuildLine(line, { facturacion: line.facturacion, gm: line.gm }), 'actual');
   });
   filterByRange(budget, tyRange).forEach((line) => {
@@ -550,7 +547,7 @@ export function buildTrackingLines(
       line.facturacion !== 0 || line.budget !== 0 || line.gm !== 0 || line.gmBudget !== 0
     ))
     .map((line) => {
-      const ly = tyActualMonths.has(line.monthIndex) ? lyByMatch.get(lyMatchKey(line)) : undefined;
+      const ly = lyByMatch.get(lyMatchKey(line));
       return {
         ...line,
         facturacionLy: ly?.facturacion ?? 0,
