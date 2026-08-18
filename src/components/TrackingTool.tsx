@@ -93,6 +93,36 @@ const TREE_KPIS: { id: TreeKpiId; label: string; accent?: string }[] = [
 ];
 const ALL_TREE_KPIS = TREE_KPIS.map((kpi) => kpi.id);
 const TREE_KPI_STORAGE = 'seguimiento-tree-kpis';
+const KPI_TARGET_STORAGE = 'seguimiento-kpi-targets';
+
+type KpiTargets = {
+  free: number;
+  gen: number;
+};
+
+const DEFAULT_KPI_TARGETS: KpiTargets = { free: 10, gen: 12 };
+const KPI_BAND_PP = 1.5;
+const KPI_BAND_WARN_PP = 2.5;
+const DEBT_TARGET_DAYS = 55;
+const DEBT_DUE_TARGET_DAYS = 10;
+const DEBT_WARN_DAYS = 10;
+
+function parseKpiTargets(raw: string | null): KpiTargets {
+  if (!raw) return { ...DEFAULT_KPI_TARGETS };
+  try {
+    const parsed = JSON.parse(raw) as Partial<KpiTargets>;
+    const clamp = (value: unknown, fallback: number) => {
+      const next = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(next) && next >= 0 && next <= 100 ? next : fallback;
+    };
+    return {
+      free: clamp(parsed.free, DEFAULT_KPI_TARGETS.free),
+      gen: clamp(parsed.gen, DEFAULT_KPI_TARGETS.gen),
+    };
+  } catch {
+    return { ...DEFAULT_KPI_TARGETS };
+  }
+}
 
 function parseTreeKpis(raw: string | null): TreeKpiId[] {
   if (!raw) return [...ALL_TREE_KPIS];
@@ -288,6 +318,50 @@ function barClass(value: number | null): string {
   if (value > 0.05) return 'bg-[var(--success)]';
   if (value < -0.05) return 'bg-[var(--danger)]';
   return 'bg-[var(--text-muted)]';
+}
+
+function overviewTone(delta: number | null, invert = false): 'good' | 'bad' | 'neutral' {
+  if (delta === null || !Number.isFinite(delta)) return 'neutral';
+  const value = invert ? -delta : delta;
+  if (value > 0.05) return 'good';
+  if (value < -0.05) return 'bad';
+  return 'neutral';
+}
+
+function bandTone(actual: number | null, target: number): 'good' | 'bad' | 'neutral' {
+  if (actual === null || !Number.isFinite(actual)) return 'neutral';
+  const distance = Math.abs(actual - target);
+  if (distance <= KPI_BAND_PP) return 'good';
+  if (distance <= KPI_BAND_WARN_PP) return 'neutral';
+  return 'bad';
+}
+
+function ceilingTone(actual: number | null, target: number, warnSlack: number): 'good' | 'bad' | 'neutral' {
+  if (actual === null || !Number.isFinite(actual)) return 'neutral';
+  if (actual <= target) return 'good';
+  if (actual <= target + warnSlack) return 'neutral';
+  return 'bad';
+}
+
+function overviewToneClass(tone: 'good' | 'bad' | 'neutral'): string {
+  if (tone === 'good') return 'text-[var(--success)]';
+  if (tone === 'bad') return 'text-[var(--danger)]';
+  return 'text-[var(--text-secondary)]';
+}
+
+function overviewBarClass(tone: 'good' | 'bad' | 'neutral'): string {
+  if (tone === 'good') return 'bg-[var(--success)]';
+  if (tone === 'bad') return 'bg-[var(--danger)]';
+  return 'bg-[var(--text-muted)]';
+}
+
+function targetFill(actual: number | null, target: number): number {
+  if (actual === null || target <= 0) return 0;
+  return Math.max(4, Math.min(100, (actual / target) * 100));
+}
+
+function formatBandRange(target: number): string {
+  return `${formatAbsPercent(target - KPI_BAND_PP)}–${formatAbsPercent(target + KPI_BAND_PP)}`;
 }
 
 function emptyMetrics(key: string, label: string): MetricBlock {
@@ -828,6 +902,274 @@ function KpiDebtBar({
   );
 }
 
+function OverviewTargetInput({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[var(--text-muted)]">
+      obj
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step={0.5}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(Math.min(100, Math.max(0, next)));
+        }}
+        className="w-[3.25rem] rounded border border-[var(--border)] bg-white px-1 py-0.5 text-right text-[11px] font-semibold tabular-nums text-[var(--text-primary)]"
+      />
+      % ±{KPI_BAND_PP.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+    </label>
+  );
+}
+
+function BandTrack({
+  actual,
+  target,
+  tone,
+}: {
+  actual: number | null;
+  target: number;
+  tone: 'good' | 'bad' | 'neutral';
+}) {
+  const max = Math.max(target * 2, 1);
+  const pos = (value: number) => Math.max(2, Math.min(98, (value / max) * 100));
+  const actualPos = actual === null ? null : pos(actual);
+  const start = pos(target - KPI_BAND_PP);
+  const end = pos(target + KPI_BAND_PP);
+
+  return (
+    <div className="relative mt-2 h-2 rounded-full bg-[var(--bg-soft)]">
+      <div
+        className="absolute inset-y-0 rounded-full bg-[var(--success-soft)]"
+        style={{ left: `${start}%`, width: `${Math.max(6, end - start)}%` }}
+      />
+      <div
+        className="absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-[var(--text-muted)]"
+        style={{ left: `${pos(target)}%` }}
+      />
+      {actualPos !== null && (
+        <div
+          className={`absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-white ${overviewBarClass(tone)}`}
+          style={{ left: `${actualPos}%` }}
+        />
+      )}
+    </div>
+  );
+}
+
+function OverviewCard({
+  label,
+  value,
+  compare,
+  delta,
+  ly,
+  fill,
+  tone,
+  accent,
+  headerRight,
+  extra,
+  bar,
+}: {
+  label: string;
+  value: string;
+  compare: string;
+  delta: string;
+  ly: string;
+  fill?: number;
+  tone: 'good' | 'bad' | 'neutral';
+  accent?: string;
+  headerRight?: ReactNode;
+  extra?: ReactNode;
+  bar?: ReactNode;
+}) {
+  return (
+    <article
+      className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-3.5 shadow-sm"
+      style={accent ? { borderColor: `${accent}66` } : undefined}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p
+          className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]"
+          style={accent ? { color: accent } : undefined}
+        >
+          {label}
+        </p>
+        {headerRight}
+      </div>
+      <p
+        className="mt-1.5 font-display text-xl font-semibold tabular-nums leading-none text-[var(--text-primary)]"
+        style={accent ? { color: accent } : undefined}
+      >
+        {value}
+      </p>
+      <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">{compare}</p>
+      <p className={`mt-0.5 text-[12px] font-semibold tabular-nums ${overviewToneClass(tone)}`}>{delta}</p>
+      {bar ?? (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+          <div
+            className={`h-full rounded-full ${overviewBarClass(tone)}`}
+            style={{ width: `${Math.max(0, Math.min(100, fill ?? 0))}%` }}
+          />
+        </div>
+      )}
+      <p className="mt-1.5 text-[11px] font-medium tabular-nums text-[var(--text-muted)]">{ly}</p>
+      {extra}
+    </article>
+  );
+}
+
+function KpiOverviewPanel({
+  block,
+  periodLabel,
+  periodDays,
+  hasDebt,
+  targets,
+  onChangeTarget,
+}: {
+  block: MetricBlock;
+  periodLabel: string;
+  periodDays: number;
+  hasDebt: boolean;
+  targets: KpiTargets;
+  onChangeTarget: (key: keyof KpiTargets, value: number) => void;
+}) {
+  const gmDelta = vsPct(block.gm, block.gmBudget);
+  const gmLy = vsPct(block.gm, block.gmLy);
+  const factDelta = vsPct(block.facturacion, block.budget);
+  const factLy = vsPct(block.facturacion, block.facturacionLy);
+  const mg = ratioPct(block.gm, block.facturacion);
+  const mgBg = ratioPct(block.gmBudget, block.budget);
+  const mgLy = ratioPct(block.gmLy, block.facturacionLy);
+  const mgDelta = mg !== null && mgBg !== null ? mg - mgBg : null;
+  const mgLyDelta = mg !== null && mgLy !== null ? mg - mgLy : null;
+
+  const freeAmt = -block.free;
+  const freeBase = block.grassrootsFacturacion - block.free;
+  const freePct = ratioPct(freeAmt, freeBase);
+  const freePctLy = ratioPct(-block.freeLy, block.grassrootsFacturacionLy - block.freeLy);
+  const freeVsTarget = freePct !== null ? freePct - targets.free : null;
+  const freeVsLy = freePct !== null && freePctLy !== null ? freePct - freePctLy : null;
+  const freeTone = bandTone(freePct, targets.free);
+
+  const genAmt = -block.gen;
+  const genPct = ratioPct(genAmt, block.webB2cPrev);
+  const genPctLy = ratioPct(-block.genLy, block.webB2cPrevLy);
+  const genVsTarget = genPct !== null ? genPct - targets.gen : null;
+  const genVsLy = genPct !== null && genPctLy !== null ? genPct - genPctLy : null;
+  const genTone = bandTone(genPct, targets.gen);
+
+  const debtPct = hasDebt ? ratioPct(block.deuda, block.facturacion) : null;
+  const debtDuePct = hasDebt ? ratioPct(block.deudaVencida, block.facturacion) : null;
+  const debtTargetPct = (DEBT_TARGET_DAYS / periodDays) * 100;
+  const debtDueTargetPct = (DEBT_DUE_TARGET_DAYS / periodDays) * 100;
+  const debtWarnPct = (DEBT_WARN_DAYS / periodDays) * 100;
+  const debtTone = ceilingTone(debtPct, debtTargetPct, debtWarnPct);
+  const debtDueTone = ceilingTone(debtDuePct, debtDueTargetPct, debtWarnPct);
+
+  return (
+    <section className="rounded-2xl border border-[var(--border)] bg-white/70 p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Cuadro general</p>
+          <p className="mt-0.5 text-sm font-medium text-[var(--text-primary)]">Teamsports · {periodLabel}</p>
+        </div>
+        <p className="max-w-xl text-[11px] leading-snug text-[var(--text-muted)]">
+          Frees y generados: dentro de ±{KPI_BAND_PP.toLocaleString('de-DE', { minimumFractionDigits: 1 })} pp del objetivo (arriba o abajo, igual de mal).
+          Deuda y vencida: % sobre la facturación neta de este tramo.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <OverviewCard
+          label="Gross margin"
+          value={formatCurrency(block.gm)}
+          compare={`/ ${formatCurrency(block.gmBudget)} budget`}
+          delta={`${formatSignedCurrency(block.gm - block.gmBudget)} · ${formatPercent(gmDelta)}`}
+          ly={`vs LY ${formatPercent(gmLy)}`}
+          fill={block.gmBudget === 0 ? 0 : Math.max(4, Math.min(100, (block.gm / Math.abs(block.gmBudget)) * 100))}
+          tone={overviewTone(gmDelta)}
+        />
+        <OverviewCard
+          label="Facturación"
+          value={formatCurrency(block.facturacion)}
+          compare={`/ ${formatCurrency(block.budget)} budget`}
+          delta={`${formatSignedCurrency(block.facturacion - block.budget)} · ${formatPercent(factDelta)}`}
+          ly={`vs LY ${formatPercent(factLy)}`}
+          fill={block.budget === 0 ? 0 : Math.max(4, Math.min(100, (block.facturacion / Math.abs(block.budget)) * 100))}
+          tone={overviewTone(factDelta)}
+        />
+        <OverviewCard
+          label="% margen"
+          value={formatAbsPercent(mg)}
+          compare={`/ ${formatAbsPercent(mgBg)} budget`}
+          delta={`${formatPp(mgDelta)} vs budget`}
+          ly={`vs LY ${formatPp(mgLyDelta)}`}
+          fill={mgBg && mgBg !== 0 && mg !== null ? Math.max(4, Math.min(100, (mg / Math.abs(mgBg)) * 100)) : 0}
+          tone={overviewTone(mgDelta)}
+        />
+        <OverviewCard
+          label="% Free"
+          value={formatAbsPercent(freePct)}
+          compare={`${formatCurrency(freeAmt)} · ${formatCurrency(freeBase)} bruta`}
+          delta={`${formatPp(freeVsTarget)} · banda ${formatBandRange(targets.free)}`}
+          ly={`vs LY ${formatPp(freeVsLy)}`}
+          tone={freeTone}
+          accent="var(--kpi-free)"
+          headerRight={<OverviewTargetInput value={targets.free} onChange={(value) => onChangeTarget('free', value)} />}
+          bar={<BandTrack actual={freePct} target={targets.free} tone={freeTone} />}
+        />
+        <OverviewCard
+          label="Generados web"
+          value={formatAbsPercent(genPct)}
+          compare={`${formatCurrency(genAmt)} · ${formatCurrency(block.webB2cPrev)} B2C −1`}
+          delta={`${formatPp(genVsTarget)} · banda ${formatBandRange(targets.gen)}`}
+          ly={`vs LY ${formatPp(genVsLy)}`}
+          tone={genTone}
+          accent="var(--kpi-gen)"
+          headerRight={<OverviewTargetInput value={targets.gen} onChange={(value) => onChangeTarget('gen', value)} />}
+          bar={<BandTrack actual={genPct} target={targets.gen} tone={genTone} />}
+        />
+        <OverviewCard
+          label="Deuda / facturación"
+          value={hasDebt ? formatAbsPercent(debtPct) : '—'}
+          compare={hasDebt ? `${formatCurrency(block.deuda)} · techo ${formatAbsPercent(debtTargetPct, 0)}` : 'Sin Excel de deuda'}
+          delta={hasDebt ? `${formatPp(debtPct !== null ? debtPct - debtTargetPct : null)} vs obj` : 'Sube el archivo 3'}
+          ly={hasDebt ? 'Foto de cartera sobre la neta del tramo' : 'Foto de cartera, no vs LY'}
+          fill={targetFill(debtPct, debtTargetPct)}
+          tone={debtTone}
+          accent="var(--kpi-debt)"
+          extra={hasDebt ? (
+            <div className="mt-3 border-t border-[var(--kpi-debt-soft)] pt-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--kpi-debt)]">Vencida / facturación</p>
+              <p className="mt-1 font-display text-lg font-semibold tabular-nums leading-none text-[var(--kpi-debt)]">
+                {formatAbsPercent(debtDuePct)}
+              </p>
+              <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
+                {formatCurrency(block.deudaVencida)} · techo {formatAbsPercent(debtDueTargetPct, 0)}
+              </p>
+              <p className={`mt-0.5 text-[12px] font-semibold tabular-nums ${overviewToneClass(debtDueTone)}`}>
+                {formatPp(debtDuePct !== null ? debtDuePct - debtDueTargetPct : null)} vs obj
+              </p>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--kpi-debt-soft)]">
+                <div
+                  className={`h-full rounded-full ${overviewBarClass(debtDueTone)}`}
+                  style={{ width: `${targetFill(debtDuePct, debtDueTargetPct)}%` }}
+                />
+              </div>
+            </div>
+          ) : undefined}
+        />
+      </div>
+    </section>
+  );
+}
+
 function TreeCard({
   block,
   selected,
@@ -1017,11 +1359,19 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     if (typeof window === 'undefined') return [...ALL_TREE_KPIS];
     return parseTreeKpis(window.localStorage.getItem(TREE_KPI_STORAGE));
   });
+  const [kpiTargets, setKpiTargets] = useState<KpiTargets>(() => {
+    if (typeof window === 'undefined') return { ...DEFAULT_KPI_TARGETS };
+    return parseKpiTargets(window.localStorage.getItem(KPI_TARGET_STORAGE));
+  });
   const treeScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.localStorage.setItem(TREE_KPI_STORAGE, JSON.stringify(treeKpis));
   }, [treeKpis]);
+
+  useEffect(() => {
+    window.localStorage.setItem(KPI_TARGET_STORAGE, JSON.stringify(kpiTargets));
+  }, [kpiTargets]);
 
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
@@ -1099,6 +1449,10 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     () => rangeFromFiscalMonths(fyStart, fromMonth, toMonth),
     [fromMonth, fyStart, toMonth],
   );
+  const periodDays = useMemo(() => {
+    const ms = dateRange.end.getTime() - dateRange.start.getTime();
+    return Math.max(1, Math.round(ms / 86_400_000));
+  }, [dateRange]);
   const lyRange = useMemo(() => shiftRange(dateRange, -1), [dateRange]);
 
   const extraLines = useMemo(() => extraFiles.flatMap((file) => file.lines), [extraFiles]);
@@ -1211,6 +1565,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const extraNodes = useMemo(() => {
     if (!selectedArea || !selectedResponsable || !selectedSubresponsable || !extraKind) return [];
     const attachDebt = viewMode === 'ytd' && selectedArea === 'Grassroots' && !skipsTreeDebt(selectedSubresponsable);
+    const nodes = groupMetrics(
       scopedLines.filter((line) => (
         line.area === selectedArea
         && line.responsable === selectedResponsable
@@ -1617,6 +1972,14 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
 
       {activeHasData && (
         <>
+          <KpiOverviewPanel
+            block={company}
+            periodLabel={periodLabel}
+            periodDays={periodDays}
+            hasDebt={debtClients.length > 0}
+            targets={kpiTargets}
+            onChangeTarget={(key, value) => setKpiTargets((prev) => ({ ...prev, [key]: value }))}
+          />
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
