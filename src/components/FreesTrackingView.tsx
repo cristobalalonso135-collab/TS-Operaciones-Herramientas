@@ -666,7 +666,7 @@ export default function FreesTrackingView({
                       title={`LY ${month.label}: ${formatAbsPercent(month.ly.pct)}`}
                     />
                     <div
-                      className={`w-1/2 rounded-t ${month.index <= analysis.ytdMonth ? 'bg-[var(--danger)]' : 'bg-transparent'}`}
+                      className={`w-1/2 rounded-t ${month.index <= analysis.ytdMonth ? 'bg-[var(--kpi-free)]' : 'bg-transparent'}`}
                       style={{ height: `${Math.max(month.ty.pct ? (month.ty.pct / maxPct) * 100 : 0, month.ty.pct ? 4 : 0)}%` }}
                       title={`TY ${month.label}: ${formatAbsPercent(month.ty.pct)}`}
                     />

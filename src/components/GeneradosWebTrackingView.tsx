@@ -464,7 +464,7 @@ export default function GeneradosWebTrackingView({
 
   const downloadZonas = () => {
     if (!analysis) return;
-    const header = ['Zona', 'Gen. Web TY', 'Web B2C', 'Budget Web B2C', '% vs B2C', '% cierre LY', 'Fact. zona TY', '% vs zona', 'Extra € vs LY', 'Quedan (cierre LY)'];
+    const header = ['Zona', 'Gen. Web TY', 'Web B2C mes −1', 'Budget Web B2C', '% vs B2C', '% cierre LY', 'Fact. zona TY', '% vs zona', 'Extra € vs LY', 'Quedan (cierre LY)'];
     const csv = [header, ...zonaRows.map((row) => [
       row.zona,
       row.ty.genCost,
@@ -606,7 +606,7 @@ export default function GeneradosWebTrackingView({
             <div className="mb-3">
               <p className="text-sm font-semibold">Zonas</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                El % es sobre Equipaciones Web B2C del mismo tramo, sin desfasar al mes anterior. Quedan = % de cierre LY × budget Web B2C de la zona − ya puestos.
+                El % es sobre Equipaciones Web B2C del mes anterior. Quedan = % de cierre LY × budget Web B2C de la zona − ya puestos.
               </p>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -625,7 +625,7 @@ export default function GeneradosWebTrackingView({
                     <span className="text-[var(--text-muted)]"> · mismo tramo {formatAbsPercent(row.ly.pctB2c)}</span>
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                    {formatCurrency(row.ty.genCost)} sobre {formatCurrency(row.ty.b2cPrev)} de Web B2C
+                    {formatCurrency(row.ty.genCost)} sobre {formatCurrency(row.ty.b2cPrev)} de Web B2C del mes anterior
                     {activeBudget ? ` · budget ${formatCurrency(row.budget)}` : ''}
                   </p>
                   <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
@@ -657,7 +657,7 @@ export default function GeneradosWebTrackingView({
                       title={`LY ${month.label}: ${formatAbsPercent(month.ly.pctB2c)}`}
                     />
                     <div
-                      className={`w-1/2 rounded-t ${month.index <= analysis.ytdMonth ? 'bg-[var(--danger)]' : 'bg-transparent'}`}
+                      className={`w-1/2 rounded-t ${month.index <= analysis.ytdMonth ? 'bg-[var(--kpi-gen)]' : 'bg-transparent'}`}
                       style={{ height: `${Math.max(month.ty.pctB2c ? (Math.min(Math.abs(month.ty.pctB2c), 80) / maxPct) * 100 : 0, month.ty.pctB2c ? 4 : 0)}%` }}
                       title={`TY ${month.label}: ${formatAbsPercent(month.ty.pctB2c)}`}
                     />
@@ -691,7 +691,7 @@ export default function GeneradosWebTrackingView({
                     {([
                       ['zona', 'Zona', 'left'],
                       ['genCost', 'Gen. Web €', 'right'],
-                      ['b2cPrev', 'Web B2C €', 'right'],
+                      ['b2cPrev', 'Web B2C mes −1 €', 'right'],
                       ['budget', 'Budget B2C €', 'right'],
                       ['pctB2c', '% vs B2C', 'right'],
                       ['pctLy', '% cierre LY', 'right'],

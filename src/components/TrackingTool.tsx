@@ -50,6 +50,8 @@ interface TrackingLine {
   freeLy: number;
   gen: number;
   genLy: number;
+  webB2cPrev: number;
+  webB2cPrevLy: number;
 }
 
 interface MetricBlock {
@@ -65,8 +67,8 @@ interface MetricBlock {
   freeLy: number;
   gen: number;
   genLy: number;
-  webB2c: number;
-  webB2cLy: number;
+  webB2cPrev: number;
+  webB2cPrevLy: number;
   deuda: number;
   deudaVencida: number;
   zonas: string[];
@@ -77,6 +79,30 @@ interface MetricBlock {
 
 type SortDirection = 'asc' | 'desc';
 type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda';
+type TreeKpiId = 'gm' | 'facturacion' | 'margin' | 'frees' | 'generados' | 'deuda';
+
+const TREE_KPIS: { id: TreeKpiId; label: string; accent?: string }[] = [
+  { id: 'gm', label: 'Gross margin' },
+  { id: 'facturacion', label: 'Facturación' },
+  { id: 'margin', label: '% margen' },
+  { id: 'frees', label: 'Frees', accent: 'var(--kpi-free)' },
+  { id: 'generados', label: 'Generados', accent: 'var(--kpi-gen)' },
+  { id: 'deuda', label: 'Deuda', accent: 'var(--kpi-debt)' },
+];
+const ALL_TREE_KPIS = TREE_KPIS.map((kpi) => kpi.id);
+const TREE_KPI_STORAGE = 'seguimiento-tree-kpis';
+
+function parseTreeKpis(raw: string | null): TreeKpiId[] {
+  if (!raw) return [...ALL_TREE_KPIS];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [...ALL_TREE_KPIS];
+    const valid = parsed.filter((id): id is TreeKpiId => ALL_TREE_KPIS.includes(id as TreeKpiId));
+    return valid.length > 0 ? ALL_TREE_KPIS.filter((id) => valid.includes(id)) : [...ALL_TREE_KPIS];
+  } catch {
+    return [...ALL_TREE_KPIS];
+  }
+}
 type TableSortKey =
   | 'month'
   | 'vertical'
@@ -276,8 +302,8 @@ function emptyMetrics(key: string, label: string): MetricBlock {
     freeLy: 0,
     gen: 0,
     genLy: 0,
-    webB2c: 0,
-    webB2cLy: 0,
+    webB2cPrev: 0,
+    webB2cPrevLy: 0,
     deuda: 0,
     deudaVencida: 0,
     zonas: [],
@@ -292,6 +318,17 @@ function pushUnique(list: string[], value: string): void {
   if (!list.some((item) => normalizeText(item) === normalizeText(value))) list.push(value);
 }
 
+function isCommercialArea(area: string): boolean {
+  const normalized = normalizeText(area);
+  return normalized === 'b2b' || normalized === 'pro clubs';
+}
+
+function showsShareKpis(block: MetricBlock): boolean {
+  const areas = block.areas.filter(Boolean);
+  if (areas.length === 0) return true;
+  return !areas.every(isCommercialArea);
+}
+
 function addLine(block: MetricBlock, line: TrackingLine): void {
   block.facturacion += line.facturacion;
   block.budget += line.budget;
@@ -299,13 +336,13 @@ function addLine(block: MetricBlock, line: TrackingLine): void {
   block.gm += line.gm;
   block.gmBudget += line.gmBudget;
   block.gmLy += line.gmLy;
-  block.free += line.free;
-  block.freeLy += line.freeLy;
-  block.gen += line.gen;
-  block.genLy += line.genLy;
-  if (normalizeText(line.medio) === 'equipaciones web b2c') {
-    block.webB2c += line.facturacion;
-    block.webB2cLy += line.facturacionLy;
+  if (!isCommercialArea(line.area)) {
+    block.free += line.free;
+    block.freeLy += line.freeLy;
+    block.gen += line.gen;
+    block.genLy += line.genLy;
+    block.webB2cPrev += line.webB2cPrev ?? 0;
+    block.webB2cPrevLy += line.webB2cPrevLy ?? 0;
   }
   pushUnique(block.zonas, line.zona);
   pushUnique(block.areas, line.area);
@@ -366,6 +403,8 @@ function mergeTrackingLines(lines: TrackingLine[]): TrackingLine[] {
     existing.freeLy += collapsed.freeLy;
     existing.gen += collapsed.gen;
     existing.genLy += collapsed.genLy;
+    existing.webB2cPrev += collapsed.webB2cPrev ?? 0;
+    existing.webB2cPrevLy += collapsed.webB2cPrevLy ?? 0;
   });
 
   return Array.from(grouped.values());
@@ -475,6 +514,8 @@ function parseTrackingData(rows: unknown[][]): TrackingLine[] {
         freeLy: 0,
         gen: 0,
         genLy: 0,
+        webB2cPrev: 0,
+        webB2cPrevLy: 0,
       };
     })
     .filter((line) => (
@@ -562,6 +603,7 @@ function KpiShareBar({
   baseLy,
   baseLabel,
   invert = false,
+  accent,
 }: {
   label: string;
   amount: number;
@@ -570,6 +612,7 @@ function KpiShareBar({
   baseLy: number;
   baseLabel: string;
   invert?: boolean;
+  accent: 'free' | 'gen';
 }) {
   const pct = ratioPct(amount, base);
   const pctLy = ratioPct(amountLy, baseLy);
@@ -579,11 +622,13 @@ function KpiShareBar({
   const tone = invert && extra !== null ? -extra : extra;
   const lyTone = invert && lyEuros !== null ? -lyEuros : lyEuros;
   const fill = pct === null ? 0 : Math.max(4, Math.min(100, Math.abs(pct) * 4));
+  const color = accent === 'free' ? 'var(--kpi-free)' : 'var(--kpi-gen)';
+  const soft = accent === 'free' ? 'var(--kpi-free-soft)' : 'var(--kpi-gen-soft)';
 
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 border-l-2 pl-2" style={{ borderColor: color }}>
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
+        <p className="text-[11px] font-medium" style={{ color }}>{label}</p>
         <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
           {formatCurrency(amount)}
           <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} {baseLabel}</span>
@@ -591,8 +636,8 @@ function KpiShareBar({
         <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
           {extra === null ? '—' : `${formatSignedCurrency(extra)} · ${formatPp(deltaPp)} vs % LY`}
         </p>
-        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-          <div className={`h-full rounded-full ${barClass(tone)}`} style={{ width: `${fill}%` }} />
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full" style={{ background: soft }}>
+          <div className="h-full rounded-full" style={{ width: `${fill}%`, background: color }} />
         </div>
       </div>
       <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
@@ -619,9 +664,9 @@ function KpiDebtBar({
   const tone = pct === null ? null : -pct;
 
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 border-l-2 border-[var(--kpi-debt)] pl-2">
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-medium text-[var(--text-secondary)]">Deuda</p>
+        <p className="text-[11px] font-medium text-[var(--kpi-debt)]">Deuda</p>
         <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
           {formatCurrency(amount)}
           <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} fact</span>
@@ -629,8 +674,8 @@ function KpiDebtBar({
         <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
           {formatCurrency(vencida)} vencida · {formatAbsPercent(pctVencida)}
         </p>
-        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-          <div className={`h-full rounded-full ${barClass(tone)}`} style={{ width: `${fill}%` }} />
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--kpi-debt-soft)]">
+          <div className="h-full rounded-full bg-[var(--kpi-debt)]" style={{ width: `${fill}%` }} />
         </div>
       </div>
       <div className="w-[58px] shrink-0 border-l border-[var(--border)] pl-2 text-right">
@@ -645,12 +690,21 @@ function TreeCard({
   selected,
   onClick,
   eyebrow,
+  visibleKpis,
 }: {
   block: MetricBlock;
   selected?: boolean;
   onClick?: () => void;
   eyebrow?: string;
+  visibleKpis: TreeKpiId[];
 }) {
+  const show = (id: TreeKpiId) => visibleKpis.includes(id);
+  const firstBar = (['gm', 'facturacion', 'margin'] as const).find((id) => show(id));
+  const showFrees = show('frees') && showsShareKpis(block) && (block.free !== 0 || block.freeLy !== 0);
+  const showGen = show('generados') && showsShareKpis(block) && (block.gen !== 0 || block.genLy !== 0);
+  const showDebt = show('deuda') && block.deuda !== 0;
+  const hasKpi = show('gm') || show('facturacion') || show('margin') || showFrees || showGen || showDebt;
+
   return (
     <button
       type="button"
@@ -664,16 +718,23 @@ function TreeCard({
       {eyebrow && <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{eyebrow}</p>}
       <p className={`font-display text-sm font-semibold ${eyebrow ? 'mt-1' : ''}`}>{block.label}</p>
       <div className="mt-3 space-y-3">
-        <KpiBar label="Gross margin" actual={block.gm} budget={block.gmBudget} ly={block.gmLy} showLyLabel />
-        <KpiBar label="Facturación" actual={block.facturacion} budget={block.budget} ly={block.facturacionLy} />
-        <KpiBar
-          label="% margen"
-          actual={ratioPct(block.gm, block.facturacion)}
-          budget={ratioPct(block.gmBudget, block.budget)}
-          ly={ratioPct(block.gmLy, block.facturacionLy)}
-          kind="margin"
-        />
-        {(block.free !== 0 || block.freeLy !== 0) && (
+        {show('gm') && (
+          <KpiBar label="Gross margin" actual={block.gm} budget={block.gmBudget} ly={block.gmLy} showLyLabel={firstBar === 'gm'} />
+        )}
+        {show('facturacion') && (
+          <KpiBar label="Facturación" actual={block.facturacion} budget={block.budget} ly={block.facturacionLy} showLyLabel={firstBar === 'facturacion'} />
+        )}
+        {show('margin') && (
+          <KpiBar
+            label="% margen"
+            actual={ratioPct(block.gm, block.facturacion)}
+            budget={ratioPct(block.gmBudget, block.budget)}
+            ly={ratioPct(block.gmLy, block.facturacionLy)}
+            kind="margin"
+            showLyLabel={firstBar === 'margin'}
+          />
+        )}
+        {showFrees && (
           <KpiShareBar
             label="Frees"
             amount={-block.free}
@@ -682,21 +743,26 @@ function TreeCard({
             baseLy={block.facturacionLy - block.freeLy}
             baseLabel="bruta"
             invert
+            accent="free"
           />
         )}
-        {(block.gen !== 0 || block.genLy !== 0) && (
+        {showGen && (
           <KpiShareBar
             label="Generados web"
             amount={-block.gen}
             amountLy={-block.genLy}
-            base={block.webB2c}
-            baseLy={block.webB2cLy}
-            baseLabel="B2C"
+            base={block.webB2cPrev}
+            baseLy={block.webB2cPrevLy}
+            baseLabel="B2C −1"
             invert
+            accent="gen"
           />
         )}
-        {block.deuda !== 0 && (
+        {showDebt && (
           <KpiDebtBar amount={block.deuda} vencida={block.deudaVencida} base={block.facturacion} />
+        )}
+        {!hasKpi && (
+          <p className="text-[11px] text-[var(--text-muted)]">Sin KPI en esta caja con el filtro actual.</p>
         )}
       </div>
     </button>
@@ -804,7 +870,15 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [selectedSubresponsable, setSelectedSubresponsable] = useState<string | null>(null);
   const [selectedExtra, setSelectedExtra] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: TableSortKey; direction: SortDirection }>({ key: 'diffFact', direction: 'desc' });
+  const [treeKpis, setTreeKpis] = useState<TreeKpiId[]>(() => {
+    if (typeof window === 'undefined') return [...ALL_TREE_KPIS];
+    return parseTreeKpis(window.localStorage.getItem(TREE_KPI_STORAGE));
+  });
   const treeScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    window.localStorage.setItem(TREE_KPI_STORAGE, JSON.stringify(treeKpis));
+  }, [treeKpis]);
 
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
@@ -1102,6 +1176,19 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     setSort({ key: mode === 'monthly' ? 'month' : 'diffFact', direction: mode === 'monthly' ? 'asc' : 'desc' });
   };
 
+  const toggleTreeKpi = (id: TreeKpiId) => {
+    setTreeKpis((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        if (next.size === 1) return current;
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return ALL_TREE_KPIS.filter((kpi) => next.has(kpi));
+    });
+  };
+
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
       <div className="flex items-center justify-between gap-4">
@@ -1195,7 +1282,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               type="button"
               onClick={() => switchView('frees')}
               className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                viewMode === 'frees' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+                viewMode === 'frees' ? 'bg-white text-[var(--kpi-free)] shadow-sm' : 'text-[var(--text-secondary)]'
               }`}
             >
               Frees
@@ -1204,7 +1291,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               type="button"
               onClick={() => switchView('generados')}
               className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                viewMode === 'generados' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+                viewMode === 'generados' ? 'bg-white text-[var(--kpi-gen)] shadow-sm' : 'text-[var(--text-secondary)]'
               }`}
             >
               Generados
@@ -1213,7 +1300,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
               type="button"
               onClick={() => switchView('deuda')}
               className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                viewMode === 'deuda' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+                viewMode === 'deuda' ? 'bg-white text-[var(--kpi-debt)] shadow-sm' : 'text-[var(--text-secondary)]'
               }`}
             >
               Deuda
@@ -1341,12 +1428,45 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       {activeHasData && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. GM y facturación vs budget. Frees vs facturación bruta y LY. Generados vs Web B2C del mismo tramo. Deuda vs facturación. Pincha para bajar.</p>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <p className="text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. Pincha para bajar.</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <p className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">KPIs</p>
+                {TREE_KPIS.map((kpi) => {
+                  const active = treeKpis.includes(kpi.id);
+                  return (
+                    <button
+                      key={kpi.id}
+                      type="button"
+                      onClick={() => toggleTreeKpi(kpi.id)}
+                      className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                        active
+                          ? 'border-transparent bg-white shadow-sm'
+                          : 'border-[var(--border)] bg-transparent text-[var(--text-muted)]'
+                      }`}
+                      style={active && kpi.accent ? { color: kpi.accent } : active ? { color: 'var(--text-primary)' } : undefined}
+                    >
+                      {kpi.label}
+                    </button>
+                  );
+                })}
+                {treeKpis.length < ALL_TREE_KPIS.length && (
+                  <button
+                    type="button"
+                    onClick={() => setTreeKpis([...ALL_TREE_KPIS])}
+                    className="rounded-full px-2 py-1 text-[11px] font-medium text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text-primary)] hover:underline"
+                  >
+                    Todos
+                  </button>
+                )}
+              </div>
+            </div>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard
                   block={company}
                   eyebrow={periodLabel}
+                  visibleKpis={treeKpis}
                   selected={viewMode === 'monthly' ? selectedMonth === null && !selectedArea : !selectedArea}
                   onClick={() => {
                     setSelectedMonth(null);
@@ -1369,6 +1489,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                           <TreeCard
                             key={node.key}
                             block={node}
+                            visibleKpis={treeKpis}
                             selected={selectedMonth === monthIndex}
                             onClick={() => {
                               setSelectedMonth(monthIndex);
@@ -1394,6 +1515,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                       <TreeCard
                         key={node.key}
                         block={node}
+                        visibleKpis={treeKpis}
                         selected={selectedArea === node.key}
                         onClick={() => {
                           setSelectedArea(node.key);
@@ -1416,6 +1538,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                         <TreeCard
                           key={node.key}
                           block={node}
+                          visibleKpis={treeKpis}
                           selected={selectedResponsable === node.key}
                           onClick={() => {
                             setSelectedResponsable(node.key);
@@ -1441,6 +1564,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                         <TreeCard
                           key={node.key}
                           block={node}
+                          visibleKpis={treeKpis}
                           selected={selectedSubresponsable === node.key}
                           onClick={() => {
                             setSelectedSubresponsable(node.key);
@@ -1462,6 +1586,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
                         <TreeCard
                           key={node.key}
                           block={node}
+                          visibleKpis={treeKpis}
                           selected={selectedExtra === node.key}
                           onClick={() => setSelectedExtra(selectedExtra === node.key ? null : node.key)}
                         />

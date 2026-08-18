@@ -447,6 +447,11 @@ export function freesFromOperation(lines: OperationLine[]): FreeOpLine[] {
   return Array.from(grouped.values()).filter((line) => line.neta !== 0 || line.free !== 0);
 }
 
+function prevPeriod(fyStart: number, monthIndex: number): { fyStart: number; monthIndex: number } {
+  if (monthIndex === 1) return { fyStart: fyStart - 1, monthIndex: 12 };
+  return { fyStart, monthIndex: monthIndex - 1 };
+}
+
 export function generadosFromOperation(lines: OperationLine[]): GenOpLine[] {
   const b2c = new Map<string, number>();
   lines.forEach((line) => {
@@ -458,6 +463,7 @@ export function generadosFromOperation(lines: OperationLine[]): GenOpLine[] {
 
   const grouped = new Map<string, GenOpLine>();
   lines.forEach((line) => {
+    if (findArea({ vertical: line.vertical, medio: line.medio }) !== 'Grassroots') return;
     if (line.gen === 0) return;
     const zona = line.zona || 'Sin zona';
     const key = `${line.fyStart}|${line.monthIndex}|${normalizeText(zona)}`;
@@ -477,11 +483,12 @@ export function generadosFromOperation(lines: OperationLine[]): GenOpLine[] {
   });
 
   return Array.from(grouped.values()).map((line) => {
-    const b2cSame = b2c.get(`${line.fyStart}|${line.monthIndex}|${normalizeText(line.zona)}`) ?? 0;
+    const prev = prevPeriod(line.fyStart, line.monthIndex);
+    const b2cPrev = b2c.get(`${prev.fyStart}|${prev.monthIndex}|${normalizeText(line.zona)}`) ?? 0;
     return {
       ...line,
-      b2cPrev: b2cSame,
-      pctB2c: b2cSame === 0 ? null : (line.genCost / b2cSame) * 100,
+      b2cPrev,
+      pctB2c: b2cPrev === 0 ? null : (line.genCost / b2cPrev) * 100,
     };
   });
 }
@@ -508,6 +515,8 @@ export interface TrackingBuildLine {
   freeLy: number;
   gen: number;
   genLy: number;
+  webB2cPrev: number;
+  webB2cPrevLy: number;
 }
 
 function collapseForTracking(line: TrackingBuildLine): TrackingBuildLine {
@@ -586,6 +595,8 @@ export function buildTrackingLines(
       freeLy: 0,
       gen: amounts.gen ?? 0,
       genLy: 0,
+      webB2cPrev: 0,
+      webB2cPrevLy: 0,
     });
   };
 
@@ -629,21 +640,51 @@ export function buildTrackingLines(
     lyByMatch.set(lyMatchKey(line), line);
   });
 
+  const b2cByZonaMonth = new Map<string, number>();
+  operation.forEach((line) => {
+    if (normalizeText(line.medio) !== 'equipaciones web b2c') return;
+    const zona = line.zona || 'Sin zona';
+    const key = `${line.fyStart}|${line.monthIndex}|${normalizeText(zona)}`;
+    b2cByZonaMonth.set(key, (b2cByZonaMonth.get(key) ?? 0) + line.facturacion);
+  });
+
+  const assignedPrev = new Set<string>();
   const lines = Array.from(tyMap.values())
     .filter((line) => (
       line.facturacion !== 0 || line.budget !== 0 || line.gm !== 0 || line.gmBudget !== 0
       || line.free !== 0 || line.gen !== 0
     ))
     .map((line) => {
+      const commercial = normalizeText(line.area) === 'b2b' || normalizeText(line.area) === 'pro clubs';
       const ly = lyByMatch.get(lyMatchKey(line));
       return {
         ...line,
         facturacionLy: ly?.facturacion ?? 0,
         gmLy: ly?.gm ?? 0,
-        freeLy: ly?.free ?? 0,
-        genLy: ly?.gen ?? 0,
+        free: commercial ? 0 : line.free,
+        freeLy: commercial ? 0 : (ly?.free ?? 0),
+        gen: commercial ? 0 : line.gen,
+        genLy: commercial ? 0 : (ly?.gen ?? 0),
+        webB2cPrev: 0,
+        webB2cPrevLy: 0,
       };
     });
+
+  lines.forEach((line) => {
+    if (line.monthIndex === null) return;
+    if (line.gen === 0 && line.genLy === 0) return;
+    const area = normalizeText(line.area);
+    if (area === 'b2b' || area === 'pro clubs') return;
+    const zona = line.zona || 'Sin zona';
+    const key = `${line.fyStart}|${line.monthIndex}|${normalizeText(zona)}`;
+    if (assignedPrev.has(key)) return;
+    assignedPrev.add(key);
+    const prevTy = prevPeriod(line.fyStart, line.monthIndex);
+    const prevLy = prevPeriod(line.fyStart - 1, line.monthIndex);
+    const zonaKey = normalizeText(zona);
+    line.webB2cPrev = b2cByZonaMonth.get(`${prevTy.fyStart}|${prevTy.monthIndex}|${zonaKey}`) ?? 0;
+    line.webB2cPrevLy = b2cByZonaMonth.get(`${prevLy.fyStart}|${prevLy.monthIndex}|${zonaKey}`) ?? 0;
+  });
 
   return { lines, currentFy: currentFyStart(lines) };
 }
