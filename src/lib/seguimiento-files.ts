@@ -294,6 +294,89 @@ export function parseBudgetRows(rows: unknown[][]): BudgetLine[] {
   return parsed;
 }
 
+export function pickExtraErpSheet(sheets: Record<string, unknown[][]>): unknown[][] {
+  const names = Object.keys(sheets);
+  const preferred = names.find((name) => normalizeText(name) === 'facturacion')
+    || names.find((name) => {
+      const header = normalizeText(name);
+      return header.includes('facturacion') && !header.includes('ly') && !header.includes('conversion');
+    })
+    || names[0];
+  if (!preferred) throw new Error('El Excel extra no tiene hojas.');
+  return sheets[preferred];
+}
+
+export function parseExtraErpRows(rows: unknown[][]): OperationLine[] {
+  if (!rows.length) throw new Error('El archivo extra está vacío.');
+  const headerIndex = headerIndexOf(rows, (header) => header === 'importe' || header === 'vertical');
+  if (headerIndex < 0) throw new Error('No reconozco TP/Ekin. ¿Trae Año, Mes, Vertical, Medio, Zona e Importe?');
+
+  const headers = (rows[headerIndex] || []).map(normalizeHeader);
+  const colMap = {
+    year: findHeader(headers, ['ano', 'año', 'year']),
+    month: findHeader(headers, ['mes', 'month']),
+    vertical: findHeader(headers, ['vertical']),
+    medio: findHeader(headers, ['medio de venta', 'medio']),
+    region: findHeader(headers, ['region']),
+    zona: findHeader(headers, ['zona']),
+    facturacion: headers.findIndex((header) => header === 'importe' || (header.includes('importe') && !header.includes('ly') && !header.includes('a/a'))),
+    facturacionLy: headers.findIndex((header) => header.includes('importe') && (header.includes('ly') || header.includes('a/a'))),
+    gm: headers.findIndex((header) => (
+      (header === 'margen bruto' || header === 'gm' || (header.includes('margen') && header.includes('bruto')))
+      && !header.includes('a/a') && !header.includes('ly')
+    )),
+    gmLy: headers.findIndex((header) => (
+      (header.includes('margen') || header.includes('gm')) && (header.includes('a/a') || header.includes('ly'))
+    )),
+  };
+  if (colMap.month < 0 || colMap.vertical < 0 || colMap.medio < 0 || colMap.facturacion < 0) {
+    throw new Error('Faltan columnas en el extra: Mes, Vertical, Medio o Importe.');
+  }
+
+  const lines: OperationLine[] = [];
+  rows.slice(headerIndex + 1).forEach((row) => {
+    if (!row.some((cell) => cellPresent(cell))) return;
+    const month = parseFiscalMonth(row[colMap.month]);
+    const year = colMap.year >= 0 ? parseCalendarYear(row[colMap.year]) : parseCalendarYear(row[colMap.month]);
+    if (!month || year === null) return;
+    const vertical = String(row[colMap.vertical] ?? '').trim();
+    if (!vertical) return;
+    const base = {
+      monthIndex: month.index,
+      monthLabel: month.label,
+      vertical,
+      medio: String(row[colMap.medio] ?? '').trim(),
+      region: colMap.region >= 0 ? String(row[colMap.region] ?? '').trim() : '',
+      zona: colMap.zona >= 0 ? String(row[colMap.zona] ?? '').trim() : '',
+      free: 0,
+      gen: 0,
+    };
+    const facturacion = parseAmount(row[colMap.facturacion]);
+    const gm = colMap.gm >= 0 ? parseAmount(row[colMap.gm]) : 0;
+    if (facturacion !== 0 || gm !== 0) {
+      lines.push({
+        ...base,
+        fyStart: fyStartFrom(year, month.index),
+        facturacion,
+        gm,
+      });
+    }
+    const facturacionLy = colMap.facturacionLy >= 0 ? parseAmount(row[colMap.facturacionLy]) : 0;
+    const gmLy = colMap.gmLy >= 0 ? parseAmount(row[colMap.gmLy]) : 0;
+    if (facturacionLy !== 0 || gmLy !== 0) {
+      lines.push({
+        ...base,
+        fyStart: fyStartFrom(year - 1, month.index),
+        facturacion: facturacionLy,
+        gm: gmLy,
+      });
+    }
+  });
+
+  if (lines.length === 0) throw new Error('El extra no tiene líneas con importe.');
+  return lines;
+}
+
 export function currentFyStart(lines: { fyStart: number }[]): number | null {
   if (lines.length === 0) return null;
   return Math.max(...lines.map((line) => line.fyStart));

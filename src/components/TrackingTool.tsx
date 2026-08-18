@@ -13,7 +13,9 @@ import {
   generadosFromOperation,
   grassrootsBudgetFrom,
   parseBudgetRows,
+  parseExtraErpRows,
   parseOperationRows,
+  pickExtraErpSheet,
   rangeFromFiscalMonths,
   shiftRange,
   snapshotFromFileName,
@@ -778,6 +780,8 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [debtSnapshot, setDebtSnapshot] = useState<Date | null>(null);
   const [debtName, setDebtName] = useState<string | null>(null);
   const [debtError, setDebtError] = useState<string | null>(null);
+  const [extraFiles, setExtraFiles] = useState<{ name: string; lines: OperationLine[] }[]>([]);
+  const [extraError, setExtraError] = useState<string | null>(null);
   const [fromMonth, setFromMonth] = useState(DEFAULT_FROM_MONTH);
   const [toMonth, setToMonth] = useState(DEFAULT_TO_MONTH);
   const [fyStart, setFyStart] = useState(DEFAULT_FY);
@@ -849,22 +853,38 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     }
   };
 
+  const handleExtraLoaded = (sheets: Record<string, unknown[][]>, name: string) => {
+    try {
+      const parsed = parseExtraErpRows(pickExtraErpSheet(sheets));
+      setExtraFiles((current) => {
+        const rest = current.filter((file) => file.name !== name);
+        return [...rest, { name, lines: parsed }];
+      });
+      setExtraError(null);
+    } catch (err) {
+      setExtraError(err instanceof Error ? err.message : `No he podido leer ${name}.`);
+    }
+  };
+
   const dateRange = useMemo(
     () => rangeFromFiscalMonths(fyStart, fromMonth, toMonth),
     [fromMonth, fyStart, toMonth],
   );
   const lyRange = useMemo(() => shiftRange(dateRange, -1), [dateRange]);
 
-  const built = useMemo(() => buildTrackingLines(operation, budgetRows, dateRange), [budgetRows, dateRange, operation]);
+  const extraLines = useMemo(() => extraFiles.flatMap((file) => file.lines), [extraFiles]);
+  const operationAll = useMemo(() => [...operation, ...extraLines], [extraLines, operation]);
+
+  const built = useMemo(() => buildTrackingLines(operationAll, budgetRows, dateRange), [budgetRows, dateRange, operationAll]);
   const lines = built.lines as TrackingLine[];
   const freeLines = useMemo(() => {
-    const all = freesFromOperation(operation);
+    const all = freesFromOperation(operationAll);
     return [...filterByRange(all, dateRange), ...filterByRange(all, lyRange)];
-  }, [dateRange, lyRange, operation]);
+  }, [dateRange, lyRange, operationAll]);
   const genLines = useMemo(() => {
-    const all = generadosFromOperation(operation);
+    const all = generadosFromOperation(operationAll);
     return [...filterByRange(all, dateRange), ...filterByRange(all, lyRange)];
-  }, [dateRange, lyRange, operation]);
+  }, [dateRange, lyRange, operationAll]);
   const grassrootsBudget = useMemo(() => {
     if (!budgetName || budgetRows.length === 0) return null;
     try {
@@ -1190,7 +1210,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         </div>
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-3">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="tracking-operation-input"
@@ -1201,7 +1221,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
           />
           {operationName && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              {operationName} · {filterByRange(operation, dateRange).length.toLocaleString('de-DE')} líneas FY {fyLabel(fyStart)} · {ytdLines.length.toLocaleString('de-DE')} agrupadas
+              {operationName} · {filterByRange(operationAll, dateRange).length.toLocaleString('de-DE')} líneas FY {fyLabel(fyStart)} · {ytdLines.length.toLocaleString('de-DE')} agrupadas
             </p>
           )}
         </div>
@@ -1234,9 +1254,25 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             </p>
           )}
         </div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="tracking-extra-input"
+            label="4. Extra ERP (TP, Ekin…)"
+            hint="Puedes subir varios. Suma Importe e Importe LY a la operación. Budget no se toca."
+            multiple
+            onFileLoaded={() => undefined}
+            onWorkbookLoaded={handleExtraLoaded}
+            keepDropzone
+          />
+          {extraFiles.length > 0 && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {extraFiles.map((file) => file.name).join(' · ')} · {extraLines.length.toLocaleString('de-DE')} líneas
+            </p>
+          )}
+        </div>
       </section>
 
-      {(operationError || budgetError || debtError) && (
+      {(operationError || budgetError || debtError || extraError) && (
         <div className="space-y-2">
           {operationError && (
             <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{operationError}</div>
@@ -1246,6 +1282,9 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
           )}
           {debtError && (
             <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{debtError}</div>
+          )}
+          {extraError && (
+            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{extraError}</div>
           )}
         </div>
       )}
