@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import FreesTrackingView from '@/components/FreesTrackingView';
 import GeneradosWebTrackingView from '@/components/GeneradosWebTrackingView';
+import DeudaTrackingView from '@/components/DeudaTrackingView';
 import { classifyLine, normalizeText } from '@/lib/business-classification';
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
 
@@ -43,7 +44,7 @@ interface MetricBlock {
 }
 
 type SortDirection = 'asc' | 'desc';
-type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados';
+type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda';
 type TableSortKey =
   | 'month'
   | 'vertical'
@@ -629,6 +630,15 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       facturacion: line.facturacion,
     }))
   ), [hasMonths, monthlyLines, ytdLines]);
+  const debtSales = useMemo(() => (
+    (hasMonths ? monthlyLines : ytdLines).map((line) => ({
+      zona: line.zona,
+      area: line.area,
+      medio: line.medio,
+      monthIndex: line.monthIndex,
+      facturacion: line.facturacion,
+    }))
+  ), [hasMonths, monthlyLines, ytdLines]);
   const activeHasData = viewMode === 'ytd' ? ytdLines.length > 0 : hasMonths;
 
   const monthNodes = useMemo(() => {
@@ -806,7 +816,9 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {viewMode === 'generados'
+              {viewMode === 'deuda'
+                ? 'Foto de hoy: cuánto te deben. Lo vencido es el problema. Si ya hay Teamsports, también ves a cuántos días de venta equivale.'
+                : viewMode === 'generados'
                 ? 'Generados web: % sobre Equipaciones Web B2C del mes anterior. Si ya subiste Teamsports, también ves el peso sobre la facturación total de la zona.'
                 : viewMode === 'frees'
                 ? 'Frees de Grassroots en una carga aparte. % free = frees / (facturación neta + frees). Compara el YTD con el mismo tramo del año pasado y proyecta los negativos que quedan.'
@@ -852,6 +864,15 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             >
               Generados
             </button>
+            <button
+              type="button"
+              onClick={() => switchView('deuda')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === 'deuda' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              Deuda
+            </button>
           </div>
         </div>
       </section>
@@ -860,6 +881,8 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <FreesTrackingView />
       ) : viewMode === 'generados' ? (
         <GeneradosWebTrackingView zonaSales={zonaSales} />
+      ) : viewMode === 'deuda' ? (
+        <DeudaTrackingView salesLines={debtSales} />
       ) : (
         <>
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">

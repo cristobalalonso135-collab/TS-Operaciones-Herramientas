@@ -650,8 +650,8 @@ export default function Home() {
         id: 'tracking' as const,
         number: '03',
         title: 'Seguimiento',
-        description: 'Facturación vs budget, margen, frees y generados web.',
-        detail: 'YTD · Meses · Frees · Generados',
+        description: 'Facturación vs budget, margen, frees, generados y deuda.',
+        detail: 'YTD · Meses · Frees · Generados · Deuda',
         tone: 'bg-[var(--success-soft)] text-[var(--success)]',
       },
     ];
