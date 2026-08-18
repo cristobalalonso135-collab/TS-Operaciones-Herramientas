@@ -65,6 +65,8 @@ interface MetricBlock {
   freeLy: number;
   gen: number;
   genLy: number;
+  webB2c: number;
+  webB2cLy: number;
   deuda: number;
   deudaVencida: number;
   zonas: string[];
@@ -274,6 +276,8 @@ function emptyMetrics(key: string, label: string): MetricBlock {
     freeLy: 0,
     gen: 0,
     genLy: 0,
+    webB2c: 0,
+    webB2cLy: 0,
     deuda: 0,
     deudaVencida: 0,
     zonas: [],
@@ -299,6 +303,10 @@ function addLine(block: MetricBlock, line: TrackingLine): void {
   block.freeLy += line.freeLy;
   block.gen += line.gen;
   block.genLy += line.genLy;
+  if (normalizeText(line.medio) === 'equipaciones web b2c') {
+    block.webB2c += line.facturacion;
+    block.webB2cLy += line.facturacionLy;
+  }
   pushUnique(block.zonas, line.zona);
   pushUnique(block.areas, line.area);
   pushUnique(block.medios, line.medio);
@@ -552,6 +560,7 @@ function KpiShareBar({
   amountLy,
   base,
   baseLy,
+  baseLabel,
   invert = false,
 }: {
   label: string;
@@ -559,6 +568,7 @@ function KpiShareBar({
   amountLy: number;
   base: number;
   baseLy: number;
+  baseLabel: string;
   invert?: boolean;
 }) {
   const pct = ratioPct(amount, base);
@@ -576,7 +586,7 @@ function KpiShareBar({
         <p className="text-[11px] font-medium text-[var(--text-secondary)]">{label}</p>
         <p className="mt-0.5 text-[12px] font-semibold tabular-nums leading-tight text-[var(--text-primary)]">
           {formatCurrency(amount)}
-          <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} fact</span>
+          <span className="font-medium text-[var(--text-muted)]"> / {formatAbsPercent(pct)} {baseLabel}</span>
         </p>
         <p className={`text-[11px] font-semibold tabular-nums ${toneClass(tone)}`}>
           {extra === null ? '—' : `${formatSignedCurrency(extra)} · ${formatPp(deltaPp)} vs % LY`}
@@ -668,8 +678,9 @@ function TreeCard({
             label="Frees"
             amount={-block.free}
             amountLy={-block.freeLy}
-            base={block.facturacion}
-            baseLy={block.facturacionLy}
+            base={block.facturacion - block.free}
+            baseLy={block.facturacionLy - block.freeLy}
+            baseLabel="bruta"
             invert
           />
         )}
@@ -678,8 +689,9 @@ function TreeCard({
             label="Generados web"
             amount={-block.gen}
             amountLy={-block.genLy}
-            base={block.facturacion}
-            baseLy={block.facturacionLy}
+            base={block.webB2c}
+            baseLy={block.webB2cLy}
+            baseLabel="B2C"
             invert
           />
         )}
@@ -1329,7 +1341,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
       {activeHasData && (
         <>
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. GM y facturación vs budget. Frees y generados vs % de facturación y vs LY. Deuda vs facturación de la caja. Pincha para bajar.</p>
+            <p className="mb-4 text-xs text-[var(--text-secondary)]">{pathLabel} · {periodLabel}. GM y facturación vs budget. Frees vs facturación bruta y LY. Generados vs Web B2C del mismo tramo. Deuda vs facturación. Pincha para bajar.</p>
             <div ref={treeScrollRef} className="flex items-start gap-2 overflow-x-auto pb-2">
               <TreeColumn title="Compañía">
                 <TreeCard

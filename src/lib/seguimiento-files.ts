@@ -447,11 +447,6 @@ export function freesFromOperation(lines: OperationLine[]): FreeOpLine[] {
   return Array.from(grouped.values()).filter((line) => line.neta !== 0 || line.free !== 0);
 }
 
-function prevPeriod(fyStart: number, monthIndex: number): { fyStart: number; monthIndex: number } {
-  if (monthIndex === 1) return { fyStart: fyStart - 1, monthIndex: 12 };
-  return { fyStart, monthIndex: monthIndex - 1 };
-}
-
 export function generadosFromOperation(lines: OperationLine[]): GenOpLine[] {
   const b2c = new Map<string, number>();
   lines.forEach((line) => {
@@ -482,12 +477,11 @@ export function generadosFromOperation(lines: OperationLine[]): GenOpLine[] {
   });
 
   return Array.from(grouped.values()).map((line) => {
-    const prev = prevPeriod(line.fyStart, line.monthIndex);
-    const b2cPrev = b2c.get(`${prev.fyStart}|${prev.monthIndex}|${normalizeText(line.zona)}`) ?? 0;
+    const b2cSame = b2c.get(`${line.fyStart}|${line.monthIndex}|${normalizeText(line.zona)}`) ?? 0;
     return {
       ...line,
-      b2cPrev,
-      pctB2c: b2cPrev === 0 ? null : (line.genCost / b2cPrev) * 100,
+      b2cPrev: b2cSame,
+      pctB2c: b2cSame === 0 ? null : (line.genCost / b2cSame) * 100,
     };
   });
 }
