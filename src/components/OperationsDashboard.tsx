@@ -252,29 +252,15 @@ export default function OperationsDashboard({
       <section className="relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] px-6 py-7 shadow-sm sm:px-8">
         <div className="pointer-events-none absolute -right-10 -top-16 h-52 w-52 rounded-full bg-[var(--accent-soft)] blur-2xl" />
         <div className="pointer-events-none absolute -bottom-20 left-16 h-40 w-40 rounded-full bg-[var(--success-soft)] blur-2xl" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-2xl">
-            <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
-              <LayoutDashboard className="h-3.5 w-3.5" />
-              Operaciones · FY 26/27
-            </p>
-            <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight sm:text-5xl">Cuadro de mando</h2>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-[var(--text-secondary)]">
-              El 01 mide el plan contra el año pasado. Del 02 al 07 miden el año contra el plan, cada uno con su base. Pincha un recuadro y saltas a Budget o a Seguimiento.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-3 text-center">
-            {[
-              ['Plan', '02 Budget'],
-              ['P&L', '03 YTD'],
-              ['Caja', 'Frees · gen · deuda'],
-            ].map(([label, hint]) => (
-              <div key={label} className="rounded-xl border border-[var(--border)] bg-white/70 px-3 py-3">
-                <p className="font-display text-sm font-semibold">{label}</p>
-                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{hint}</p>
-              </div>
-            ))}
-          </div>
+        <div className="relative max-w-2xl">
+          <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
+            <LayoutDashboard className="h-3.5 w-3.5" />
+            Operaciones · FY 26/27
+          </p>
+          <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight sm:text-5xl">Cuadro de mando</h2>
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-[var(--text-secondary)]">
+            El 01 mide el plan contra el año pasado. Del 02 al 07 miden el año contra el plan, cada uno con su base. Pincha un recuadro y saltas a Budget o a Seguimiento.
+          </p>
         </div>
       </section>
 
