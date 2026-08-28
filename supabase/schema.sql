@@ -89,3 +89,22 @@ SELECT
 FROM budget_uploads u
 LEFT JOIN budget_lines bl ON bl.upload_id = u.id
 GROUP BY u.id;
+
+-- Fotos semanales del cuadro de mando de Seguimiento
+CREATE TABLE IF NOT EXISTS seguimiento_snapshots (
+  week_key TEXT PRIMARY KEY,
+  saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  payload JSONB NOT NULL
+);
+
+ALTER TABLE seguimiento_snapshots ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS seguimiento_snapshots_read ON seguimiento_snapshots;
+DROP POLICY IF EXISTS seguimiento_snapshots_insert ON seguimiento_snapshots;
+DROP POLICY IF EXISTS seguimiento_snapshots_update ON seguimiento_snapshots;
+DROP POLICY IF EXISTS seguimiento_snapshots_delete ON seguimiento_snapshots;
+
+CREATE POLICY seguimiento_snapshots_read ON seguimiento_snapshots FOR SELECT USING (true);
+CREATE POLICY seguimiento_snapshots_insert ON seguimiento_snapshots FOR INSERT WITH CHECK (true);
+CREATE POLICY seguimiento_snapshots_update ON seguimiento_snapshots FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY seguimiento_snapshots_delete ON seguimiento_snapshots FOR DELETE USING (true);

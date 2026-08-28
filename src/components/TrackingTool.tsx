@@ -23,7 +23,25 @@ import {
   type BudgetLine,
   type OperationLine,
 } from '@/lib/seguimiento-files';
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
+import SeguimientoTrendView from '@/components/SeguimientoTrendView';
+import {
+  deleteSnapshotRow,
+  fetchSnapshotsFromDb,
+  isMissingTableError,
+  SNAPSHOT_SETUP_SQL,
+  upsertSnapshotRow,
+} from '@/lib/seguimiento-db';
+import {
+  downloadSnapshotsJson,
+  parseSnapshotBackup,
+  parseSnapshots,
+  SNAPSHOT_STORAGE,
+  upsertSnapshot,
+  weekKeyFromDate,
+  weekLabelFromDate,
+  type TrackingSnapshot,
+} from '@/lib/seguimiento-snapshots';
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Camera, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
 
 interface TrackingToolProps {
   onBack: () => void;
@@ -80,7 +98,7 @@ interface MetricBlock {
 }
 
 type SortDirection = 'asc' | 'desc';
-type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda';
+type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda' | 'tendencia';
 type TreeKpiId = 'gm' | 'facturacion' | 'margin' | 'frees' | 'generados' | 'deuda';
 
 const TREE_KPIS: { id: TreeKpiId; label: string; accent?: string }[] = [
@@ -1042,6 +1060,9 @@ function KpiOverviewPanel({
   hasDebt,
   targets,
   onChangeTarget,
+  onSaveSnapshot,
+  weekSaved,
+  snapshotNote,
 }: {
   block: MetricBlock;
   periodLabel: string;
@@ -1049,6 +1070,9 @@ function KpiOverviewPanel({
   hasDebt: boolean;
   targets: KpiTargets;
   onChangeTarget: (key: keyof KpiTargets, value: number) => void;
+  onSaveSnapshot: () => void;
+  weekSaved: boolean;
+  snapshotNote: string | null;
 }) {
   const gmDelta = vsPct(block.gm, block.gmBudget);
   const gmLy = vsPct(block.gm, block.gmLy);
@@ -1089,11 +1113,23 @@ function KpiOverviewPanel({
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Cuadro general</p>
           <p className="mt-0.5 text-sm font-medium text-[var(--text-primary)]">Teamsports · {periodLabel}</p>
         </div>
-        <p className="max-w-xl text-[11px] leading-snug text-[var(--text-muted)]">
-          Frees y generados: dentro de ±{KPI_BAND_PP.toLocaleString('de-DE', { minimumFractionDigits: 1 })} pp del objetivo (arriba o abajo, igual de mal).
-          Deuda = deuda ÷ facturación de este tramo. El semáforo mira días de cobro (techo {DEBT_TARGET_DAYS}; vencida {DEBT_DUE_TARGET_DAYS}).
-        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <p className="max-w-md text-[11px] leading-snug text-[var(--text-muted)]">
+            Frees y generados: ±{KPI_BAND_PP.toLocaleString('de-DE', { minimumFractionDigits: 1 })} pp. Deuda ÷ neta de este tramo; semáforo en días (techo {DEBT_TARGET_DAYS}; vencida {DEBT_DUE_TARGET_DAYS}).
+          </p>
+          <button
+            type="button"
+            onClick={onSaveSnapshot}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)]"
+          >
+            <Camera className="h-3.5 w-3.5" />
+            {weekSaved ? 'Actualizar foto en la nube' : 'Guardar foto en la nube'}
+          </button>
+        </div>
       </div>
+      {snapshotNote && (
+        <p className="mb-3 text-[11px] font-medium text-[var(--success)]">{snapshotNote}</p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <OverviewCard
           label="Gross margin"
@@ -1372,6 +1408,13 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     if (typeof window === 'undefined') return { ...DEFAULT_KPI_TARGETS };
     return parseKpiTargets(window.localStorage.getItem(KPI_TARGET_STORAGE));
   });
+  const [snapshots, setSnapshots] = useState<TrackingSnapshot[]>(() => {
+    if (typeof window === 'undefined') return [];
+    return parseSnapshots(window.localStorage.getItem(SNAPSHOT_STORAGE));
+  });
+  const [snapshotNote, setSnapshotNote] = useState<string | null>(null);
+  const [snapshotStatus, setSnapshotStatus] = useState<'loading' | 'online' | 'setup' | 'offline'>('loading');
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const treeScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1381,6 +1424,39 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   useEffect(() => {
     window.localStorage.setItem(KPI_TARGET_STORAGE, JSON.stringify(kpiTargets));
   }, [kpiTargets]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SNAPSHOT_STORAGE, JSON.stringify(snapshots));
+  }, [snapshots]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const remote = await fetchSnapshotsFromDb();
+        if (cancelled) return;
+        const local = parseSnapshots(window.localStorage.getItem(SNAPSHOT_STORAGE));
+        if (remote.length === 0 && local.length > 0) {
+          await Promise.all(local.map((row) => upsertSnapshotRow(row)));
+          if (cancelled) return;
+          setSnapshots(local);
+        } else {
+          setSnapshots(remote);
+        }
+        setSnapshotStatus('online');
+        setSnapshotError(null);
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : 'No he podido leer Supabase.';
+        setSnapshotError(message);
+        setSnapshotStatus(isMissingTableError(message) ? 'setup' : 'offline');
+      }
+    };
+    void sync();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
@@ -1543,6 +1619,81 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     ytdLines.forEach((line) => addLine(block, line));
     return applyDebt(block, debtClients);
   }, [debtClients, ytdLines]);
+
+  const currentWeekKey = weekKeyFromDate();
+  const weekSaved = snapshots.some((row) => row.weekKey === currentWeekKey);
+
+  const saveSnapshot = async () => {
+    const now = new Date();
+    const freeAmt = -company.free;
+    const freeBase = company.grassrootsFacturacion - company.free;
+    const snapshot: TrackingSnapshot = {
+      weekKey: weekKeyFromDate(now),
+      savedAt: now.toISOString(),
+      weekLabel: weekLabelFromDate(now),
+      periodLabel,
+      fyStart,
+      fromMonth,
+      toMonth,
+      periodDays,
+      facturacion: company.facturacion,
+      budget: company.budget,
+      facturacionLy: company.facturacionLy,
+      gm: company.gm,
+      gmBudget: company.gmBudget,
+      gmLy: company.gmLy,
+      freePct: ratioPct(freeAmt, freeBase),
+      genPct: ratioPct(-company.gen, company.webB2cPrev),
+      deuda: company.deuda,
+      deudaVencida: company.deudaVencida,
+      debtPct: debtClients.length > 0 ? ratioPct(company.deuda, company.facturacion) : null,
+      debtDuePct: debtClients.length > 0 ? ratioPct(company.deudaVencida, company.facturacion) : null,
+      dso: debtClients.length > 0 ? daysOnBook(company.deuda, company.facturacion, periodDays) : null,
+      dsoDue: debtClients.length > 0 ? daysOnBook(company.deudaVencida, company.facturacion, periodDays) : null,
+      hasDebt: debtClients.length > 0,
+      files: {
+        operation: operationName,
+        budget: budgetName,
+        debt: debtName,
+        extra: extraFiles.map((file) => file.name),
+      },
+    };
+    try {
+      await upsertSnapshotRow(snapshot);
+      setSnapshots((current) => upsertSnapshot(current, snapshot));
+      setSnapshotStatus('online');
+      setSnapshotError(null);
+      setSnapshotNote(`Foto de ${snapshot.weekLabel} guardada en la base de datos.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No he podido guardar en Supabase.';
+      setSnapshotError(message);
+      setSnapshotStatus(isMissingTableError(message) ? 'setup' : 'offline');
+      setSnapshotNote(`No se ha guardado en la nube: ${message}`);
+    }
+  };
+
+  const importSnapshots = async (file: File) => {
+    try {
+      const imported = parseSnapshotBackup(await file.text());
+      await Promise.all(imported.map((row) => upsertSnapshotRow(row)));
+      setSnapshots((current) => imported.reduce((list, row) => upsertSnapshot(list, row), current));
+      setSnapshotStatus('online');
+      setSnapshotNote(`Importadas ${imported.length.toLocaleString('de-DE')} fotos en la base de datos.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No he podido leer ese JSON.';
+      setSnapshotNote(message);
+    }
+  };
+
+  const deleteSnapshot = async (weekKey: string) => {
+    try {
+      await deleteSnapshotRow(weekKey);
+      setSnapshots((current) => current.filter((row) => row.weekKey !== weekKey));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No he podido borrar.';
+      setSnapshotNote(`No se ha borrado en la nube: ${message}`);
+    }
+  };
 
   const areaNodes = useMemo(
     () => groupMetrics(scopedLines, (line) => line.area).map((node) => (
@@ -1859,6 +2010,15 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             >
               Deuda
             </button>
+            <button
+              type="button"
+              onClick={() => switchView('tendencia')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                viewMode === 'tendencia' ? 'bg-white text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              Tendencia
+            </button>
           </div>
         </div>
       </section>
@@ -1942,7 +2102,16 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         </div>
       )}
 
-      {viewMode === 'frees' ? (
+      {viewMode === 'tendencia' ? (
+        <SeguimientoTrendView
+          snapshots={snapshots}
+          cloudStatus={snapshotStatus}
+          cloudError={snapshotError}
+          onDelete={deleteSnapshot}
+          onExport={() => downloadSnapshotsJson(snapshots)}
+          onImport={importSnapshots}
+        />
+      ) : viewMode === 'frees' ? (
         <FreesTrackingView
           hideUploads
           preloadedLines={freeLines}
@@ -1988,6 +2157,9 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             hasDebt={debtClients.length > 0}
             targets={kpiTargets}
             onChangeTarget={(key, value) => setKpiTargets((prev) => ({ ...prev, [key]: value }))}
+            onSaveSnapshot={saveSnapshot}
+            weekSaved={weekSaved}
+            snapshotNote={snapshotNote}
           />
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
