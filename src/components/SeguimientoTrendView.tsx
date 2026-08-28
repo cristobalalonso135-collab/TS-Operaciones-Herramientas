@@ -1,8 +1,7 @@
 'use client';
 
-import { Camera, ChevronRight, Copy, Download, Trash2, TrendingUp, Upload } from 'lucide-react';
-import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { SNAPSHOT_SETUP_SQL } from '@/lib/seguimiento-db';
+import { Camera, ChevronRight, Download, TrendingUp } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   branchAtPath,
   childrenAtPath,
@@ -37,6 +36,12 @@ function formatDays(value: number | null): string {
   return `${value.toLocaleString('de-DE', { maximumFractionDigits: 0 })} d`;
 }
 
+function formatPhotoDate(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+}
+
 function toneClass(value: number | null, invert = false): string {
   if (value === null) return 'text-[var(--text-muted)]';
   const signed = invert ? -value : value;
@@ -56,7 +61,7 @@ function Sparkline({
     .map((value, index) => ({ value, index }))
     .filter((point): point is { value: number; index: number } => point.value !== null && Number.isFinite(point.value));
   if (points.length < 2) {
-    return <p className="h-8 text-[10px] leading-8 text-[var(--text-muted)]">Pocas fotos</p>;
+    return <p className="h-8 text-[10px] leading-8 text-[var(--text-muted)]">Pocos tramos</p>;
   }
   const nums = points.map((point) => point.value);
   const min = Math.min(...nums);
@@ -148,21 +153,11 @@ function TreeColumn({ title, hint, children }: { title: string; hint?: string; c
 
 export default function SeguimientoTrendView({
   snapshots,
-  cloudStatus,
-  cloudError,
-  onDelete,
   onExport,
-  onImport,
 }: {
   snapshots: TrackingSnapshot[];
-  cloudStatus: 'loading' | 'online' | 'setup' | 'offline';
-  cloudError: string | null;
-  onDelete: (weekKey: string) => void;
-  onExport: () => void;
-  onImport: (file: File) => void;
+  onExport?: () => void;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = useState(false);
   const [path, setPath] = useState<string[]>([]);
   const [weekKey, setWeekKey] = useState<string | null>(null);
   const chrono = snapshotsChronological(snapshots);
@@ -261,25 +256,16 @@ export default function SeguimientoTrendView({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Tendencia</p>
-            <h3 className="mt-1 font-display text-lg font-semibold">Fotos semanales</h3>
+            <h3 className="mt-1 font-display text-lg font-semibold">Tramos cerrados</h3>
             <p className="mt-1 max-w-2xl text-[13px] leading-snug text-[var(--text-secondary)]">
-              Pincha el árbol como en YTD. Las curvas de arriba siguen la caja que tengas abierta.
-              {selected ? ` Foto: ${selected.weekLabel}.` : ''}
+              Abril, Abril–Mayo, Abril–Junio… según el CSV. La deuda de cada cierre es la foto más cercana a fin de mes.
+              {selected ? ` Ahora: ${selected.weekLabel}.` : ''}
             </p>
-            {cloudStatus === 'loading' && (
-              <p className="mt-2 text-[12px] text-[var(--text-muted)]">Leyendo las fotos en la nube…</p>
-            )}
-            {cloudStatus === 'online' && (
-              <p className="mt-2 text-[12px] font-medium text-[var(--success)]">Conectado a la base de datos.</p>
-            )}
-            {cloudStatus === 'offline' && (
-              <p className="mt-2 text-[12px] text-[var(--danger)]">No llego a la base de datos{cloudError ? `: ${cloudError}` : '.'}</p>
-            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {snapshots.length > 0 && (
               <label className="text-[11px] font-medium text-[var(--text-secondary)]">
-                Semana
+                Tramo
                 <select
                   value={selected?.weekKey ?? ''}
                   onChange={(event) => {
@@ -294,74 +280,32 @@ export default function SeguimientoTrendView({
                 </select>
               </label>
             )}
-            <button
-              type="button"
-              onClick={onExport}
-              disabled={snapshots.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)] disabled:opacity-40"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Exportar JSON
-            </button>
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)]"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              Importar
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) onImport(file);
-                event.target.value = '';
-              }}
-            />
+            {onExport && (
+              <button
+                type="button"
+                onClick={onExport}
+                disabled={snapshots.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)] disabled:opacity-40"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Exportar JSON
+              </button>
+            )}
           </div>
         </div>
-        {cloudStatus === 'setup' && (
-          <div className="mt-4 rounded-xl border border-[var(--warning)] bg-white p-3">
-            <p className="text-[13px] font-medium text-[var(--text-primary)]">Falta crear la tabla en Supabase (una vez).</p>
-            <p className="mt-1 text-[12px] text-[var(--text-secondary)]">
-              SQL Editor del proyecto → pega esto → Run. Luego recarga. {cloudError ? `(${cloudError})` : ''}
-            </p>
-            <button
-              type="button"
-              onClick={async () => {
-                await navigator.clipboard.writeText(SNAPSHOT_SETUP_SQL);
-                setCopied(true);
-              }}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] px-2.5 py-1.5 text-[11px] font-semibold"
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copied ? 'Copiado' : 'Copiar SQL'}
-            </button>
-            <pre className="mt-2 max-h-40 overflow-auto rounded-md bg-[var(--bg-soft)] p-2 text-[10px] leading-snug text-[var(--text-secondary)]">{SNAPSHOT_SETUP_SQL}</pre>
-          </div>
-        )}
       </div>
 
       {snapshots.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-[var(--border)] bg-white/60 p-8 text-center">
           <TrendingUp className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
-          <p className="mt-3 text-sm font-medium">Todavía no hay fotos.</p>
+          <p className="mt-3 text-sm font-medium">No hay meses cerrados en este tramo.</p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-[var(--text-secondary)]">
-            Sube los archivos, mira el cuadro general y pulsa <span className="font-semibold">Guardar foto en la nube</span>.
+            Sube el CSV de operación con Year-Month. Si quieres deuda en la curva, sube también la foto de cada cierre.
           </p>
         </div>
       ) : (
         <>
           <p className="text-xs text-[var(--text-secondary)]">{pathLabel}. Pincha para bajar.</p>
-          {selected && !hasTree && (
-            <p className="rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-[12px] text-[var(--text-secondary)]">
-              Esta foto solo tiene Teamsports. Vuelve a YTD y pulsa <span className="font-semibold">Actualizar foto en la nube</span> para guardar el desglose.
-            </p>
-          )}
 
           {root && hasTree && (
             <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -453,10 +397,10 @@ export default function SeguimientoTrendView({
                 <p className="mt-1.5 font-display text-xl font-semibold tabular-nums leading-none">{card.value}</p>
                 <p className={`mt-1 text-[12px] font-semibold tabular-nums ${toneClass(card.change, card.invert)}`}>
                   {card.changeKind === 'pct' && card.change !== null
-                    ? `${card.change > 0 ? '+' : ''}${formatPct(card.change)} vs foto anterior`
+                    ? `${card.change > 0 ? '+' : ''}${formatPct(card.change)} vs tramo anterior`
                     : card.changeKind === 'days' && card.change !== null
-                      ? `${card.change > 0 ? '+' : ''}${card.change.toLocaleString('de-DE', { maximumFractionDigits: 0 })} d vs foto anterior`
-                      : `${formatPp(card.change)} vs foto anterior`}
+                      ? `${card.change > 0 ? '+' : ''}${card.change.toLocaleString('de-DE', { maximumFractionDigits: 0 })} d vs tramo anterior`
+                      : `${formatPp(card.change)} vs tramo anterior`}
                 </p>
                 <Sparkline values={card.spark} invert={card.invert} />
               </article>
@@ -468,8 +412,8 @@ export default function SeguimientoTrendView({
               <table className="min-w-full text-left text-[12px]">
                 <thead className="bg-[var(--bg-soft)] text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">
                   <tr>
-                    <th className="px-3 py-2">Semana</th>
                     <th className="px-3 py-2">Tramo</th>
+                    <th className="px-3 py-2">Deuda foto</th>
                     <th className="px-3 py-2 text-right">Facturación</th>
                     <th className="px-3 py-2 text-right">vs budget</th>
                     <th className="px-3 py-2 text-right">GM</th>
@@ -479,7 +423,6 @@ export default function SeguimientoTrendView({
                     <th className="px-3 py-2 text-right">Deuda %</th>
                     <th className="px-3 py-2 text-right">Días</th>
                     <th className="px-3 py-2 text-right">Vencida %</th>
-                    <th className="px-3 py-2" />
                   </tr>
                 </thead>
                 <tbody>
@@ -492,10 +435,21 @@ export default function SeguimientoTrendView({
                         <td className="px-3 py-2 font-medium">
                           {row.weekLabel}
                           <span className="mt-0.5 block text-[10px] font-normal text-[var(--text-muted)]">
-                            {new Date(row.savedAt).toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                            {row.periodLabel}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-[var(--text-secondary)]">{row.periodLabel}</td>
+                        <td className="px-3 py-2 text-[var(--text-secondary)]">
+                          {row.files.debt
+                            ? (
+                              <>
+                                {row.files.debt}
+                                <span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">
+                                  {formatPhotoDate(row.savedAt)}
+                                </span>
+                              </>
+                            )
+                            : '—'}
+                        </td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(branch.facturacion)}</td>
                         <td className={`px-3 py-2 text-right font-mono tabular-nums ${toneClass(vsBg)}`}>{formatPct(vsBg)}</td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(branch.gm)}</td>
@@ -509,16 +463,6 @@ export default function SeguimientoTrendView({
                         <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-debt)' }}>
                           {branch.hasDebt ? formatPct(branch.debtDuePct) : '—'}
                         </td>
-                        <td className="px-3 py-2 text-right">
-                          <button
-                            type="button"
-                            onClick={() => onDelete(row.weekKey)}
-                            className="rounded p-1 text-[var(--text-muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
-                            aria-label={`Borrar ${row.weekLabel}`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </td>
                       </tr>
                     );
                   })}
@@ -531,7 +475,7 @@ export default function SeguimientoTrendView({
 
       <p className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
         <Camera className="h-3.5 w-3.5" />
-        Si subes dos veces la misma semana, se sustituye la foto. El histórico está en Supabase, no en este navegador.
+        El P&L sale del CSV. La deuda no: cada cierre usa la foto más cercana a fin de mes. Si no hay foto de ese cierre, ese tramo va sin deuda.
       </p>
     </section>
   );

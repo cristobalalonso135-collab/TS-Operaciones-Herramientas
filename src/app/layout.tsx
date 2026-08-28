@@ -17,9 +17,18 @@ const outfit = Outfit({
 export const metadata: Metadata = {
   title: 'TS Operaciones Herramientas',
   description: 'Herramientas operativas de Teamsports',
+  manifest: '/site.webmanifest',
   icons: {
-    icon: '/icon.svg?v=gauge',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/favicon-180.png',
   },
+};
+
+export const viewport = {
+  themeColor: '#111827',
 };
 
 export default function RootLayout({
@@ -34,11 +43,21 @@ export default function RootLayout({
           <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
               <svg viewBox="0 0 64 64" className="h-10 w-10" aria-hidden>
-                <rect width="64" height="64" rx="16" fill="#F3F1EC"/>
-                <rect x="6" y="6" width="52" height="52" rx="12" fill="#1F4B7A"/>
-                <circle cx="32" cy="32" r="14.5" fill="none" stroke="#4A73A0" strokeWidth="6"/>
-                <path fill="none" stroke="#F4F1EA" strokeWidth="6" strokeLinecap="round" d="M32 17.5a14.5 14.5 0 1 1-10.25 24.75"/>
-                <circle cx="32" cy="32" r="4.2" fill="#F4F1EA"/>
+                <rect width="64" height="64" rx="14" fill="#111827"/>
+                <circle cx="32" cy="32" r="13.5" fill="#F9FAFB"/>
+                <polygon points="36.40,19.50 35.17,12.50 28.83,12.50 27.60,19.50" fill="#F9FAFB"/>
+                <circle cx="32" cy="12.5" r="3.17" fill="#F9FAFB"/>
+                <polygon points="45.03,29.56 50.47,24.99 47.30,19.51 40.63,21.94" fill="#F9FAFB"/>
+                <circle cx="48.89" cy="22.25" r="3.17" fill="#F9FAFB"/>
+                <polygon points="40.63,42.06 47.30,44.49 50.47,39.01 45.03,34.44" fill="#F9FAFB"/>
+                <circle cx="48.89" cy="41.75" r="3.17" fill="#F9FAFB"/>
+                <polygon points="27.60,44.50 28.83,51.50 35.17,51.50 36.40,44.50" fill="#F9FAFB"/>
+                <circle cx="32" cy="51.5" r="3.17" fill="#F9FAFB"/>
+                <polygon points="18.97,34.44 13.53,39.01 16.70,44.49 23.37,42.06" fill="#F9FAFB"/>
+                <circle cx="15.11" cy="41.75" r="3.17" fill="#F9FAFB"/>
+                <polygon points="23.37,21.94 16.70,19.51 13.53,24.99 18.97,29.56" fill="#F9FAFB"/>
+                <circle cx="15.11" cy="22.25" r="3.17" fill="#F9FAFB"/>
+                <circle cx="32" cy="32" r="5.4" fill="#111827"/>
               </svg>
               <div>
                 <h1 className="font-display text-lg font-semibold leading-tight tracking-tight">

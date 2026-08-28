@@ -25,24 +25,13 @@ import {
 } from '@/lib/seguimiento-files';
 import SeguimientoTrendView from '@/components/SeguimientoTrendView';
 import {
-  deleteSnapshotRow,
-  fetchSnapshotsFromDb,
-  isMissingTableError,
-  SNAPSHOT_SETUP_SQL,
-  upsertSnapshotRow,
-} from '@/lib/seguimiento-db';
-import {
+  compareSnapshots,
   downloadSnapshotsJson,
-  parseSnapshotBackup,
-  parseSnapshots,
-  SNAPSHOT_STORAGE,
-  upsertSnapshot,
-  weekKeyFromDate,
-  weekLabelFromDate,
+  photoKey,
   type SnapshotBranch,
   type TrackingSnapshot,
 } from '@/lib/seguimiento-snapshots';
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Camera, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet, X } from 'lucide-react';
 
 interface TrackingToolProps {
   onBack: () => void;
@@ -695,6 +684,51 @@ function branchFromBlock(
   };
 }
 
+type DebtPhoto = {
+  name: string;
+  clients: DebtClient[];
+  snapshot: Date;
+};
+
+function assignDebtPhotosToCloses(
+  photos: DebtPhoto[],
+  fyStart: number,
+  closedMonths: number[],
+): Map<number, DebtPhoto> {
+  const assigned = new Map<number, DebtPhoto>();
+  if (photos.length === 0 || closedMonths.length === 0) return assigned;
+
+  const closes = closedMonths.map((month) => ({
+    month,
+    end: rangeFromFiscalMonths(fyStart, month, month).end,
+  }));
+
+  const placements = photos.map((photo) => {
+    let best = closes[0];
+    let dist = Math.abs(photo.snapshot.getTime() - best.end.getTime());
+    closes.forEach((close) => {
+      const nextDist = Math.abs(photo.snapshot.getTime() - close.end.getTime());
+      if (nextDist < dist) {
+        best = close;
+        dist = nextDist;
+      }
+    });
+    return { photo, month: best.month, dist };
+  }).sort((a, b) => a.dist - b.dist);
+
+  const used = new Set<string>();
+  placements.forEach((place) => {
+    if (assigned.has(place.month) || used.has(place.photo.name)) return;
+    assigned.set(place.month, place.photo);
+    used.add(place.photo.name);
+  });
+  return assigned;
+}
+
+function formatDebtPhotoDate(value: Date): string {
+  return value.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: '2-digit' });
+}
+
 function buildSnapshotTree(lines: TrackingLine[], debtClients: DebtClient[], periodDays: number): SnapshotBranch {
   const hasDebtFile = debtClients.length > 0;
   const company = emptyMetrics('teamsports', 'Teamsports');
@@ -1134,9 +1168,6 @@ function KpiOverviewPanel({
   hasDebt,
   targets,
   onChangeTarget,
-  onSaveSnapshot,
-  weekSaved,
-  snapshotNote,
 }: {
   block: MetricBlock;
   periodLabel: string;
@@ -1144,9 +1175,6 @@ function KpiOverviewPanel({
   hasDebt: boolean;
   targets: KpiTargets;
   onChangeTarget: (key: keyof KpiTargets, value: number) => void;
-  onSaveSnapshot: () => void;
-  weekSaved: boolean;
-  snapshotNote: string | null;
 }) {
   const gmDelta = vsPct(block.gm, block.gmBudget);
   const gmLy = vsPct(block.gm, block.gmLy);
@@ -1191,19 +1219,8 @@ function KpiOverviewPanel({
           <p className="max-w-md text-[11px] leading-snug text-[var(--text-muted)]">
             Frees y generados: ±{KPI_BAND_PP.toLocaleString('de-DE', { minimumFractionDigits: 1 })} pp. Deuda ÷ neta de este tramo; semáforo en días (techo {DEBT_TARGET_DAYS}; vencida {DEBT_DUE_TARGET_DAYS}).
           </p>
-          <button
-            type="button"
-            onClick={onSaveSnapshot}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:border-[var(--accent)] hover:text-[var(--text-primary)]"
-          >
-            <Camera className="h-3.5 w-3.5" />
-            {weekSaved ? 'Actualizar foto en la nube' : 'Guardar foto en la nube'}
-          </button>
         </div>
       </div>
-      {snapshotNote && (
-        <p className="mb-3 text-[11px] font-medium text-[var(--success)]">{snapshotNote}</p>
-      )}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <OverviewCard
           label="Gross margin"
@@ -1458,9 +1475,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [budgetRows, setBudgetRows] = useState<BudgetLine[]>([]);
   const [budgetName, setBudgetName] = useState<string | null>(null);
   const [budgetError, setBudgetError] = useState<string | null>(null);
-  const [debtClients, setDebtClients] = useState<DebtClient[]>([]);
-  const [debtSnapshot, setDebtSnapshot] = useState<Date | null>(null);
-  const [debtName, setDebtName] = useState<string | null>(null);
+  const [debtFiles, setDebtFiles] = useState<DebtPhoto[]>([]);
   const [debtError, setDebtError] = useState<string | null>(null);
   const [extraFiles, setExtraFiles] = useState<{ name: string; lines: OperationLine[] }[]>([]);
   const [extraError, setExtraError] = useState<string | null>(null);
@@ -1482,13 +1497,6 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     if (typeof window === 'undefined') return { ...DEFAULT_KPI_TARGETS };
     return parseKpiTargets(window.localStorage.getItem(KPI_TARGET_STORAGE));
   });
-  const [snapshots, setSnapshots] = useState<TrackingSnapshot[]>(() => {
-    if (typeof window === 'undefined') return [];
-    return parseSnapshots(window.localStorage.getItem(SNAPSHOT_STORAGE));
-  });
-  const [snapshotNote, setSnapshotNote] = useState<string | null>(null);
-  const [snapshotStatus, setSnapshotStatus] = useState<'loading' | 'online' | 'setup' | 'offline'>('loading');
-  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const treeScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1498,39 +1506,6 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   useEffect(() => {
     window.localStorage.setItem(KPI_TARGET_STORAGE, JSON.stringify(kpiTargets));
   }, [kpiTargets]);
-
-  useEffect(() => {
-    window.localStorage.setItem(SNAPSHOT_STORAGE, JSON.stringify(snapshots));
-  }, [snapshots]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const sync = async () => {
-      try {
-        const remote = await fetchSnapshotsFromDb();
-        if (cancelled) return;
-        const local = parseSnapshots(window.localStorage.getItem(SNAPSHOT_STORAGE));
-        if (remote.length === 0 && local.length > 0) {
-          await Promise.all(local.map((row) => upsertSnapshotRow(row)));
-          if (cancelled) return;
-          setSnapshots(local);
-        } else {
-          setSnapshots(remote);
-        }
-        setSnapshotStatus('online');
-        setSnapshotError(null);
-      } catch (err) {
-        if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'No he podido leer Supabase.';
-        setSnapshotError(message);
-        setSnapshotStatus(isMissingTableError(message) ? 'setup' : 'offline');
-      }
-    };
-    void sync();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const end = treeScrollRef.current?.querySelector('[data-tree-end]');
@@ -1579,14 +1554,15 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const handleDebtLoaded = (sheets: Record<string, unknown[][]>, name: string) => {
     try {
       const parsed = parseDebtData(pickDebtSheet(sheets));
-      setDebtClients(parsed.clients);
-      setDebtSnapshot(parsed.snapshot ?? snapshotFromFileName(name));
-      setDebtName(name);
+      const snapshot = parsed.snapshot ?? snapshotFromFileName(name) ?? new Date();
+      setDebtFiles((current) => {
+        const rest = current.filter((file) => file.name !== name);
+        return [...rest, { name, clients: parsed.clients, snapshot }].sort(
+          (a, b) => a.snapshot.getTime() - b.snapshot.getTime(),
+        );
+      });
       setDebtError(null);
     } catch (err) {
-      setDebtClients([]);
-      setDebtSnapshot(null);
-      setDebtName(null);
       setDebtError(err instanceof Error ? err.message : 'No he podido leer la deuda.');
     }
   };
@@ -1616,6 +1592,13 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
 
   const extraLines = useMemo(() => extraFiles.flatMap((file) => file.lines), [extraFiles]);
   const operationAll = useMemo(() => [...operation, ...extraLines], [extraLines, operation]);
+  const latestDebt = useMemo(() => {
+    if (debtFiles.length === 0) return null;
+    return [...debtFiles].sort((a, b) => b.snapshot.getTime() - a.snapshot.getTime())[0];
+  }, [debtFiles]);
+  const debtClients = latestDebt?.clients ?? [];
+  const debtName = latestDebt?.name ?? null;
+  const debtSnapshot = latestDebt?.snapshot ?? null;
 
   const built = useMemo(() => buildTrackingLines(operationAll, budgetRows, dateRange), [budgetRows, dateRange, operationAll]);
   const lines = built.lines as TrackingLine[];
@@ -1653,6 +1636,74 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const monthlyLines = useMemo(() => lines.filter((line) => line.monthIndex !== null), [lines]);
   const hasMonths = monthlyLines.length > 0;
   const ytdLines = useMemo(() => aggregateYtdLines(lines), [lines]);
+  const closedMonthIndexes = useMemo(() => {
+    const start = Math.min(fromMonth, toMonth);
+    const endCap = Math.max(fromMonth, toMonth);
+    const withActuals = Array.from(new Set(
+      monthlyLines
+        .filter((line) => line.monthIndex !== null && (line.facturacion !== 0 || line.gm !== 0))
+        .map((line) => line.monthIndex as number),
+    )).filter((month) => month >= start && month <= endCap);
+    if (withActuals.length === 0) return [];
+    const lastClosed = Math.max(...withActuals);
+    const months: number[] = [];
+    for (let month = start; month <= lastClosed; month += 1) months.push(month);
+    return months;
+  }, [fromMonth, monthlyLines, toMonth]);
+  const debtByClose = useMemo(
+    () => assignDebtPhotosToCloses(debtFiles, fyStart, closedMonthIndexes),
+    [closedMonthIndexes, debtFiles, fyStart],
+  );
+  const closedSnapshots = useMemo((): TrackingSnapshot[] => {
+    const start = Math.min(fromMonth, toMonth);
+    const startMeta = FISCAL_MONTHS.find((month) => month.index === start);
+    return closedMonthIndexes.map((end) => {
+      const slice = monthlyLines.filter((line) => (
+        line.monthIndex !== null && line.monthIndex >= start && line.monthIndex <= end
+      ));
+      const ytd = aggregateYtdLines(slice);
+      const range = rangeFromFiscalMonths(fyStart, start, end);
+      const days = Math.max(1, Math.round((range.end.getTime() - range.start.getTime()) / 86_400_000));
+      const debt = debtByClose.get(end);
+      const tree = buildSnapshotTree(ytd, debt?.clients ?? [], days);
+      const endMeta = FISCAL_MONTHS.find((month) => month.index === end);
+      const weekLabel = start === end
+        ? (endMeta?.label ?? String(end))
+        : `${startMeta?.label ?? start} → ${endMeta?.label ?? end}`;
+      return {
+        weekKey: photoKey(fyStart, end),
+        savedAt: (debt?.snapshot ?? range.end).toISOString(),
+        weekLabel,
+        periodLabel: `${weekLabel} · FY ${fyLabel(fyStart)}`,
+        fyStart,
+        fromMonth: start,
+        toMonth: end,
+        periodDays: days,
+        facturacion: tree.facturacion,
+        budget: tree.budget,
+        facturacionLy: tree.facturacionLy,
+        gm: tree.gm,
+        gmBudget: tree.gmBudget,
+        gmLy: tree.gmLy,
+        freePct: tree.freePct,
+        genPct: tree.genPct,
+        deuda: tree.deuda,
+        deudaVencida: tree.deudaVencida,
+        debtPct: tree.debtPct,
+        debtDuePct: tree.debtDuePct,
+        dso: tree.dso,
+        dsoDue: tree.dsoDue,
+        hasDebt: tree.hasDebt,
+        files: {
+          operation: operationName,
+          budget: budgetName,
+          debt: debt?.name ?? null,
+          extra: extraFiles.map((file) => file.name),
+        },
+        tree,
+      };
+    }).sort(compareSnapshots);
+  }, [budgetName, closedMonthIndexes, debtByClose, extraFiles, fromMonth, fyStart, monthlyLines, operationName]);
   const zonaSales = useMemo(() => (
     (hasMonths ? monthlyLines : ytdLines).map((line) => ({
       zona: line.zona,
@@ -1693,82 +1744,6 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     ytdLines.forEach((line) => addLine(block, line));
     return applyDebt(block, debtClients);
   }, [debtClients, ytdLines]);
-
-  const currentWeekKey = weekKeyFromDate();
-  const weekSaved = snapshots.some((row) => row.weekKey === currentWeekKey);
-
-  const saveSnapshot = async () => {
-    const now = new Date();
-    const freeAmt = -company.free;
-    const freeBase = company.grassrootsFacturacion - company.free;
-    const snapshot: TrackingSnapshot = {
-      weekKey: weekKeyFromDate(now),
-      savedAt: now.toISOString(),
-      weekLabel: weekLabelFromDate(now),
-      periodLabel,
-      fyStart,
-      fromMonth,
-      toMonth,
-      periodDays,
-      facturacion: company.facturacion,
-      budget: company.budget,
-      facturacionLy: company.facturacionLy,
-      gm: company.gm,
-      gmBudget: company.gmBudget,
-      gmLy: company.gmLy,
-      freePct: ratioPct(freeAmt, freeBase),
-      genPct: ratioPct(-company.gen, company.webB2cPrev),
-      deuda: company.deuda,
-      deudaVencida: company.deudaVencida,
-      debtPct: debtClients.length > 0 ? ratioPct(company.deuda, company.facturacion) : null,
-      debtDuePct: debtClients.length > 0 ? ratioPct(company.deudaVencida, company.facturacion) : null,
-      dso: debtClients.length > 0 ? daysOnBook(company.deuda, company.facturacion, periodDays) : null,
-      dsoDue: debtClients.length > 0 ? daysOnBook(company.deudaVencida, company.facturacion, periodDays) : null,
-      hasDebt: debtClients.length > 0,
-      files: {
-        operation: operationName,
-        budget: budgetName,
-        debt: debtName,
-        extra: extraFiles.map((file) => file.name),
-      },
-      tree: buildSnapshotTree(ytdLines, debtClients, periodDays),
-    };
-    try {
-      await upsertSnapshotRow(snapshot);
-      setSnapshots((current) => upsertSnapshot(current, snapshot));
-      setSnapshotStatus('online');
-      setSnapshotError(null);
-      setSnapshotNote(`Foto de ${snapshot.weekLabel} guardada en la base de datos.`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'No he podido guardar en Supabase.';
-      setSnapshotError(message);
-      setSnapshotStatus(isMissingTableError(message) ? 'setup' : 'offline');
-      setSnapshotNote(`No se ha guardado en la nube: ${message}`);
-    }
-  };
-
-  const importSnapshots = async (file: File) => {
-    try {
-      const imported = parseSnapshotBackup(await file.text());
-      await Promise.all(imported.map((row) => upsertSnapshotRow(row)));
-      setSnapshots((current) => imported.reduce((list, row) => upsertSnapshot(list, row), current));
-      setSnapshotStatus('online');
-      setSnapshotNote(`Importadas ${imported.length.toLocaleString('de-DE')} fotos en la base de datos.`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'No he podido leer ese JSON.';
-      setSnapshotNote(message);
-    }
-  };
-
-  const deleteSnapshot = async (weekKey: string) => {
-    try {
-      await deleteSnapshotRow(weekKey);
-      setSnapshots((current) => current.filter((row) => row.weekKey !== weekKey));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'No he podido borrar.';
-      setSnapshotNote(`No se ha borrado en la nube: ${message}`);
-    }
-  };
 
   const areaNodes = useMemo(
     () => groupMetrics(scopedLines, (line) => line.area).map((node) => (
@@ -2130,16 +2105,42 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
           <FileUpload
             inputId="tracking-debt-input"
-            label="3. Deuda (03 (fecha hoy).xlsx)"
-            hint="Zona, Cliente, Deuda total, Vencida, No vencida"
+            label="3. Deuda (03 fecha.xlsx)"
+            hint="Puedes subir varios. Pon la fecha en el nombre (03 30-04-2026.xlsx). Cada cierre usa la más cercana."
+            multiple
             onFileLoaded={() => undefined}
             onWorkbookLoaded={handleDebtLoaded}
             keepDropzone
           />
-          {debtName && (
-            <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              {debtName} · {debtClients.length.toLocaleString('de-DE')} clientes
-            </p>
+          {debtFiles.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {debtFiles.map((file) => {
+                const closeMonth = closedMonthIndexes.find((month) => debtByClose.get(month)?.name === file.name);
+                const closeLabel = closeMonth
+                  ? FISCAL_MONTHS.find((month) => month.index === closeMonth)?.label
+                  : null;
+                return (
+                  <li key={file.name} className="flex items-start justify-between gap-2 text-xs text-[var(--text-secondary)]">
+                    <span>
+                      {file.name}
+                      <span className="mt-0.5 block text-[11px] text-[var(--text-muted)]">
+                        Foto {formatDebtPhotoDate(file.snapshot)}
+                        {closeLabel ? ` · cierre ${closeLabel}` : ' · sin cierre en este tramo'}
+                        {latestDebt?.name === file.name ? ' · actual YTD' : ''}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDebtFiles((current) => current.filter((row) => row.name !== file.name))}
+                      className="rounded p-0.5 text-[var(--text-muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                      aria-label={`Quitar ${file.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
@@ -2179,12 +2180,8 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
 
       {viewMode === 'tendencia' ? (
         <SeguimientoTrendView
-          snapshots={snapshots}
-          cloudStatus={snapshotStatus}
-          cloudError={snapshotError}
-          onDelete={deleteSnapshot}
-          onExport={() => downloadSnapshotsJson(snapshots)}
-          onImport={importSnapshots}
+          snapshots={closedSnapshots}
+          onExport={() => downloadSnapshotsJson(closedSnapshots)}
         />
       ) : viewMode === 'frees' ? (
         <FreesTrackingView
@@ -2232,9 +2229,6 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
             hasDebt={debtClients.length > 0}
             targets={kpiTargets}
             onChangeTarget={(key, value) => setKpiTargets((prev) => ({ ...prev, [key]: value }))}
-            onSaveSnapshot={saveSnapshot}
-            weekSaved={weekSaved}
-            snapshotNote={snapshotNote}
           />
           <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">

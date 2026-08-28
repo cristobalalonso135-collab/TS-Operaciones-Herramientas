@@ -693,6 +693,11 @@ export function buildTrackingLines(
 export function snapshotFromFileName(name: string): Date | null {
   const iso = name.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  const dotted = name.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (dotted) {
+    const yearRaw = Number(dotted[3]);
+    return new Date(yearRaw < 100 ? 2000 + yearRaw : yearRaw, Number(dotted[2]) - 1, Number(dotted[1]));
+  }
   const euro = name.match(/(\d{1,2})[_-](\d{1,2})[_-](\d{2,4})/);
   if (!euro) return null;
   const yearRaw = Number(euro[3]);

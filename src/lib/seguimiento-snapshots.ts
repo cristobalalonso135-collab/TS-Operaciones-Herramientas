@@ -1,7 +1,10 @@
-import { format, getISOWeek, getISOWeekYear } from 'date-fns';
-import { es } from 'date-fns/locale';
+export function photoKey(fyStart: number, toMonth: number): string {
+  return `${fyStart}-M${String(toMonth).padStart(2, '0')}`;
+}
 
-export const SNAPSHOT_STORAGE = 'seguimiento-weekly-snapshots';
+export function photoLabel(hastaLabel: string, fy: string): string {
+  return `Hasta ${hastaLabel} · FY ${fy}`;
+}
 const MAX_SNAPSHOTS = 104;
 
 export interface SnapshotBranch {
@@ -59,13 +62,7 @@ export interface TrackingSnapshot {
   tree?: SnapshotBranch;
 }
 
-export function weekKeyFromDate(date = new Date()): string {
-  return `${getISOWeekYear(date)}-W${String(getISOWeek(date)).padStart(2, '0')}`;
-}
-
-export function weekLabelFromDate(date = new Date()): string {
-  return `Sem ${getISOWeek(date)} · ${format(date, 'd MMM', { locale: es })}`;
-}
+export const SNAPSHOT_STORAGE = 'seguimiento-monthly-snapshots';
 
 export function vsBudgetPct(actual: number, budget: number): number | null {
   if (budget === 0) return null;
