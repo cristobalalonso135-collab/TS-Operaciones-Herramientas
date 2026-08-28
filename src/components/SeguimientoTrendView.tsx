@@ -1,12 +1,17 @@
 'use client';
 
-import { Camera, Copy, Download, Trash2, TrendingUp, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Camera, ChevronRight, Copy, Download, Trash2, TrendingUp, Upload } from 'lucide-react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { SNAPSHOT_SETUP_SQL } from '@/lib/seguimiento-db';
 import {
+  branchAtPath,
+  childrenAtPath,
+  findBranchExact,
   marginPct,
+  snapshotRoot,
   snapshotsChronological,
   vsBudgetPct,
+  type SnapshotBranch,
   type TrackingSnapshot,
 } from '@/lib/seguimiento-snapshots';
 
@@ -91,6 +96,56 @@ function delta(current: number | null, previous: number | null): number | null {
   return current - previous;
 }
 
+function TrendNodeCard({
+  node,
+  selected,
+  onClick,
+}: {
+  node: SnapshotBranch;
+  selected?: boolean;
+  onClick?: () => void;
+}) {
+  const vsBg = vsBudgetPct(node.facturacion, node.budget);
+  const mg = marginPct(node.gm, node.facturacion);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-2xl border p-3 text-left shadow-sm transition ${
+        selected
+          ? 'border-[var(--accent)] bg-white ring-2 ring-[var(--accent-soft)]'
+          : 'border-[var(--border)] bg-[var(--bg-card)] hover:-translate-y-0.5 hover:border-[var(--border-strong)]'
+      }`}
+    >
+      <p className="font-display text-sm font-semibold">{node.label}</p>
+      <p className="mt-2 text-[13px] font-semibold tabular-nums">{formatCurrency(node.facturacion)}</p>
+      <p className={`text-[11px] font-semibold tabular-nums ${toneClass(vsBg)}`}>{formatPct(vsBg)} vs budget</p>
+      <p className="text-[11px] tabular-nums text-[var(--text-secondary)]">{formatPct(mg)} margen</p>
+      {node.freePct !== null && Math.abs(node.freePct) > 0.05 && (
+        <p className="text-[11px] tabular-nums" style={{ color: 'var(--kpi-free)' }}>{formatPct(node.freePct)} free</p>
+      )}
+      {node.genPct !== null && Math.abs(node.genPct) > 0.05 && (
+        <p className="text-[11px] tabular-nums" style={{ color: 'var(--kpi-gen)' }}>{formatPct(node.genPct)} gen</p>
+      )}
+      {node.hasDebt && (
+        <p className="text-[11px] tabular-nums" style={{ color: 'var(--kpi-debt)' }}>{formatDays(node.dso)} cobro</p>
+      )}
+    </button>
+  );
+}
+
+function TreeColumn({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="w-[220px] shrink-0 space-y-2">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{title}</p>
+        {hint && <p className="text-[10px] text-[var(--text-muted)]">{hint}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function SeguimientoTrendView({
   snapshots,
   cloudStatus,
@@ -108,48 +163,65 @@ export default function SeguimientoTrendView({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
+  const [path, setPath] = useState<string[]>([]);
+  const [weekKey, setWeekKey] = useState<string | null>(null);
   const chrono = snapshotsChronological(snapshots);
-  const newest = snapshots[0] ?? null;
-  const previous = snapshots[1] ?? null;
+  const selected = snapshots.find((row) => row.weekKey === (weekKey ?? snapshots[0]?.weekKey)) ?? snapshots[0] ?? null;
+  const previous = selected ? snapshots[snapshots.findIndex((row) => row.weekKey === selected.weekKey) + 1] ?? null : null;
+  const root = selected ? snapshotRoot(selected) : null;
+  const node = selected ? branchAtPath(selected, path) : null;
+  const hasTree = Boolean(selected?.tree?.children?.length);
 
-  const series = {
-    facturacion: chrono.map((row) => row.facturacion),
-    vsBudget: chrono.map((row) => vsBudgetPct(row.facturacion, row.budget)),
-    margin: chrono.map((row) => marginPct(row.gm, row.facturacion)),
-    free: chrono.map((row) => row.freePct),
-    gen: chrono.map((row) => row.genPct),
-    dso: chrono.map((row) => row.dso),
-  };
+  const series = useMemo(() => {
+    const pick = (read: (branch: SnapshotBranch) => number | null) => chrono.map((row) => {
+      const branch = findBranchExact(snapshotRoot(row), path);
+      return branch ? read(branch) : null;
+    });
+    return {
+      facturacion: pick((branch) => branch.facturacion),
+      vsBudget: pick((branch) => vsBudgetPct(branch.facturacion, branch.budget)),
+      margin: pick((branch) => marginPct(branch.gm, branch.facturacion)),
+      free: pick((branch) => branch.freePct),
+      gen: pick((branch) => branch.genPct),
+      dso: pick((branch) => branch.dso),
+    };
+  }, [chrono, path]);
 
-  const cards = newest ? [
+  const cards = node ? [
     {
       label: 'Facturación',
-      value: formatCurrency(newest.facturacion),
-      change: previous ? vsBudgetPct(newest.facturacion, previous.facturacion) : null,
+      value: formatCurrency(node.facturacion),
+      change: previous ? vsBudgetPct(node.facturacion, branchAtPath(previous, path).facturacion) : null,
       changeKind: 'pct' as const,
       invert: false,
       spark: series.facturacion,
     },
     {
       label: 'vs budget',
-      value: formatPct(vsBudgetPct(newest.facturacion, newest.budget)),
-      change: delta(vsBudgetPct(newest.facturacion, newest.budget), previous ? vsBudgetPct(previous.facturacion, previous.budget) : null),
+      value: formatPct(vsBudgetPct(node.facturacion, node.budget)),
+      change: delta(
+        vsBudgetPct(node.facturacion, node.budget),
+        previous ? vsBudgetPct(branchAtPath(previous, path).facturacion, branchAtPath(previous, path).budget) : null,
+      ),
       changeKind: 'pp' as const,
       invert: false,
       spark: series.vsBudget,
     },
     {
       label: '% margen',
-      value: formatPct(marginPct(newest.gm, newest.facturacion)),
-      change: delta(marginPct(newest.gm, newest.facturacion), previous ? marginPct(previous.gm, previous.facturacion) : null),
+      value: formatPct(marginPct(node.gm, node.facturacion)),
+      change: delta(
+        marginPct(node.gm, node.facturacion),
+        previous ? marginPct(branchAtPath(previous, path).gm, branchAtPath(previous, path).facturacion) : null,
+      ),
       changeKind: 'pp' as const,
       invert: false,
       spark: series.margin,
     },
     {
       label: '% Free',
-      value: formatPct(newest.freePct),
-      change: delta(newest.freePct, previous?.freePct ?? null),
+      value: formatPct(node.freePct),
+      change: delta(node.freePct, previous ? branchAtPath(previous, path).freePct : null),
       changeKind: 'pp' as const,
       invert: true,
       spark: series.free,
@@ -157,8 +229,8 @@ export default function SeguimientoTrendView({
     },
     {
       label: 'Generados',
-      value: formatPct(newest.genPct),
-      change: delta(newest.genPct, previous?.genPct ?? null),
+      value: formatPct(node.genPct),
+      change: delta(node.genPct, previous ? branchAtPath(previous, path).genPct : null),
       changeKind: 'pp' as const,
       invert: true,
       spark: series.gen,
@@ -166,14 +238,22 @@ export default function SeguimientoTrendView({
     },
     {
       label: 'Días de cobro',
-      value: formatDays(newest.dso),
-      change: delta(newest.dso, previous?.dso ?? null),
+      value: formatDays(node.dso),
+      change: delta(node.dso, previous ? branchAtPath(previous, path).dso : null),
       changeKind: 'days' as const,
       invert: true,
       spark: series.dso,
       accent: 'var(--kpi-debt)',
     },
   ] : [];
+
+  const pathLabel = ['Teamsports', ...path.map((key, index) => {
+    if (!selected) return key;
+    return findBranchExact(snapshotRoot(selected), path.slice(0, index + 1))?.label ?? key;
+  })].join(' › ');
+
+  const extraParent = root && path.length >= 3 ? findBranchExact(root, path.slice(0, 3)) : node;
+  const extraTitle = extraParent?.extraKind === 'zona' ? 'Zona' : extraParent?.extraKind === 'vertical' ? 'Vertical' : 'Rama';
 
   return (
     <section className="space-y-4">
@@ -183,8 +263,8 @@ export default function SeguimientoTrendView({
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Tendencia</p>
             <h3 className="mt-1 font-display text-lg font-semibold">Fotos semanales</h3>
             <p className="mt-1 max-w-2xl text-[13px] leading-snug text-[var(--text-secondary)]">
-              Una foto por semana, guardada en la base de datos. La ves igual desde el portátil o desde casa.
-              {newest ? ` Última: ${newest.weekLabel}.` : ''}
+              Pincha el árbol como en YTD. Las curvas de arriba siguen la caja que tengas abierta.
+              {selected ? ` Foto: ${selected.weekLabel}.` : ''}
             </p>
             {cloudStatus === 'loading' && (
               <p className="mt-2 text-[12px] text-[var(--text-muted)]">Leyendo las fotos en la nube…</p>
@@ -196,7 +276,24 @@ export default function SeguimientoTrendView({
               <p className="mt-2 text-[12px] text-[var(--danger)]">No llego a la base de datos{cloudError ? `: ${cloudError}` : '.'}</p>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {snapshots.length > 0 && (
+              <label className="text-[11px] font-medium text-[var(--text-secondary)]">
+                Semana
+                <select
+                  value={selected?.weekKey ?? ''}
+                  onChange={(event) => {
+                    setWeekKey(event.target.value);
+                    setPath([]);
+                  }}
+                  className="mt-1 block rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  {snapshots.map((row) => (
+                    <option key={row.weekKey} value={row.weekKey}>{row.weekLabel}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button
               type="button"
               onClick={onExport}
@@ -255,11 +352,91 @@ export default function SeguimientoTrendView({
           <p className="mt-3 text-sm font-medium">Todavía no hay fotos.</p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-[var(--text-secondary)]">
             Sube los archivos, mira el cuadro general y pulsa <span className="font-semibold">Guardar foto en la nube</span>.
-            La semana que viene, otra. Aquí verás si cobras antes, si el free se va o si el margen aguanta.
           </p>
         </div>
       ) : (
         <>
+          <p className="text-xs text-[var(--text-secondary)]">{pathLabel}. Pincha para bajar.</p>
+          {selected && !hasTree && (
+            <p className="rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-[12px] text-[var(--text-secondary)]">
+              Esta foto solo tiene Teamsports. Vuelve a YTD y pulsa <span className="font-semibold">Actualizar foto en la nube</span> para guardar el desglose.
+            </p>
+          )}
+
+          {root && hasTree && (
+            <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+              <div className="flex items-start gap-2 overflow-x-auto pb-2">
+                <TreeColumn title="Compañía">
+                  <TrendNodeCard
+                    node={root}
+                    selected={path.length === 0}
+                    onClick={() => setPath([])}
+                  />
+                </TreeColumn>
+                {root.children.length > 0 && (
+                  <>
+                    <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+                    <TreeColumn title="Área" hint="Elige una rama">
+                      {root.children.map((area) => (
+                        <TrendNodeCard
+                          key={area.key}
+                          node={area}
+                          selected={path[0] === area.key}
+                          onClick={() => setPath([area.key])}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </>
+                )}
+                {path[0] && childrenAtPath(root, [path[0]]).length > 0 && (
+                  <>
+                    <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+                    <TreeColumn title="Responsable" hint={findBranchExact(root, [path[0]])?.label}>
+                      {childrenAtPath(root, [path[0]]).map((resp) => (
+                        <TrendNodeCard
+                          key={resp.key}
+                          node={resp}
+                          selected={path[1] === resp.key}
+                          onClick={() => setPath([path[0], resp.key])}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </>
+                )}
+                {path[0] && path[1] && childrenAtPath(root, path.slice(0, 2)).length > 0 && (
+                  <>
+                    <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+                    <TreeColumn title="Subresponsable" hint={findBranchExact(root, path.slice(0, 2))?.label}>
+                      {childrenAtPath(root, path.slice(0, 2)).map((sub) => (
+                        <TrendNodeCard
+                          key={sub.key}
+                          node={sub}
+                          selected={path[2] === sub.key}
+                          onClick={() => setPath([path[0], path[1], sub.key])}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </>
+                )}
+                {path.length >= 3 && childrenAtPath(root, path.slice(0, 3)).length > 0 && (
+                  <>
+                    <ChevronRight className="mt-14 h-5 w-5 shrink-0 text-[var(--border-strong)]" />
+                    <TreeColumn title={extraTitle} hint={findBranchExact(root, path.slice(0, 3))?.label}>
+                      {childrenAtPath(root, path.slice(0, 3)).map((extra) => (
+                        <TrendNodeCard
+                          key={extra.key}
+                          node={extra}
+                          selected={path[3] === extra.key}
+                          onClick={() => setPath([path[0], path[1], path[2], extra.key])}
+                        />
+                      ))}
+                    </TreeColumn>
+                  </>
+                )}
+              </div>
+            </section>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {cards.map((card) => (
               <article
@@ -306,10 +483,10 @@ export default function SeguimientoTrendView({
                   </tr>
                 </thead>
                 <tbody>
-                  {snapshots.map((row, index) => {
-                    const prev = snapshots[index + 1];
-                    const vsBg = vsBudgetPct(row.facturacion, row.budget);
-                    const mg = marginPct(row.gm, row.facturacion);
+                  {snapshots.map((row) => {
+                    const branch = findBranchExact(snapshotRoot(row), path) ?? snapshotRoot(row);
+                    const vsBg = vsBudgetPct(branch.facturacion, branch.budget);
+                    const mg = marginPct(branch.gm, branch.facturacion);
                     return (
                       <tr key={row.weekKey} className="border-t border-[var(--border)]">
                         <td className="px-3 py-2 font-medium">
@@ -319,18 +496,18 @@ export default function SeguimientoTrendView({
                           </span>
                         </td>
                         <td className="px-3 py-2 text-[var(--text-secondary)]">{row.periodLabel}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(row.facturacion)}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(branch.facturacion)}</td>
                         <td className={`px-3 py-2 text-right font-mono tabular-nums ${toneClass(vsBg)}`}>{formatPct(vsBg)}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(row.gm)}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(branch.gm)}</td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{formatPct(mg)}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-free)' }}>{formatPct(row.freePct)}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-gen)' }}>{formatPct(row.genPct)}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-debt)' }}>{row.hasDebt ? formatPct(row.debtPct) : '—'}</td>
-                        <td className={`px-3 py-2 text-right font-mono tabular-nums ${toneClass(delta(row.dso, prev?.dso ?? null), true)}`}>
-                          {row.hasDebt ? formatDays(row.dso) : '—'}
+                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-free)' }}>{formatPct(branch.freePct)}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-gen)' }}>{formatPct(branch.genPct)}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-debt)' }}>{branch.hasDebt ? formatPct(branch.debtPct) : '—'}</td>
+                        <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-debt)' }}>
+                          {branch.hasDebt ? formatDays(branch.dso) : '—'}
                         </td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums" style={{ color: 'var(--kpi-debt)' }}>
-                          {row.hasDebt ? formatPct(row.debtDuePct) : '—'}
+                          {branch.hasDebt ? formatPct(branch.debtDuePct) : '—'}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <button

@@ -39,6 +39,7 @@ import {
   upsertSnapshot,
   weekKeyFromDate,
   weekLabelFromDate,
+  type SnapshotBranch,
   type TrackingSnapshot,
 } from '@/lib/seguimiento-snapshots';
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Camera, ChevronRight, Download, FileSpreadsheet } from 'lucide-react';
@@ -659,6 +660,79 @@ function groupMetrics(lines: TrackingLine[], keyFn: (line: TrackingLine) => stri
     if (b.label === 'Pendiente') return -1;
     return b.facturacion - a.facturacion;
   });
+}
+
+function branchFromBlock(
+  block: MetricBlock,
+  periodDays: number,
+  attachDebt: boolean,
+  extraKind: 'zona' | 'vertical' | null = null,
+  children: SnapshotBranch[] = [],
+): SnapshotBranch {
+  const freeAmt = -block.free;
+  const freeBase = block.grassrootsFacturacion - block.free;
+  const hasDebt = attachDebt && (block.deuda !== 0 || block.deudaVencida !== 0);
+  return {
+    key: block.key,
+    label: block.label || 'Pendiente',
+    extraKind,
+    facturacion: block.facturacion,
+    budget: block.budget,
+    facturacionLy: block.facturacionLy,
+    gm: block.gm,
+    gmBudget: block.gmBudget,
+    gmLy: block.gmLy,
+    freePct: ratioPct(freeAmt, freeBase),
+    genPct: ratioPct(-block.gen, block.webB2cPrev),
+    deuda: block.deuda,
+    deudaVencida: block.deudaVencida,
+    debtPct: hasDebt ? ratioPct(block.deuda, block.facturacion) : null,
+    debtDuePct: hasDebt ? ratioPct(block.deudaVencida, block.facturacion) : null,
+    dso: hasDebt ? daysOnBook(block.deuda, block.facturacion, periodDays) : null,
+    dsoDue: hasDebt ? daysOnBook(block.deudaVencida, block.facturacion, periodDays) : null,
+    hasDebt,
+    children,
+  };
+}
+
+function buildSnapshotTree(lines: TrackingLine[], debtClients: DebtClient[], periodDays: number): SnapshotBranch {
+  const hasDebtFile = debtClients.length > 0;
+  const company = emptyMetrics('teamsports', 'Teamsports');
+  lines.forEach((line) => addLine(company, line));
+  const companyNode = hasDebtFile ? applyDebt(company, debtClients) : company;
+
+  const areas = groupMetrics(lines, (line) => line.area).map((areaBlock) => {
+    const areaLines = lines.filter((line) => line.area === areaBlock.key);
+    const areaNode = hasDebtFile ? applyDebt(areaBlock, debtClients) : areaBlock;
+    const responsables = groupMetrics(areaLines, (line) => line.responsable).map((respBlock) => {
+      const respLines = areaLines.filter((line) => line.responsable === respBlock.key);
+      const attachResp = areaBlock.key === 'Grassroots' && !skipsTreeDebt(respBlock.label);
+      const respNode = attachResp && hasDebtFile ? applyDebt(respBlock, debtClients) : respBlock;
+      const subBlocks = groupMetrics(respLines, (line) => line.subresponsable);
+      const needsSub = subBlocks.length > 1 || extraLevelKind(areaBlock.key, subBlocks[0]?.key ?? null) !== null;
+      const subs = needsSub
+        ? subBlocks.map((subBlock) => {
+          const subLines = respLines.filter((line) => line.subresponsable === subBlock.key);
+          const attachSub = attachResp && !skipsTreeDebt(subBlock.label);
+          const subNode = attachSub && hasDebtFile ? applyDebt(subBlock, debtClients) : subBlock;
+          const kind = extraLevelKind(areaBlock.key, subBlock.key);
+          const extras = kind
+            ? (kind === 'zona' ? sortZonaBlocks(groupMetrics(subLines, (line) => extraLevelValue(line, kind))) : groupMetrics(subLines, (line) => extraLevelValue(line, kind)))
+              .map((extraBlock) => branchFromBlock(
+                attachSub && hasDebtFile ? applyDebt(extraBlock, debtClients) : extraBlock,
+                periodDays,
+                attachSub && hasDebtFile,
+              ))
+            : [];
+          return branchFromBlock(subNode, periodDays, attachSub && hasDebtFile, kind, extras);
+        })
+        : [];
+      return branchFromBlock(respNode, periodDays, attachResp && hasDebtFile, null, subs);
+    });
+    return branchFromBlock(areaNode, periodDays, hasDebtFile, null, responsables);
+  });
+
+  return branchFromBlock(companyNode, periodDays, hasDebtFile, null, areas);
 }
 
 function sortZonaBlocks(nodes: MetricBlock[]): MetricBlock[] {
@@ -1657,6 +1731,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
         debt: debtName,
         extra: extraFiles.map((file) => file.name),
       },
+      tree: buildSnapshotTree(ytdLines, debtClients, periodDays),
     };
     try {
       await upsertSnapshotRow(snapshot);

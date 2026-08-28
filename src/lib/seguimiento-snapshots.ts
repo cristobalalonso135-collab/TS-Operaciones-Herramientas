@@ -4,6 +4,28 @@ import { es } from 'date-fns/locale';
 export const SNAPSHOT_STORAGE = 'seguimiento-weekly-snapshots';
 const MAX_SNAPSHOTS = 104;
 
+export interface SnapshotBranch {
+  key: string;
+  label: string;
+  extraKind?: 'zona' | 'vertical' | null;
+  facturacion: number;
+  budget: number;
+  facturacionLy: number;
+  gm: number;
+  gmBudget: number;
+  gmLy: number;
+  freePct: number | null;
+  genPct: number | null;
+  deuda: number;
+  deudaVencida: number;
+  debtPct: number | null;
+  debtDuePct: number | null;
+  dso: number | null;
+  dsoDue: number | null;
+  hasDebt: boolean;
+  children: SnapshotBranch[];
+}
+
 export interface TrackingSnapshot {
   weekKey: string;
   savedAt: string;
@@ -34,6 +56,7 @@ export interface TrackingSnapshot {
     debt: string | null;
     extra: string[];
   };
+  tree?: SnapshotBranch;
 }
 
 export function weekKeyFromDate(date = new Date()): string {
@@ -101,4 +124,50 @@ export function parseSnapshotBackup(raw: string): TrackingSnapshot[] {
     return ((parsed as { snapshots: unknown[] }).snapshots).filter(isSnapshot);
   }
   throw new Error('Ese JSON no trae fotos de seguimiento.');
+}
+
+export function snapshotRoot(snap: TrackingSnapshot): SnapshotBranch {
+  if (snap.tree && typeof snap.tree === 'object' && Array.isArray(snap.tree.children)) return snap.tree;
+  return {
+    key: 'teamsports',
+    label: 'Teamsports',
+    facturacion: snap.facturacion,
+    budget: snap.budget,
+    facturacionLy: snap.facturacionLy,
+    gm: snap.gm,
+    gmBudget: snap.gmBudget,
+    gmLy: snap.gmLy,
+    freePct: snap.freePct,
+    genPct: snap.genPct,
+    deuda: snap.deuda,
+    deudaVencida: snap.deudaVencida,
+    debtPct: snap.debtPct,
+    debtDuePct: snap.debtDuePct,
+    dso: snap.dso,
+    dsoDue: snap.dsoDue,
+    hasDebt: snap.hasDebt,
+    children: [],
+  };
+}
+
+export function findBranch(root: SnapshotBranch, path: string[]): SnapshotBranch {
+  return findBranchExact(root, path) ?? root;
+}
+
+export function findBranchExact(root: SnapshotBranch, path: string[]): SnapshotBranch | null {
+  let current = root;
+  for (const key of path) {
+    const next = current.children.find((child) => child.key === key);
+    if (!next) return null;
+    current = next;
+  }
+  return current;
+}
+
+export function branchAtPath(snap: TrackingSnapshot, path: string[]): SnapshotBranch {
+  return findBranch(snapshotRoot(snap), path);
+}
+
+export function childrenAtPath(root: SnapshotBranch, path: string[]): SnapshotBranch[] {
+  return findBranch(root, path).children;
 }
