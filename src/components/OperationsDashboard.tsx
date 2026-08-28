@@ -1,73 +1,152 @@
 'use client';
 
-import { ArrowLeft, Calculator, CreditCard, Gift, Globe, LayoutDashboard, Percent, Target } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Calculator, CreditCard, Gift, Globe, LayoutDashboard, Percent, Target, Wallet } from 'lucide-react';
+import type { TrackingViewMode } from '@/components/TrackingTool';
 
 interface OperationsDashboardProps {
   onBack: () => void;
+  onOpenBudget: () => void;
+  onOpenTracking: (view: TrackingViewMode) => void;
 }
 
-const KPIS = [
+type KpiSource = 'budget' | 'tracking';
+
+interface DashboardKpi {
+  id: string;
+  number: string;
+  title: string;
+  watch: string;
+  metric: string;
+  source: KpiSource;
+  sourceLabel: string;
+  openLabel: string;
+  trackingView?: TrackingViewMode;
+  accent?: string;
+  icon: typeof Calculator;
+}
+
+const PLAN: DashboardKpi[] = [
   {
-    id: 'budget',
+    id: 'budget-ly',
     number: '01',
-    title: 'Budget cuadrado',
-    watch: 'Que el diario y el general cuadren al céntimo.',
-    metric: 'Estado del budget',
+    title: 'Budget vs facturación LY',
+    watch: 'Este budget contra la facturación del año pasado. Sale del Comparador, no del cuadre al céntimo.',
+    metric: 'vs LY',
+    source: 'budget',
+    sourceLabel: '02 Budget · Comparador',
+    openLabel: 'Abrir Budget',
     icon: Calculator,
   },
+];
+
+const PNL: DashboardKpi[] = [
   {
     id: 'sales',
     number: '02',
     title: 'Facturación vs budget',
-    watch: 'Ritmo YTD frente al budget y al año pasado.',
-    metric: 'Desviación €',
+    watch: 'Ventas del tramo contra el budget del mismo tramo. El vs LY es extra, no la base.',
+    metric: 'vs budget €',
+    source: 'tracking',
+    sourceLabel: '03 Seguimiento · YTD',
+    openLabel: 'Abrir Seguimiento',
+    trackingView: 'ytd',
     icon: Target,
   },
   {
-    id: 'margin',
+    id: 'gm',
     number: '03',
-    title: 'Margen vs budget',
-    watch: 'Gross margin en € y en %. El mix no puede esconderse.',
-    metric: 'pp vs budget',
-    icon: Percent,
+    title: 'Gross margin vs budget',
+    watch: 'GM en euros contra el GM budget del mismo tramo.',
+    metric: 'vs budget €',
+    source: 'tracking',
+    sourceLabel: '03 Seguimiento · YTD',
+    openLabel: 'Abrir Seguimiento',
+    trackingView: 'ytd',
+    icon: Wallet,
   },
   {
-    id: 'frees',
+    id: 'margin',
     number: '04',
-    title: 'Frees',
-    watch: 'Condición de contrato. Retrasada infla facturación y margen.',
-    metric: 'Pendiente de meter',
+    title: '% margen vs budget',
+    watch: 'Margen en puntos. El mix no puede esconderse detrás de los euros.',
+    metric: 'vs budget pp',
+    source: 'tracking',
+    sourceLabel: '03 Seguimiento · YTD',
+    openLabel: 'Abrir Seguimiento',
+    trackingView: 'ytd',
+    icon: Percent,
+  },
+];
+
+const CONDITIONS: DashboardKpi[] = [
+  {
+    id: 'frees',
+    number: '05',
+    title: 'Frees vs facturación grassroots',
+    watch: '% = free / (grassroots + frees). Banda 10% ±1,5 pp. B2B y Pro Clubs no llevan este KPI.',
+    metric: '% sobre bruta',
+    source: 'tracking',
+    sourceLabel: '03 Seguimiento · Frees',
+    openLabel: 'Abrir Frees',
+    trackingView: 'frees',
+    accent: 'var(--kpi-free)',
     icon: Gift,
   },
   {
-    id: 'web',
-    number: '05',
-    title: 'Generados web',
-    watch: 'Packs del mes anterior → coste comercial el mes siguiente.',
-    metric: 'A facturar',
+    id: 'gen',
+    number: '06',
+    title: 'Generados vs Web B2C −1',
+    watch: 'Sobre Equipaciones Web B2C del mes anterior. Banda 12% ±1,5 pp.',
+    metric: '% sobre B2C −1',
+    source: 'tracking',
+    sourceLabel: '03 Seguimiento · Generados',
+    openLabel: 'Abrir Generados',
+    trackingView: 'generados',
+    accent: 'var(--kpi-gen)',
     icon: Globe,
   },
   {
     id: 'debt',
-    number: '06',
-    title: 'Deuda',
-    watch: 'Vender está bien. Cobrar cierra el año.',
-    metric: 'Vencido',
+    number: '07',
+    title: 'Deuda vs facturación',
+    watch: 'Deuda ÷ neta del tramo. Semáforo en días de cobro (techo 55; vencida 10).',
+    metric: 'días de cobro',
+    source: 'tracking',
+    sourceLabel: '03 Seguimiento · Deuda',
+    openLabel: 'Abrir Deuda',
+    trackingView: 'deuda',
+    accent: 'var(--kpi-debt)',
     icon: CreditCard,
+  },
+];
+
+const ALL_KPIS = [...PLAN, ...PNL, ...CONDITIONS];
+
+const GROUPS = [
+  {
+    id: 'plan',
+    label: 'Plan',
+    hint: 'Calidad del budget. Sale del Comparador (pestaña 02).',
+    kpis: PLAN,
+    cols: 'md:grid-cols-1 xl:grid-cols-1',
+  },
+  {
+    id: 'pnl',
+    label: 'P&L',
+    hint: 'El año contra el plan. Sale de Seguimiento YTD.',
+    kpis: PNL,
+    cols: 'md:grid-cols-3',
+  },
+  {
+    id: 'conditions',
+    label: 'Condiciones y caja',
+    hint: 'Frees y generados empujan el P&L. La deuda cierra el año.',
+    kpis: CONDITIONS,
+    cols: 'md:grid-cols-3',
   },
 ] as const;
 
-const ZONAS = ['Norte', 'Centro-Sur', 'Levante', 'Portugal', 'Francia', 'Italia Norte', 'Italia Centro-Sur'];
-
-const FILES = [
-  { name: 'Budget', use: 'Base y cuadre' },
-  { name: 'Teamsports', use: 'Facturación y margen' },
-  { name: 'Frees', use: 'Negativos Grassroots' },
-  { name: 'Generados web', use: 'Condición mes +1' },
-  { name: 'Deuda', use: 'Aging y cobro' },
-];
-
-function EmptyRing() {
+function EmptyRing({ accent }: { accent?: string }) {
   return (
     <svg viewBox="0 0 88 88" className="h-[72px] w-[72px]" aria-hidden>
       <circle cx="44" cy="44" r="34" fill="none" stroke="var(--bg-soft)" strokeWidth="7" />
@@ -76,7 +155,7 @@ function EmptyRing() {
         cy="44"
         r="34"
         fill="none"
-        stroke="var(--border-strong)"
+        stroke={accent || 'var(--border-strong)'}
         strokeWidth="7"
         strokeDasharray="213.6"
         strokeDashoffset="160"
@@ -88,7 +167,72 @@ function EmptyRing() {
   );
 }
 
-export default function OperationsDashboard({ onBack }: OperationsDashboardProps) {
+function KpiCard({
+  kpi,
+  onOpen,
+}: {
+  kpi: DashboardKpi;
+  onOpen: (kpi: DashboardKpi) => void;
+}) {
+  const Icon = kpi.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(kpi)}
+      className="flex min-h-[240px] flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white"
+      style={kpi.accent ? { borderColor: `${kpi.accent}66` } : undefined}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-display text-[11px] font-semibold tracking-[0.18em] text-[var(--text-muted)]">{kpi.number}</p>
+          <h3 className="mt-1 font-display text-lg font-semibold leading-tight">{kpi.title}</h3>
+        </div>
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+          style={{
+            background: kpi.accent ? undefined : 'var(--accent-soft)',
+            color: kpi.accent || 'var(--accent)',
+            ...(kpi.accent ? { backgroundColor: `${kpi.accent}22` } : {}),
+          }}
+        >
+          <Icon className="h-4 w-4" />
+        </div>
+      </div>
+      <div className="mt-5 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">{kpi.metric}</p>
+          <p className="mt-1 font-display text-4xl font-semibold tracking-tight text-[var(--border-strong)]">—</p>
+        </div>
+        <EmptyRing accent={kpi.accent} />
+      </div>
+      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+        <div className="h-full w-[8%] rounded-full" style={{ background: kpi.accent || 'var(--border-strong)' }} />
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-[var(--text-secondary)]">{kpi.watch}</p>
+      <p className="mt-auto flex items-center justify-between gap-2 pt-3 text-[11px] font-medium">
+        <span className="text-[var(--text-muted)]">{kpi.sourceLabel}</span>
+        <span className="inline-flex items-center gap-1 text-[var(--accent)]">
+          {kpi.openLabel}
+          <ArrowRight className="h-3 w-3" />
+        </span>
+      </p>
+    </button>
+  );
+}
+
+export default function OperationsDashboard({
+  onBack,
+  onOpenBudget,
+  onOpenTracking,
+}: OperationsDashboardProps) {
+  const openKpi = (kpi: DashboardKpi) => {
+    if (kpi.source === 'budget') {
+      onOpenBudget();
+      return;
+    }
+    onOpenTracking(kpi.trackingView ?? 'ytd');
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -116,14 +260,14 @@ export default function OperationsDashboard({ onBack }: OperationsDashboardProps
             </p>
             <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight sm:text-5xl">Cuadro de mando</h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-[var(--text-secondary)]">
-              Los 6 KPIs de operaciones, en una sola pantalla. Hoy es el esqueleto. Cuando unamos los Excels, cada recuadro se enciende.
+              El 01 mide el plan contra el año pasado. Del 02 al 07 miden el año contra el plan, cada uno con su base. Pincha un recuadro y saltas a Budget o a Seguimiento.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-3 text-center">
             {[
-              ['P&L', '¿Miente hoy?'],
-              ['Ritmo', '¿Vamos tarde?'],
-              ['Caja', '¿Hemos cobrado?'],
+              ['Plan', '02 Budget'],
+              ['P&L', '03 YTD'],
+              ['Caja', 'Frees · gen · deuda'],
             ].map(([label, hint]) => (
               <div key={label} className="rounded-xl border border-[var(--border)] bg-white/70 px-3 py-3">
                 <p className="font-display text-sm font-semibold">{label}</p>
@@ -134,83 +278,42 @@ export default function OperationsDashboard({ onBack }: OperationsDashboardProps
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {KPIS.map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <article
-              key={kpi.id}
-              className="flex min-h-[220px] flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-display text-[11px] font-semibold tracking-[0.18em] text-[var(--text-muted)]">{kpi.number}</p>
-                  <h3 className="mt-1 font-display text-lg font-semibold leading-tight">{kpi.title}</h3>
-                </div>
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
-                  <Icon className="h-4 w-4" />
-                </div>
-              </div>
-              <div className="mt-5 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">{kpi.metric}</p>
-                  <p className="mt-1 font-display text-4xl font-semibold tracking-tight text-[var(--border-strong)]">—</p>
-                </div>
-                <EmptyRing />
-              </div>
-              <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-                <div className="h-full w-[8%] rounded-full bg-[var(--border-strong)]" />
-              </div>
-              <p className="mt-3 text-xs leading-relaxed text-[var(--text-secondary)]">{kpi.watch}</p>
-              <p className="mt-auto pt-3 text-[11px] font-medium text-[var(--text-muted)]">Sin archivo · pendiente</p>
-            </article>
-          );
-        })}
-      </section>
-
-      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm sm:p-6">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Cadena</p>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">Si falla el primero, el resto miente. El rojo de verdad está al final: frees tarde, generados tarde, deuda vencida.</p>
-        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-          {KPIS.map((kpi, index) => (
-            <div key={kpi.id} className="relative rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg-soft)]/50 px-3 py-3">
-              <p className="font-display text-[11px] font-semibold text-[var(--text-muted)]">{kpi.number}</p>
-              <p className="mt-1 text-sm font-semibold leading-tight">{kpi.title}</p>
-              {index < KPIS.length - 1 && (
-                <span className="absolute -right-2 top-1/2 hidden -translate-y-1/2 text-[var(--border-strong)] xl:block">→</span>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm sm:p-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Zonas</p>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">Aquí irá el semáforo por zona cuando entren frees, facturación y deuda.</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {ZONAS.map((zona) => (
-              <div key={zona} className="rounded-full border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)]">
-                {zona}
-                <span className="ml-2 text-[var(--text-muted)]">—</span>
-              </div>
+      {GROUPS.map((group) => (
+        <section key={group.id} className="space-y-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">{group.label}</p>
+            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">{group.hint}</p>
+          </div>
+          <div className={`grid gap-3 ${group.cols}`}>
+            {group.kpis.map((kpi) => (
+              <KpiCard key={kpi.id} kpi={kpi} onOpen={openKpi} />
             ))}
           </div>
         </section>
+      ))}
 
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm sm:p-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Excels que lo alimentarán</p>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">Pocos archivos, siempre los mismos.</p>
-          <ul className="mt-4 space-y-2">
-            {FILES.map((file) => (
-              <li key={file.name} className="flex items-center justify-between rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-sm">
-                <span className="font-medium">{file.name}</span>
-                <span className="text-xs text-[var(--text-muted)]">{file.use}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      </div>
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm sm:p-6">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Cadena</p>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          Si el budget no está bien plantado vs LY, facturación y margen mienten. Si frees o generados van tarde, inflan el P&L. La deuda es lo último: vender está bien, cobrar cierra el año.
+        </p>
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+          {ALL_KPIS.map((kpi, index) => (
+            <button
+              key={kpi.id}
+              type="button"
+              onClick={() => openKpi(kpi)}
+              className="relative rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg-soft)]/50 px-3 py-3 text-left transition hover:border-[var(--border-strong)] hover:bg-white"
+            >
+              <p className="font-display text-[11px] font-semibold text-[var(--text-muted)]">{kpi.number}</p>
+              <p className="mt-1 text-sm font-semibold leading-tight">{kpi.title}</p>
+              {index < ALL_KPIS.length - 1 && (
+                <span className="absolute -right-2 top-1/2 hidden -translate-y-1/2 text-[var(--border-strong)] xl:block">→</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

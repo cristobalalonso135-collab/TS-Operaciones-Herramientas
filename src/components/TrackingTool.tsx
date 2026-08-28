@@ -33,8 +33,11 @@ import {
 } from '@/lib/seguimiento-snapshots';
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet, X } from 'lucide-react';
 
+export type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda' | 'tendencia';
+
 interface TrackingToolProps {
   onBack: () => void;
+  initialView?: TrackingViewMode;
 }
 
 interface TrackingLine {
@@ -88,7 +91,6 @@ interface MetricBlock {
 }
 
 type SortDirection = 'asc' | 'desc';
-type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda' | 'tendencia';
 type TreeKpiId = 'gm' | 'facturacion' | 'margin' | 'frees' | 'generados' | 'deuda';
 
 const TREE_KPIS: { id: TreeKpiId; label: string; accent?: string }[] = [
@@ -1468,7 +1470,7 @@ function fyLabel(start: number): string {
   return `${String(start).slice(-2)}/${String(start + 1).slice(-2)}`;
 }
 
-export default function TrackingTool({ onBack }: TrackingToolProps) {
+export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingToolProps) {
   const [operation, setOperation] = useState<OperationLine[]>([]);
   const [operationName, setOperationName] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
@@ -1482,7 +1484,7 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
   const [fromMonth, setFromMonth] = useState(DEFAULT_FROM_MONTH);
   const [toMonth, setToMonth] = useState(DEFAULT_TO_MONTH);
   const [fyStart, setFyStart] = useState(DEFAULT_FY);
-  const [viewMode, setViewMode] = useState<TrackingViewMode>('ytd');
+  const [viewMode, setViewMode] = useState<TrackingViewMode>(initialView);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedResponsable, setSelectedResponsable] = useState<string | null>(null);
@@ -1498,6 +1500,10 @@ export default function TrackingTool({ onBack }: TrackingToolProps) {
     return parseKpiTargets(window.localStorage.getItem(KPI_TARGET_STORAGE));
   });
   const treeScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setViewMode(initialView);
+  }, [initialView]);
 
   useEffect(() => {
     window.localStorage.setItem(TREE_KPI_STORAGE, JSON.stringify(treeKpis));

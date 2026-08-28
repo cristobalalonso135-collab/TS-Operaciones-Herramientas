@@ -9,7 +9,7 @@ import BudgetCompareTool from '@/components/BudgetCompareTool';
 import BudgetFileValidatorTool from '@/components/BudgetFileValidatorTool';
 import DailyBudgetMatchTool from '@/components/DailyBudgetMatchTool';
 import DailyVariationTool from '@/components/DailyVariationTool';
-import TrackingTool from '@/components/TrackingTool';
+import TrackingTool, { type TrackingViewMode } from '@/components/TrackingTool';
 import OperationsDashboard from '@/components/OperationsDashboard';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -413,6 +413,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 export default function Home() {
   const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
+  const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
   const [step0Data, setStep0Data] = useState<MonthData[] | null>(null);
   const [step1Data, setStep1Data] = useState<MonthData[] | null>(null);
@@ -621,11 +622,28 @@ export default function Home() {
   };
 
   if (view === 'dashboard') {
-    return <OperationsDashboard onBack={() => setView('tools')} />;
+    return (
+      <OperationsDashboard
+        onBack={() => setView('tools')}
+        onOpenBudget={() => {
+          setBudgetTab('compare');
+          setView('budget');
+        }}
+        onOpenTracking={(next) => {
+          setTrackingView(next);
+          setView('tracking');
+        }}
+      />
+    );
   }
 
   if (view === 'tracking') {
-    return <TrackingTool onBack={() => setView('tools')} />;
+    return (
+      <TrackingTool
+        onBack={() => setView('tools')}
+        initialView={trackingView}
+      />
+    );
   }
 
   if (view === 'tools') {
@@ -634,8 +652,8 @@ export default function Home() {
         id: 'dashboard' as const,
         number: '01',
         title: 'Cuadro de mando',
-        description: 'Los 6 KPIs de operaciones en una pantalla. Maqueta, todavía sin datos.',
-        detail: 'Budget · facturación · margen · frees · generados · deuda',
+        description: 'Plan vs LY, facturación, GM, margen, frees, generados y deuda. Pincha un recuadro y saltas a Budget o Seguimiento.',
+        detail: 'Budget vs LY · facturación · GM · margen · frees · generados · deuda',
         tone: 'bg-[var(--text-primary)] text-[var(--bg-card)]',
       },
       {
@@ -681,6 +699,7 @@ export default function Home() {
               type="button"
               onClick={() => {
                 if (hub.id === 'budget') setBudgetTab('generate');
+                if (hub.id === 'tracking') setTrackingView('ytd');
                 setView(hub.id);
               }}
               className="tools-rise group flex w-full items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white sm:p-6"
@@ -705,7 +724,7 @@ export default function Home() {
         </section>
 
         <p className="text-center text-xs text-[var(--text-muted)]">
-          Siguiente en el cuadro de mando: generados web, deuda y forecast.
+          El cuadro de mando lee el plan en Budget y el año en Seguimiento. Todavía es maqueta: los recuadros ya saltan a la herramienta.
         </p>
       </div>
     );
