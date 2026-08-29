@@ -84,18 +84,31 @@ function unquote(value: string): string {
   return value.replace(/^\uFEFF/, '').replace(/^"|"$/g, '').trim();
 }
 
+function asValidDate(date: Date): Date | null {
+  if (Number.isNaN(date.getTime())) return null;
+  const year = date.getFullYear();
+  if (year < 1990 || year > 2100) return null;
+  return date;
+}
+
 function parseDate(value: unknown): Date | null {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
-  if (typeof value === 'number' && Number.isFinite(value) && value > 20000 && value < 80000) {
-    return new Date(Math.round((value - 25569) * 86400 * 1000));
+  if (value instanceof Date) return asValidDate(value);
+  if (typeof value === 'number' && Number.isFinite(value) && value > 30000 && value < 60000) {
+    return asValidDate(new Date(Math.round((value - 25569) * 86400 * 1000)));
   }
   if (!cellPresent(value)) return null;
-  const raw = String(value).trim();
+  const raw = unquote(String(value));
   if (/^\d{5}(\.\d+)?$/.test(raw)) return parseDate(Number(raw));
   const euro = raw.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
-  if (euro) return new Date(Number(euro[3]), Number(euro[2]) - 1, Number(euro[1]));
+  if (euro) {
+    const day = Number(euro[1]);
+    const month = Number(euro[2]);
+    const year = Number(euro[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return asValidDate(new Date(year, month - 1, day));
+  }
   const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  if (iso) return asValidDate(new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
   return null;
 }
 
@@ -301,7 +314,7 @@ export function stockAsOf(lines: StockLine[], fallback = new Date()): Date {
 export const STALE_SALE_DAYS = 180;
 
 export function daysSince(date: Date | null, today = new Date()): number | null {
-  if (!date) return null;
+  if (!date || Number.isNaN(date.getTime())) return null;
   return Math.max(0, Math.round((today.getTime() - date.getTime()) / 86_400_000));
 }
 

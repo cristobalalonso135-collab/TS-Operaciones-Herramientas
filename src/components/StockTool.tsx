@@ -156,7 +156,7 @@ export default function StockTool({ onBack }: StockToolProps) {
     let noSaleCost = 0;
     let staleCost = 0;
     let withLastSale = 0;
-    let saleDaysSum = 0;
+    const saleAges: number[] = [];
     const hasSaleDates = stockHasSaleDates(lines);
     const skus = new Set<string>();
     lines.forEach((line) => {
@@ -168,13 +168,15 @@ export default function StockTool({ onBack }: StockToolProps) {
       if (isExpired(line, today)) expiredCost += line.cost;
       if (isOldSeason(line, currentYear)) oldSeasonCost += line.cost;
       if (line.clearance > 0) clearanceCost += line.cost;
-      if (line.lastSale) {
+      const age = daysSince(line.lastSale, today);
+      if (age !== null) {
         withLastSale += 1;
-        saleDaysSum += daysSince(line.lastSale, today) ?? 0;
+        saleAges.push(age);
       }
       if (hasSaleDates && isNeverSold(line)) noSaleCost += line.cost;
       if (isStale(line, today)) staleCost += line.cost;
     });
+    saleAges.sort((a, b) => a - b);
     return {
       qty,
       cost,
@@ -188,7 +190,7 @@ export default function StockTool({ onBack }: StockToolProps) {
       staleCost,
       withLastSale,
       hasSaleDates,
-      avgSaleDays: withLastSale > 0 ? Math.round(saleDaysSum / withLastSale) : null,
+      avgSaleDays: saleAges.length === 0 ? null : saleAges[Math.floor(saleAges.length / 2)],
     };
   }, [currentYear, lines, today]);
 
@@ -264,7 +266,7 @@ export default function StockTool({ onBack }: StockToolProps) {
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Almacén</p>
         <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Stock Equipaciones</h2>
         <p className="mt-1 max-w-2xl text-sm text-[var(--text-secondary)]">
-          Dinero inmovilizado en Equipaciones: coste, a extinguir y temporada. Sube el CSV que ya tienes. Las fechas de compra/venta, cuando las tengas, se cruzan aparte.
+          Foto semanal del almacén: coste, a extinguir, temporada y rotación. Sube este Stock.csv cada viernes.
         </p>
       </section>
 
@@ -273,7 +275,7 @@ export default function StockTool({ onBack }: StockToolProps) {
           <FileUpload
             inputId="stock-equipaciones-input"
             label="Stock Equipaciones"
-            hint="El CSV de ahora: Referencia, Situación, Año, Cantidad, Coste, Fecha fin venta"
+            hint="El export definitivo: Referencia, coste, fin de venta, primera/última compra y venta"
             onFileLoaded={handleLoaded}
             keepDropzone
           />
@@ -287,7 +289,7 @@ export default function StockTool({ onBack }: StockToolProps) {
           <FileUpload
             inputId="stock-movimientos-input"
             label="Fechas (opcional)"
-            hint="Cuando lo tengas: Id, Primera/Última compra, Primera/Última venta"
+            hint="Solo si un día vienen aparte. Este Stock.csv ya las trae."
             onFileLoaded={handleLoaded}
             keepDropzone
           />
@@ -308,7 +310,7 @@ export default function StockTool({ onBack }: StockToolProps) {
           <FileSpreadsheet className="mx-auto h-9 w-9 text-[var(--text-muted)]" />
           <p className="mt-3 text-sm font-medium">Sube el export de stock de Equipaciones.</p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-[var(--text-secondary)]">
-            Lo importante es el coste, no las unidades. Con el Stock.csv ya ves a extinguir, fin de venta y temporada vieja.
+            Lo importante es el coste. Este archivo ya trae compra/venta: verás nunca vendido y parado ≥ 180 días.
           </p>
         </section>
       )}
@@ -357,7 +359,7 @@ export default function StockTool({ onBack }: StockToolProps) {
                   value={formatCurrency(totals.staleCost)}
                   hint={totals.avgSaleDays === null
                     ? '—'
-                    : `Media ${totals.avgSaleDays.toLocaleString('de-DE')} días desde última venta`}
+                    : `Mediana ${totals.avgSaleDays.toLocaleString('de-DE')} días desde última venta`}
                 />
               </>
             )}
