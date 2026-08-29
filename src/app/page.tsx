@@ -11,6 +11,7 @@ import DailyBudgetMatchTool from '@/components/DailyBudgetMatchTool';
 import DailyVariationTool from '@/components/DailyVariationTool';
 import TrackingTool, { type TrackingViewMode } from '@/components/TrackingTool';
 import OperationsDashboard from '@/components/OperationsDashboard';
+import StockTool from '@/components/StockTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   parseExcelData,
@@ -411,7 +412,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -646,6 +647,10 @@ export default function Home() {
     );
   }
 
+  if (view === 'stock') {
+    return <StockTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -672,6 +677,14 @@ export default function Home() {
         detail: 'YTD · Meses · Frees · Generados · Deuda',
         tone: 'bg-[var(--success-soft)] text-[var(--success)]',
       },
+      {
+        id: 'stock' as const,
+        number: '04',
+        title: 'Stock',
+        description: 'Dinero inmovilizado en Equipaciones. A extinguir, temporadas viejas y fotos semanales.',
+        detail: 'Resumen · Riesgo · Tendencia',
+        tone: 'bg-[var(--kpi-debt-soft)] text-[var(--kpi-debt)]',
+      },
     ];
 
     return (
@@ -687,7 +700,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Tres entradas. El resto vive en pestañas dentro de cada herramienta.
+              Tres entradas comerciales y una de almacén. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
