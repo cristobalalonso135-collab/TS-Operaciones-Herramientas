@@ -23,7 +23,15 @@ import {
   type StockLine,
   type StockSnapshot,
 } from '@/lib/stock-files';
-import { ArrowLeft, Camera, FileSpreadsheet, TrendingUp } from 'lucide-react';
+import {
+  coverDays,
+  formatCoverDays,
+  aggregateProductSales,
+  COVER_DAYS,
+  COVER_YEAR_DAYS,
+  isSalesFile,
+  type ProductSales,
+} from '@/lib/stock-sales';
 
 interface StockToolProps {
   onBack: () => void;
@@ -31,7 +39,7 @@ interface StockToolProps {
 
 type StockView = 'resumen' | 'riesgo' | 'tendencia';
 type GroupKey = 'situacion' | 'familia' | 'marca';
-type RiskFilter = 'todo' | 'sin-venta' | '180' | '365' | 'comprando';
+type RiskFilter = 'todo' | 'sin-venta' | '180' | '365' | 'comprando' | 'sin-12m' | 'cover-180' | 'cover-365';
 
 function formatCurrency(value: number): string {
   return `${value.toLocaleString('de-DE', { maximumFractionDigits: 0 })} €`;
@@ -112,6 +120,8 @@ export default function StockTool({ onBack }: StockToolProps) {
     if (typeof window === 'undefined') return [];
     return parseStockSnapshots(window.localStorage.getItem(STOCK_SNAPSHOT_STORAGE));
   });
+  const [salesById, setSalesById] = useState<Map<string, ProductSales>>(new Map());
+  const [salesFileName, setSalesFileName] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const today = useMemo(() => stockAsOf(lines), [lines]);
 
@@ -121,6 +131,18 @@ export default function StockTool({ onBack }: StockToolProps) {
 
   const handleLoaded = (data: unknown[][], name: string) => {
     try {
+      if (isSalesFile(data)) {
+        if (lines.length === 0) {
+          throw new Error('Primero sube el Stock.csv de Equipaciones.');
+        }
+        const aggregated = aggregateProductSales(data);
+        setSalesById(aggregated);
+        setSalesFileName(name);
+        setError(null);
+        setNote(`Ventas cruzadas: ${aggregated.size.toLocaleString('de-DE')} productos, últimos 12 meses.`);
+        setView('riesgo');
+        return;
+      }
       const parsed = parseStockRows(data);
       setLines(parsed);
       setFileName(name);
@@ -130,6 +152,25 @@ export default function StockTool({ onBack }: StockToolProps) {
       setError(err instanceof Error ? err.message : 'No he podido leer el archivo.');
     }
   };
+
+  const productStock = useMemo(() => {
+    const map = new Map<string, { qty: number; cost: number }>();
+    lines.forEach((line) => {
+      const current = map.get(line.id) || { qty: 0, cost: 0 };
+      current.qty += line.qty;
+      current.cost += line.cost;
+      map.set(line.id, current);
+    });
+    return map;
+  }, [lines]);
+
+  const productCover = useMemo(() => {
+    const map = new Map<string, number | null>();
+    productStock.forEach((stock, id) => {
+      map.set(id, coverDays(stock.qty, salesById.get(id)?.qty12 ?? 0));
+    });
+    return map;
+  }, [productStock, salesById]);
 
   const totals = useMemo(() => {
     let qty = 0;
@@ -180,6 +221,23 @@ export default function StockTool({ onBack }: StockToolProps) {
     };
   }, [lines, today]);
 
+  const hasSales = salesById.size > 0;
+  const coverTotals = useMemo(() => {
+    if (!hasSales) return { no12: 0, cover180: 0, cover365: 0 };
+    let no12 = 0;
+    let cover180 = 0;
+    let cover365 = 0;
+    lines.forEach((line) => {
+      const cover = productCover.get(line.id);
+      if (cover === null) no12 += line.cost;
+      else {
+        if (cover >= COVER_DAYS) cover180 += line.cost;
+        if (cover >= COVER_YEAR_DAYS) cover365 += line.cost;
+      }
+    });
+    return { no12, cover180, cover365 };
+  }, [hasSales, lines, productCover]);
+
   const groups = useMemo(() => {
     const keyFn = {
       situacion: (line: StockLine) => line.situacion,
@@ -193,20 +251,27 @@ export default function StockTool({ onBack }: StockToolProps) {
     const hasSaleDates = stockHasSaleDates(lines);
     return lines
       .filter((line) => {
-        if (!hasSaleDates) return false;
+        const cover = productCover.get(line.id);
         const never = isNeverSold(line);
         const stale180 = isStale(line, today);
         const stale365 = isStale(line, today, STALE_YEAR_DAYS);
         const buying = isStillBuyingDead(line, today);
-        if (riskFilter === 'sin-venta') return never;
+        if (riskFilter === 'sin-venta') return hasSaleDates && never;
         if (riskFilter === '180') return stale180;
         if (riskFilter === '365') return stale365;
         if (riskFilter === 'comprando') return buying;
+        if (riskFilter === 'sin-12m') return hasSales && cover === null && line.qty > 0;
+        if (riskFilter === 'cover-180') return hasSales && cover !== null && cover >= COVER_DAYS;
+        if (riskFilter === 'cover-365') return hasSales && cover !== null && cover >= COVER_YEAR_DAYS;
+        if (hasSales) {
+          return (cover === null && line.qty > 0) || (cover !== null && cover >= COVER_DAYS) || never || stale180;
+        }
+        if (!hasSaleDates) return false;
         return never || stale180;
       })
       .sort((a, b) => b.cost - a.cost)
       .slice(0, 100);
-  }, [lines, riskFilter, today]);
+  }, [hasSales, lines, productCover, riskFilter, today]);
 
   const saveSnapshot = () => {
     if (lines.length === 0) return;
@@ -255,26 +320,44 @@ export default function StockTool({ onBack }: StockToolProps) {
         <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Almacén</p>
         <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Stock Equipaciones</h2>
         <p className="mt-1 max-w-2xl text-sm text-[var(--text-secondary)]">
-          Foto semanal del almacén: coste y lo que no se mueve. Sube este Stock.csv cada viernes.
+          Foto semanal: coste y cobertura. Stock.csv y, si puedes, Ventas.csv para ver días de stock al ritmo de venta.
         </p>
       </section>
 
-      <section className="max-w-xl rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <FileUpload
-          inputId="stock-equipaciones-input"
-          label="Stock Equipaciones"
-          hint="Stock.csv: Referencia, cantidad, coste medio total, primera/última compra y venta"
-          onFileLoaded={handleLoaded}
-          keepDropzone
-        />
-        {fileName && (
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            {fileName} · {lines.length.toLocaleString('de-DE')} líneas · {totals.skus.toLocaleString('de-DE')} SKU
-          </p>
-        )}
-      </section>
+      <div className="grid max-w-4xl gap-3 md:grid-cols-2">
+        <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="stock-equipaciones-input"
+            label="Stock Equipaciones"
+            hint="Stock.csv: Referencia, cantidad, coste medio total, primera/última compra y venta"
+            onFileLoaded={handleLoaded}
+            keepDropzone
+          />
+          {fileName && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {fileName} · {lines.length.toLocaleString('de-DE')} líneas · {totals.skus.toLocaleString('de-DE')} SKU
+            </p>
+          )}
+        </section>
+        <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <FileUpload
+            inputId="stock-ventas-input"
+            label="Ventas 12 meses"
+            hint="Ventas.csv: id, Year-Month, Importe, Unidades. Primero el stock."
+            onFileLoaded={handleLoaded}
+            keepDropzone
+          />
+          {salesFileName && (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              {salesFileName} · {salesById.size.toLocaleString('de-DE')} productos
+            </p>
+          )}
+        </section>
+      </div>
 
-      {error && (
+      {note && lines.length > 0 && (
+        <p className="text-[12px] font-medium text-[var(--success)]">{note}</p>
+      )}
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
 
@@ -328,6 +411,22 @@ export default function StockTool({ onBack }: StockToolProps) {
                   hint={totals.avgSaleDays === null
                     ? '—'
                     : `Mediana ${totals.avgSaleDays.toLocaleString('de-DE')} días desde última venta`}
+                />
+              </>
+            )}
+            {hasSales && (
+              <>
+                <StatCard
+                  label="Sin venta 12 meses"
+                  value={formatCurrency(coverTotals.no12)}
+                  hint={`${formatPct(coverTotals.no12, totals.cost)} del almacén · el producto no ha salido`}
+                  tone="text-[var(--danger)]"
+                />
+                <StatCard
+                  label={`Cobertura ≥ ${COVER_YEAR_DAYS} días`}
+                  value={formatCurrency(coverTotals.cover365)}
+                  hint={`${formatPct(coverTotals.cover365, totals.cost)} · más de un año de stock al ritmo actual`}
+                  tone="text-[var(--kpi-debt)]"
                 />
               </>
             )}
@@ -413,18 +512,43 @@ export default function StockTool({ onBack }: StockToolProps) {
               hint={`Última compra ≤ ${RECENT_BUY_DAYS} días y no gira`}
               tone={totals.buyingDeadCost > 0 ? 'text-[var(--kpi-debt)]' : undefined}
             />
+            {hasSales && (
+              <>
+                <StatCard
+                  label="Sin venta 12 meses"
+                  value={formatCurrency(coverTotals.no12)}
+                  hint="El producto no ha vendido en el último año"
+                  tone="text-[var(--danger)]"
+                />
+                <StatCard
+                  label={`Cobertura ≥ ${COVER_YEAR_DAYS} días`}
+                  value={formatCurrency(coverTotals.cover365)}
+                  hint="Más de un año de stock al ritmo de venta"
+                  tone="text-[var(--kpi-debt)]"
+                />
+              </>
+            )}
           </div>
           <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
               <div>
                 <p className="text-sm font-medium">Lo que no se vende</p>
                 <p className="text-[12px] text-[var(--text-secondary)]">
-                  Sin venta o parado. Top 100 por coste. El año de ficha no entra.
+                  {hasSales
+                    ? 'Cobertura al ritmo de los últimos 12 meses (por producto) y última venta (por talla). Top 100 por coste.'
+                    : 'Sin venta o parado por última fecha. Sube Ventas.csv para ver días de cobertura.'}
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {([
                   ['todo', 'Todo'],
+                  ...(hasSales
+                    ? [
+                      ['sin-12m', 'Sin venta 12m'],
+                      ['cover-180', `Cobertura ≥ ${COVER_DAYS}`],
+                      ['cover-365', `Cobertura ≥ ${COVER_YEAR_DAYS}`],
+                    ] as const
+                    : []),
                   ['sin-venta', 'Sin venta'],
                   ['180', `≥ ${STALE_SALE_DAYS} días`],
                   ['365', `≥ ${STALE_YEAR_DAYS} días`],
@@ -453,6 +577,12 @@ export default function StockTool({ onBack }: StockToolProps) {
                     <th className="px-3 py-2">Motivo</th>
                     <th className="px-3 py-2 text-right">Ud</th>
                     <th className="px-3 py-2 text-right">Coste</th>
+                    {hasSales && (
+                      <>
+                        <th className="px-3 py-2 text-right">Ud 12m</th>
+                        <th className="px-3 py-2 text-right">Cobertura</th>
+                      </>
+                    )}
                     <th className="px-3 py-2">Última venta</th>
                     <th className="px-3 py-2">Última compra</th>
                     <th className="px-3 py-2 text-right">Días</th>
@@ -461,10 +591,8 @@ export default function StockTool({ onBack }: StockToolProps) {
                 <tbody>
                   {riskLines.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-8 text-center text-[13px] text-[var(--text-secondary)]">
-                        {totals.hasSaleDates
-                          ? 'Con este filtro no hay líneas.'
-                          : 'Este archivo no trae fechas de venta. Sube el Stock.csv definitivo.'}
+                      <td colSpan={hasSales ? 9 : 7} className="px-3 py-8 text-center text-[13px] text-[var(--text-secondary)]">
+                        Con este filtro no hay líneas.
                       </td>
                     </tr>
                   ) : riskLines.map((line) => {
@@ -483,6 +611,16 @@ export default function StockTool({ onBack }: StockToolProps) {
                         </td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{formatQty(line.qty)}</td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(line.cost)}</td>
+                        {hasSales && (
+                          <>
+                            <td className="px-3 py-2 text-right font-mono tabular-nums">
+                              {formatQty(salesById.get(line.id)?.qty12 ?? 0)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono tabular-nums">
+                              {formatCoverDays(productCover.get(line.id) ?? null)}
+                            </td>
+                          </>
+                        )}
                         <td className="px-3 py-2 text-[var(--text-secondary)]">
                           {line.lastSale ? line.lastSale.toLocaleDateString('es-ES') : 'Nunca'}
                         </td>
