@@ -681,7 +681,7 @@ export default function Home() {
         id: 'stock' as const,
         number: '04',
         title: 'Stock',
-        description: 'Dinero inmovilizado en Equipaciones. A extinguir, temporadas viejas y fotos semanales.',
+        description: 'Dinero inmovilizado en Equipaciones. Lo que no se vende y fotos semanales.',
         detail: 'Resumen · Riesgo · Tendencia',
         tone: 'bg-[var(--kpi-debt-soft)] text-[var(--kpi-debt)]',
       },

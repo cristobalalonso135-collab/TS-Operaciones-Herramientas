@@ -316,6 +316,8 @@ export function stockAsOf(lines: StockLine[], fallback = new Date()): Date {
 }
 
 export const STALE_SALE_DAYS = 180;
+export const STALE_YEAR_DAYS = 365;
+export const RECENT_BUY_DAYS = 90;
 
 export function daysSince(date: Date | null, today = new Date()): number | null {
   if (!date || Number.isNaN(date.getTime())) return null;
@@ -333,6 +335,21 @@ export function isNeverSold(line: StockLine): boolean {
 export function isStale(line: StockLine, today = new Date(), days = STALE_SALE_DAYS): boolean {
   const age = daysSince(line.lastSale, today);
   return age !== null && age >= days;
+}
+
+export function isStillBuyingDead(line: StockLine, today = new Date()): boolean {
+  const boughtAgo = daysSince(line.lastBuy, today);
+  if (boughtAgo === null || boughtAgo > RECENT_BUY_DAYS) return false;
+  return isNeverSold(line) || isStale(line, today);
+}
+
+export function deadStockReason(line: StockLine, today = new Date()): string {
+  if (isNeverSold(line)) return 'Sin venta';
+  const age = daysSince(line.lastSale, today);
+  if (age === null) return '—';
+  if (age >= STALE_YEAR_DAYS) return `Parado ${age.toLocaleString('de-DE')} días`;
+  if (age >= STALE_SALE_DAYS) return `Parado ${age.toLocaleString('de-DE')} días`;
+  return `${age.toLocaleString('de-DE')} días`;
 }
 
 export function isoWeekKey(date = new Date()): string {
