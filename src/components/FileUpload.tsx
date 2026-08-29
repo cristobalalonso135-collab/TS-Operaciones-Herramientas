@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { Upload, FileSpreadsheet, X } from 'lucide-react';
+import { isCsvFile, parseDelimitedText } from '@/lib/delimited-text';
 
 interface FileUploadProps {
   onFileLoaded: (data: any[][], fileName: string) => void;
@@ -32,6 +33,14 @@ export default function FileUpload({
     async (file: File) => {
       setError(null);
       try {
+        if (isCsvFile(file)) {
+          const text = await file.text();
+          const data = parseDelimitedText(text);
+          setFileName(file.name);
+          onWorkbookLoaded?.({ [file.name]: data }, file.name);
+          onFileLoaded(data, file.name);
+          return;
+        }
         const XLSX = await import('xlsx');
         const buffer = await file.arrayBuffer();
         const wb = XLSX.read(buffer, { type: 'array', cellDates: true });

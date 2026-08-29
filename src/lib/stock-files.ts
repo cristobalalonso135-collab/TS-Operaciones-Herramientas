@@ -1,3 +1,5 @@
+import { detectDelimiter, splitDelimitedRow } from '@/lib/delimited-text';
+
 export interface StockLine {
   key: string;
   id: string;
@@ -120,9 +122,11 @@ function yes(value: string): boolean {
 export function normalizeStockGrid(rows: unknown[][]): string[][] {
   if (rows.length === 0) return [];
   const first = rows[0] ?? [];
-  if (first.length <= 2 && String(first[0] ?? '').includes(';')) {
+  const joined = String(first[0] ?? '');
+  if (first.length <= 2 && (joined.includes(';') || joined.includes(','))) {
+    const delimiter = detectDelimiter(joined);
     return rows
-      .map((row) => String(row[0] ?? '').split(';').map(unquote))
+      .map((row) => splitDelimitedRow(String(row[0] ?? ''), delimiter))
       .filter((row) => row.some((cell) => cellPresent(cell)));
   }
   return rows
