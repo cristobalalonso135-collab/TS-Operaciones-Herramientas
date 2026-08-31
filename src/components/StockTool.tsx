@@ -1,5 +1,6 @@
 'use client';
 
+import { ArrowLeft, Camera, FileSpreadsheet, TrendingUp } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import {
@@ -228,7 +229,7 @@ export default function StockTool({ onBack }: StockToolProps) {
     let cover180 = 0;
     let cover365 = 0;
     lines.forEach((line) => {
-      const cover = productCover.get(line.id);
+      const cover = productCover.get(line.id) ?? null;
       if (cover === null) no12 += line.cost;
       else {
         if (cover >= COVER_DAYS) cover180 += line.cost;
@@ -251,7 +252,7 @@ export default function StockTool({ onBack }: StockToolProps) {
     const hasSaleDates = stockHasSaleDates(lines);
     return lines
       .filter((line) => {
-        const cover = productCover.get(line.id);
+        const cover = productCover.get(line.id) ?? null;
         const never = isNeverSold(line);
         const stale180 = isStale(line, today);
         const stale365 = isStale(line, today, STALE_YEAR_DAYS);
@@ -358,6 +359,7 @@ export default function StockTool({ onBack }: StockToolProps) {
       {note && lines.length > 0 && (
         <p className="text-[12px] font-medium text-[var(--success)]">{note}</p>
       )}
+      {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
 
