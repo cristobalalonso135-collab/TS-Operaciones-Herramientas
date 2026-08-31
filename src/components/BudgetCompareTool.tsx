@@ -98,9 +98,18 @@ interface QualitySuggestion {
   impact: number;
 }
 
+type QualityMoveKind = 'meses' | 'lineas';
+
 interface QualityOperation {
   key: string;
+  kind: QualityMoveKind;
+  groupKey: string;
+  fromGroupKey: string;
+  toGroupKey: string;
   groupLabel: string;
+  fromGroupLabel: string;
+  toGroupLabel: string;
+  ownerLabel: string;
   fromMonth: string;
   toMonth: string;
   amount: number;
@@ -112,6 +121,10 @@ interface QualityOperation {
   fromPctAfter: number | null;
   toPctAfter: number | null;
   targetPct: number | null;
+  fromScopePct: number | null;
+  toScopePct: number | null;
+  fromScopePctAfter: number | null;
+  toScopePctAfter: number | null;
 }
 
 interface QualitySummary {
@@ -319,6 +332,18 @@ function formatPercent(value: number | null): string {
 
 function formatScore(value: number): string {
   return value.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function scoresAfterOperations(rows: CompareRow[], operations: QualityOperation[], lockedThroughIndex: number): number[] {
+  return operations.map((_, index) => (
+    buildQualitySummary(applyQualityOperations(rows, operations.slice(0, index + 1)), lockedThroughIndex).score
+  ));
+}
+
+function moveScoreGain(scores: number[], index: number, baseline: number): number {
+  const current = scores[index] ?? baseline;
+  const previous = index === 0 ? baseline : scores[index - 1] ?? baseline;
+  return Math.max(0, current - previous);
 }
 
 function scoreTone(score: number): string {
@@ -561,24 +586,24 @@ function scoreVerdict(score: number): { label: string; hint: string } {
   if (score >= 9) {
     return {
       label: 'Muy bien cuadrado',
-      hint: 'Los meses abiertos siguen el mismo % que el resto del año de su línea. Flecos menores.',
+      hint: 'Los meses siguen el % de su línea, y las líneas de cada responsable siguen el % que te has marcado para él.',
     };
   }
   if (score >= 7.5) {
     return {
       label: 'Bien, con flecos',
-      hint: 'Lo que queda del año cuadra, pero algún mes abierto se sale del ritmo de su línea.',
+      hint: 'Casi cuadra, pero algún mes o alguna línea se sale del ritmo de su línea o de su responsable.',
     };
   }
   if (score >= 5) {
     return {
       label: 'Mejorable',
-      hint: 'Hay líneas con meses abiertos demasiado altos o bajos vs el resto del año. Mueve budget entre esos meses.',
+      hint: 'O un mes no sigue a su línea, o una línea no sigue el % de su responsable (si Pablo está a -5%, sus líneas deberían andar cerca).',
     };
   }
   return {
     label: 'Poco cuadrado',
-    hint: 'El anual puede estar bien, pero los meses que aún puedes tocar no siguen el año anterior escalado.',
+    hint: 'El anual puede estar bien, pero lo abierto no sigue ni el ritmo de cada línea ni el de cada responsable.',
   };
 }
 
@@ -587,54 +612,131 @@ function isEditableMonth(monthLabel: string, lockedThroughIndex: number): boolea
   return order > lockedThroughIndex;
 }
 
+const MONTHLY_MOVES = 5;
+const REVIEW_MIN_EUROS = 10000;
+const REVIEW_MIN_PCT = 30;
+
+function applyQualityOperations(rows: CompareRow[], operations: QualityOperation[]): CompareRow[] {
+  const next = rows.map((row) => ({ ...row }));
+  operations.forEach((operation) => {
+    const fromKey = operation.fromGroupKey || operation.groupKey;
+    const toKey = operation.toGroupKey || operation.groupKey;
+    const from = next
+      .filter((row) => anomalyBaseKey(row) === fromKey && row.monthLabel === operation.fromMonth)
+      .sort((a, b) => Math.abs(b.budget) - Math.abs(a.budget))[0];
+    const to = next
+      .filter((row) => anomalyBaseKey(row) === toKey && row.monthLabel === operation.toMonth)
+      .sort((a, b) => Math.abs(b.budget) - Math.abs(a.budget))[0];
+    if (!from || !to || from === to) return;
+    from.budget -= operation.amount;
+    to.budget += operation.amount;
+    from.diff = from.budget - from.facturacion;
+    to.diff = to.budget - to.facturacion;
+  });
+  return next;
+}
+
+function remainingPctOf(budget: number, facturacion: number): number | null {
+  if (facturacion === 0) return null;
+  return ((budget - facturacion) / Math.abs(facturacion)) * 100;
+}
+
+function deviationFromTarget(budget: number, facturacion: number, targetPct: number): number {
+  if (facturacion !== 0) {
+    const pct = ((budget - facturacion) / Math.abs(facturacion)) * 100;
+    return Math.abs(pct - targetPct);
+  }
+  return budget !== 0 ? Math.max(100, Math.abs(targetPct)) : 0;
+}
+
+function monthSurplus(row: CompareRow, targetPct: number): number {
+  if (row.facturacion !== 0) {
+    return row.budget - row.facturacion * (1 + targetPct / 100);
+  }
+  return row.budget;
+}
+
+function operationKindLabel(kind: QualityMoveKind): string {
+  return kind === 'lineas' ? 'Entre líneas' : 'Entre meses';
+}
+
+function QualityOperationCopy({ operation }: { operation: QualityOperation }) {
+  if (operation.kind === 'lineas') {
+    return (
+      <>
+        Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> en <span className="font-semibold">{operation.fromGroupLabel}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span> en <span className="font-semibold">{operation.toGroupLabel}</span>
+        <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">
+          {operation.ownerLabel} está a {formatPercent(operation.targetPct)} en lo abierto: sus líneas deberían parecerse.
+          {' '}{operation.fromGroupLabel} {formatPercent(operation.fromScopePct)} → {formatPercent(operation.fromScopePctAfter)}
+          {' · '}{operation.toGroupLabel} {formatPercent(operation.toScopePct)} → {formatPercent(operation.toScopePctAfter)}
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <>
+      Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>
+      <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{operation.fromGroupLabel || operation.groupLabel}</span>
+    </>
+  );
+}
+
 function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): QualitySummary {
-  const grouped = new Map<string, { label: string; facturacion: number; budget: number; rows: CompareRow[] }>();
-
-  const deviationAfterBudget = (row: CompareRow, budget: number, targetPct: number): number => {
-    if (row.facturacion !== 0) {
-      const pct = ((budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
-      return Math.abs(pct - targetPct);
-    }
-
-    return budget !== 0 ? Math.max(100, Math.abs(targetPct)) : 0;
-  };
-
-  const pctAfterBudget = (row: CompareRow, budget: number): number | null => {
-    if (row.facturacion === 0) return null;
-    return ((budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
-  };
+  const grouped = new Map<string, { label: string; responsable: string; facturacion: number; budget: number; rows: CompareRow[] }>();
 
   rows.forEach((row) => {
     const key = anomalyBaseKey(row);
-    const current = grouped.get(key) || { label: anomalyLabel(row), facturacion: 0, budget: 0, rows: [] };
+    const current = grouped.get(key) || {
+      label: anomalyLabel(row),
+      responsable: row.responsable,
+      facturacion: 0,
+      budget: 0,
+      rows: [],
+    };
     current.facturacion += row.facturacion;
     current.budget += row.budget;
     current.rows.push(row);
     grouped.set(key, current);
   });
 
+  type LineMonth = {
+    row: CompareRow;
+    monthPct: number | null;
+    expectedBudget: number;
+    suggestedAdjustment: number;
+    deviation: number;
+    weight: number;
+  };
+
+  type LineBucket = {
+    key: string;
+    label: string;
+    responsable: string;
+    openFacturacion: number;
+    openBudget: number;
+    remainingPct: number;
+    weight: number;
+    openRows: CompareRow[];
+    editableLineRows: LineMonth[];
+  };
+
   let weightedDeviation = 0;
   let totalWeight = 0;
   let editableRows = 0;
   const suggestions: QualitySuggestion[] = [];
   const operations: QualityOperation[] = [];
+  const lineBuckets: LineBucket[] = [];
 
   grouped.forEach((group, key) => {
     const openRows = group.rows.filter((row) => isEditableMonth(row.monthLabel, lockedThroughIndex));
     const openFacturacion = openRows.reduce((sum, row) => sum + row.facturacion, 0);
     const openBudget = openRows.reduce((sum, row) => sum + row.budget, 0);
-    if (Math.abs(openFacturacion) < 1000) return;
-    const remainingPct = ((openBudget - openFacturacion) / Math.abs(openFacturacion)) * 100;
-    const editableLineRows: Array<{
-      row: CompareRow;
-      monthPct: number | null;
-      expectedBudget: number;
-      suggestedAdjustment: number;
-      deviation: number;
-      weight: number;
-    }> = [];
+    const remainingPct = remainingPctOf(openBudget, openFacturacion) ?? 0;
+    const editableLineRows: LineMonth[] = [];
 
-    openRows.forEach((row) => {
+    if (Math.abs(openFacturacion) >= 1000) {
+      openRows.forEach((row) => {
         const weight = Math.max(Math.abs(row.facturacion), Math.abs(row.budget));
         if (weight < 1000) return;
 
@@ -643,16 +745,15 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
         let deviation = 0;
 
         if (row.facturacion !== 0) {
-          monthPct = ((row.budget - row.facturacion) / Math.abs(row.facturacion)) * 100;
+          monthPct = remainingPctOf(row.budget, row.facturacion);
           expectedBudget = row.facturacion * (1 + remainingPct / 100);
-          deviation = Math.abs(monthPct - remainingPct);
+          deviation = Math.abs((monthPct ?? 0) - remainingPct);
         } else if (row.budget !== 0) {
           expectedBudget = 0;
           deviation = Math.max(100, Math.abs(remainingPct));
         }
 
-        const cappedDeviation = Math.min(120, deviation);
-        weightedDeviation += cappedDeviation * weight;
+        weightedDeviation += Math.min(120, deviation) * weight;
         totalWeight += weight;
         editableRows += 1;
 
@@ -672,46 +773,175 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
         }
       });
 
-    const donors = editableLineRows
-      .filter((item) => item.suggestedAdjustment < -1000)
-      .map((item) => ({ ...item, remaining: Math.abs(item.suggestedAdjustment) }))
+      const donors = editableLineRows
+        .filter((item) => item.suggestedAdjustment < -1000)
+        .map((item) => ({ ...item, remaining: Math.abs(item.suggestedAdjustment) }))
+        .sort((a, b) => b.remaining - a.remaining);
+      const receivers = editableLineRows
+        .filter((item) => item.suggestedAdjustment > 1000)
+        .map((item) => ({ ...item, remaining: Math.abs(item.suggestedAdjustment) }))
+        .sort((a, b) => b.remaining - a.remaining);
+
+      donors.forEach((donor) => {
+        receivers.forEach((receiver) => {
+          const amount = Math.min(donor.remaining, receiver.remaining);
+          if (amount < 1000) return;
+
+          const donorAfterDeviation = deviationFromTarget(donor.row.budget - amount, donor.row.facturacion, remainingPct);
+          const receiverAfterDeviation = deviationFromTarget(receiver.row.budget + amount, receiver.row.facturacion, remainingPct);
+          const beforeImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
+          const afterImpact = (Math.min(120, donorAfterDeviation) * donor.weight) + (Math.min(120, receiverAfterDeviation) * receiver.weight);
+          const currentImpact = Math.max(0, beforeImpact - afterImpact);
+          if (currentImpact <= 0) return;
+
+          operations.push({
+            key: `meses|${key}|${donor.row.monthKey}|${receiver.row.monthKey}|${amount.toFixed(0)}`,
+            kind: 'meses',
+            groupKey: key,
+            fromGroupKey: key,
+            toGroupKey: key,
+            groupLabel: group.label,
+            fromGroupLabel: group.label,
+            toGroupLabel: group.label,
+            ownerLabel: group.responsable,
+            fromMonth: donor.row.monthLabel,
+            toMonth: receiver.row.monthLabel,
+            amount,
+            impact: currentImpact,
+            estimatedGain: 0,
+            resultingScore: 0,
+            fromPct: donor.monthPct,
+            toPct: receiver.monthPct,
+            fromPctAfter: remainingPctOf(donor.row.budget - amount, donor.row.facturacion),
+            toPctAfter: remainingPctOf(receiver.row.budget + amount, receiver.row.facturacion),
+            targetPct: remainingPct,
+            fromScopePct: remainingPct,
+            toScopePct: remainingPct,
+            fromScopePctAfter: remainingPct,
+            toScopePctAfter: remainingPct,
+          });
+          donor.remaining -= amount;
+          receiver.remaining -= amount;
+        });
+      });
+    }
+
+    lineBuckets.push({
+      key,
+      label: group.label,
+      responsable: group.responsable,
+      openFacturacion,
+      openBudget,
+      remainingPct,
+      weight: Math.max(Math.abs(openFacturacion), Math.abs(openBudget)),
+      openRows,
+      editableLineRows,
+    });
+  });
+
+  const linesByResponsable = new Map<string, LineBucket[]>();
+  lineBuckets.forEach((line) => {
+    const owner = line.responsable || 'Pendiente';
+    const current = linesByResponsable.get(owner) || [];
+    current.push(line);
+    linesByResponsable.set(owner, current);
+  });
+
+  linesByResponsable.forEach((lines, responsable) => {
+    if (responsable === 'Pendiente') return;
+    const openFacturacion = lines.reduce((sum, line) => sum + line.openFacturacion, 0);
+    const openBudget = lines.reduce((sum, line) => sum + line.openBudget, 0);
+    if (Math.abs(openFacturacion) < 1000) return;
+    const respPct = remainingPctOf(openBudget, openFacturacion);
+    if (respPct === null) return;
+
+    const operable = lines.filter((line) => Math.abs(line.openFacturacion) >= 1000 && line.weight >= 1000);
+    operable.forEach((line) => {
+      const deviation = Math.abs(line.remainingPct - respPct);
+      weightedDeviation += Math.min(120, deviation) * line.weight;
+      totalWeight += line.weight;
+    });
+
+    if (operable.length < 2) return;
+
+    const lineDonors = operable
+      .map((line) => {
+        const expected = line.openFacturacion * (1 + respPct / 100);
+        return { line, remaining: line.openBudget - expected };
+      })
+      .filter((item) => item.remaining > 1000)
       .sort((a, b) => b.remaining - a.remaining);
-    const receivers = editableLineRows
-      .filter((item) => item.suggestedAdjustment > 1000)
-      .map((item) => ({ ...item, remaining: Math.abs(item.suggestedAdjustment) }))
+    const lineReceivers = operable
+      .map((line) => {
+        const expected = line.openFacturacion * (1 + respPct / 100);
+        return { line, remaining: expected - line.openBudget };
+      })
+      .filter((item) => item.remaining > 1000)
       .sort((a, b) => b.remaining - a.remaining);
 
-    donors.forEach((donor) => {
-      receivers.forEach((receiver) => {
-        const amount = Math.min(donor.remaining, receiver.remaining);
+    lineDonors.forEach((donor) => {
+      lineReceivers.forEach((receiver) => {
+        const lineAmount = Math.min(donor.remaining, receiver.remaining);
+        if (lineAmount < 1000) return;
+
+        const donorMonths = donor.line.openRows
+          .map((row) => ({ row, remaining: monthSurplus(row, respPct) }))
+          .filter((item) => item.remaining > 1000)
+          .sort((a, b) => b.remaining - a.remaining);
+        const receiverMonths = receiver.line.openRows
+          .map((row) => ({ row, remaining: -monthSurplus(row, respPct) }))
+          .filter((item) => item.remaining > 1000)
+          .sort((a, b) => b.remaining - a.remaining);
+        if (donorMonths.length === 0 || receiverMonths.length === 0) return;
+
+        const sameMonth = donorMonths.find((donorMonth) => (
+          receiverMonths.some((receiverMonth) => receiverMonth.row.monthLabel === donorMonth.row.monthLabel)
+        ));
+        const fromMonth = sameMonth
+          ?? donorMonths[0];
+        const toMonth = receiverMonths.find((item) => item.row.monthLabel === fromMonth.row.monthLabel)
+          ?? receiverMonths[0];
+        const amount = Math.min(lineAmount, fromMonth.remaining, toMonth.remaining);
         if (amount < 1000) return;
 
-        const donorAfterDeviation = deviationAfterBudget(donor.row, donor.row.budget - amount, remainingPct);
-        const receiverAfterDeviation = deviationAfterBudget(receiver.row, receiver.row.budget + amount, remainingPct);
-        const donorPctAfter = pctAfterBudget(donor.row, donor.row.budget - amount);
-        const receiverPctAfter = pctAfterBudget(receiver.row, receiver.row.budget + amount);
-        const beforeImpact = (Math.min(120, donor.deviation) * donor.weight) + (Math.min(120, receiver.deviation) * receiver.weight);
-        const afterImpact = (Math.min(120, donorAfterDeviation) * donor.weight) + (Math.min(120, receiverAfterDeviation) * receiver.weight);
+        const donorAfter = deviationFromTarget(donor.line.openBudget - amount, donor.line.openFacturacion, respPct);
+        const receiverAfter = deviationFromTarget(receiver.line.openBudget + amount, receiver.line.openFacturacion, respPct);
+        const beforeImpact = (Math.min(120, Math.abs(donor.line.remainingPct - respPct)) * donor.line.weight)
+          + (Math.min(120, Math.abs(receiver.line.remainingPct - respPct)) * receiver.line.weight);
+        const afterImpact = (Math.min(120, donorAfter) * donor.line.weight) + (Math.min(120, receiverAfter) * receiver.line.weight);
         const currentImpact = Math.max(0, beforeImpact - afterImpact);
         if (currentImpact <= 0) return;
 
         operations.push({
-          key: `${key}|${donor.row.monthKey}|${receiver.row.monthKey}|${amount.toFixed(0)}`,
-          groupLabel: group.label,
-          fromMonth: donor.row.monthLabel,
-          toMonth: receiver.row.monthLabel,
+          key: `lineas|${responsable}|${donor.line.key}|${receiver.line.key}|${fromMonth.row.monthKey}|${toMonth.row.monthKey}|${amount.toFixed(0)}`,
+          kind: 'lineas',
+          groupKey: donor.line.key,
+          fromGroupKey: donor.line.key,
+          toGroupKey: receiver.line.key,
+          groupLabel: `${donor.line.label} → ${receiver.line.label}`,
+          fromGroupLabel: donor.line.label,
+          toGroupLabel: receiver.line.label,
+          ownerLabel: responsable,
+          fromMonth: fromMonth.row.monthLabel,
+          toMonth: toMonth.row.monthLabel,
           amount,
           impact: currentImpact,
           estimatedGain: 0,
           resultingScore: 0,
-          fromPct: donor.monthPct,
-          toPct: receiver.monthPct,
-          fromPctAfter: donorPctAfter,
-          toPctAfter: receiverPctAfter,
-          targetPct: remainingPct,
+          fromPct: remainingPctOf(fromMonth.row.budget, fromMonth.row.facturacion),
+          toPct: remainingPctOf(toMonth.row.budget, toMonth.row.facturacion),
+          fromPctAfter: remainingPctOf(fromMonth.row.budget - amount, fromMonth.row.facturacion),
+          toPctAfter: remainingPctOf(toMonth.row.budget + amount, toMonth.row.facturacion),
+          targetPct: respPct,
+          fromScopePct: donor.line.remainingPct,
+          toScopePct: receiver.line.remainingPct,
+          fromScopePctAfter: remainingPctOf(donor.line.openBudget - amount, donor.line.openFacturacion),
+          toScopePctAfter: remainingPctOf(receiver.line.openBudget + amount, receiver.line.openFacturacion),
         });
         donor.remaining -= amount;
         receiver.remaining -= amount;
+        fromMonth.remaining -= amount;
+        toMonth.remaining -= amount;
       });
     });
   });
@@ -723,7 +953,7 @@ function buildQualitySummary(rows: CompareRow[], lockedThroughIndex: number): Qu
   operations
     .sort((a, b) => b.impact - a.impact)
     .forEach((operation) => {
-      if (rankedOperations.length >= 8) return;
+      if (rankedOperations.length >= MONTHLY_MOVES) return;
       const rawGain = totalWeight > 0 ? operation.impact / totalWeight / 10 : 0;
       const estimatedGain = Math.min(Math.max(0, 10 - runningScore), rawGain);
       if (estimatedGain < 0.05) return;
@@ -1017,8 +1247,6 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
   const [budgetFile, setBudgetFile] = useState<string | null>(null);
   const [facturacionFile, setFacturacionFile] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [absThreshold, setAbsThreshold] = useState(10000);
-  const [pctThreshold, setPctThreshold] = useState(30);
   const [activeTab, setActiveTab] = useState<ComparatorTab>('analisis');
   const [activeView, setActiveView] = useState<CompareView>('tabla');
   const [chartGroupBy, setChartGroupBy] = useState<ChartGroupKey>('month');
@@ -1116,12 +1344,12 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
       else if (!row.hasFacturacion && row.hasBudget) status = 'Solo budget';
       else if (row.hasFacturacion && !row.hasBudget) status = 'Solo facturación';
       else if (row.facturacion === 0 && row.budget !== 0) status = 'Base cero';
-      else if (absDiff >= absThreshold && absPct >= pctThreshold) status = 'Revisar';
-      else if (absPct >= pctThreshold) status = 'Variación alta';
+      else if (absDiff >= REVIEW_MIN_EUROS && absPct >= REVIEW_MIN_PCT) status = 'Revisar';
+      else if (absPct >= REVIEW_MIN_PCT) status = 'Variación alta';
 
       return { ...row, diff, pct, status };
     });
-  }, [absThreshold, budgetLines, facturacionLines, pctThreshold]);
+  }, [budgetLines, facturacionLines]);
 
   const filteredRows = useMemo(() => {
     const filtered = comparisonRows.filter((row) => (
@@ -1225,7 +1453,18 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
   const qualitySummary = useMemo(() => buildQualitySummary(filteredRows, lockedThroughIndex), [filteredRows, lockedThroughIndex]);
   const companyQualitySummary = useMemo(() => buildQualitySummary(comparisonRows, lockedThroughIndex), [comparisonRows, lockedThroughIndex]);
   const qualityVerdict = scoreVerdict(qualitySummary.score);
-  const companyScoreDiffers = Math.abs(companyQualitySummary.score - qualitySummary.score) >= 0.15;
+  const operationSelectionScores = useMemo(
+    () => scoresAfterOperations(filteredRows, qualitySummary.operations, lockedThroughIndex),
+    [filteredRows, lockedThroughIndex, qualitySummary.operations],
+  );
+  const operationCompanyScores = useMemo(
+    () => scoresAfterOperations(comparisonRows, qualitySummary.operations, lockedThroughIndex),
+    [comparisonRows, lockedThroughIndex, qualitySummary.operations],
+  );
+  const selectionAfterMoves = operationSelectionScores[operationSelectionScores.length - 1] ?? qualitySummary.score;
+  const companyAfterMoves = operationCompanyScores[operationCompanyScores.length - 1] ?? companyQualitySummary.score;
+  const selectionGain = Math.max(0, selectionAfterMoves - qualitySummary.score);
+  const companyGain = Math.max(0, companyAfterMoves - companyQualitySummary.score);
   const classificationIssues = useMemo<ClassificationIssue[]>(() => {
     const grouped = new Map<string, ClassificationIssue>();
 
@@ -1468,7 +1707,7 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Comparador budget</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              ¿Los meses abiertos de cada línea siguen el mismo % que el resto del año? Te da una nota y los movimientos para subirla.
+              ¿Los meses abiertos de cada línea siguen el % de esa línea, y las líneas de un responsable (Pablo, etc.) el % que te has marcado para él? Te da una nota, 5 movimientos del mes, y cuánto sube la selección y la empresa.
             </p>
           </div>
           <div className="inline-flex rounded-md border border-[var(--border)] bg-white p-1">
@@ -1615,7 +1854,7 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
           <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
             <div className="grid gap-5 lg:grid-cols-[minmax(220px,280px)_1fr]">
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Cuadre del budget</p>
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Esta selección</p>
                 <p className={`mt-2 text-5xl font-semibold tabular-nums ${scoreTone(qualitySummary.score)}`}>
                   {formatScore(qualitySummary.score)}
                   <span className="ml-1 text-lg font-medium text-[var(--text-muted)]">/10</span>
@@ -1624,14 +1863,27 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
                 <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{qualityVerdict.hint}</p>
                 {qualitySummary.operations.length > 0 && (
                   <p className="mt-3 text-xs text-[var(--text-secondary)]">
-                    Con estos movimientos: <span className="font-semibold text-[var(--text-primary)]">{formatScore(qualitySummary.potentialScore)}/10</span>
+                    Con {qualitySummary.operations.length} movimientos:{' '}
+                    <span className="font-semibold text-[var(--text-primary)]">{formatScore(selectionAfterMoves)}/10</span>
+                    <span className="ml-1 text-[var(--success)]">(+{formatScore(selectionGain)})</span>
                   </p>
                 )}
-                {companyScoreDiffers && (
-                  <p className="mt-2 text-xs text-[var(--text-muted)]">
-                    Empresa sin filtros: {formatScore(companyQualitySummary.score)}/10
+                <div className="mt-4 border-t border-[var(--border)] pt-3">
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Empresa entera</p>
+                  <p className={`mt-1 text-2xl font-semibold tabular-nums ${scoreTone(companyQualitySummary.score)}`}>
+                    {formatScore(companyQualitySummary.score)}
+                    <span className="ml-1 text-sm font-medium text-[var(--text-muted)]">/10</span>
                   </p>
-                )}
+                  {qualitySummary.operations.length > 0 ? (
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                      Con esos {qualitySummary.operations.length}:{' '}
+                      <span className="font-semibold text-[var(--text-primary)]">{formatScore(companyAfterMoves)}/10</span>
+                      <span className="ml-1 text-[var(--success)]">(+{formatScore(companyGain)})</span>
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">Sin movimientos, la nota de empresa no cambia.</p>
+                  )}
+                </div>
               </div>
 
               <div className="min-w-0">
@@ -1639,7 +1891,7 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
                       <div className="max-w-xl">
                         <p className="text-sm font-semibold">Cómo se puntúa</p>
                         <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
-                          Cada línea se puntúa solo con los meses abiertos. El objetivo es el % de lo que queda del año en esa línea, no el anual (los meses cerrados ya no cuentan). 0% de desvío = 10; cada 10 puntos de desvío medio restan 1. Ahora: {formatPercent(qualitySummary.averageDeviation)}.
+                          Cada línea, solo meses abiertos: que cada mes siga el % de lo que queda en esa línea. Y cada responsable: si Pablo está a -5% en lo abierto, sus líneas deberían andar cerca de -5% (su total no se toca, se reparte). 0% de desvío = 10; cada 10 puntos de desvío medio restan 1. Ahora: {formatPercent(qualitySummary.averageDeviation)}.
                         </p>
                       </div>
                       <label className="space-y-1">
@@ -1659,32 +1911,39 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
 
                     {qualitySummary.operations.length === 0 ? (
                       <p className="mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
-                        No veo movimientos claros entre meses abiertos. Si la nota no es 10, el desvío está muy repartido o en líneas pequeñas.
+                        No veo movimientos claros. Si la nota no es 10, el desvío está muy repartido, en líneas pequeñas, o las de cada responsable ya se parecen.
                       </p>
                     ) : (
                       <div className="mt-4">
-                        <p className="text-xs font-medium text-[var(--text-secondary)]">Para subir puntos, mueve budget dentro de la misma línea</p>
+                        <p className="text-xs font-medium text-[var(--text-secondary)]">
+                          {MONTHLY_MOVES} movimientos del mes: entre meses de la misma línea, o entre líneas del mismo responsable. La nota de la derecha es la selección; debajo, la empresa.
+                        </p>
                         <div className="mt-2 space-y-2">
                           {qualitySummary.operations.slice(0, 5).map((operation, index) => (
                             <div key={operation.key} className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2">
-                              <p className="min-w-0 text-sm">
+                              <div className="min-w-0 text-sm">
                                 <span className="mr-2 font-mono text-xs text-[var(--text-muted)]">{index + 1}.</span>
-                                Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>
-                                <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{operation.groupLabel}</span>
-                              </p>
-                              <p className="shrink-0 rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">
-                                +{formatScore(operation.estimatedGain)} → {formatScore(operation.resultingScore)}
+                                <span className="mr-2 rounded bg-[var(--bg-soft)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                                  {operationKindLabel(operation.kind)}
+                                </span>
+                                <QualityOperationCopy operation={operation} />
+                              </div>
+                              <p className="shrink-0 rounded-md bg-[var(--success-soft)] px-2 py-1 text-right text-xs font-medium text-[var(--success)]">
+                                <span className="block">Selección +{formatScore(moveScoreGain(operationSelectionScores, index, qualitySummary.score))} → {formatScore(operationSelectionScores[index] ?? qualitySummary.score)}</span>
+                                <span className="mt-0.5 block text-[10px] text-[var(--text-secondary)]">
+                                  Empresa +{formatScore(moveScoreGain(operationCompanyScores, index, companyQualitySummary.score))} → {formatScore(operationCompanyScores[index] ?? companyQualitySummary.score)}
+                                </span>
                               </p>
                             </div>
                           ))}
                         </div>
-                        {qualitySummary.operations.length > 5 && (
+                        {qualitySummary.operations.length >= MONTHLY_MOVES && (
                           <button
                             type="button"
                             onClick={() => setActiveView('operaciones')}
                             className="mt-2 text-xs font-medium text-[var(--accent)] hover:underline"
                           >
-                            Ver los {qualitySummary.operations.length} movimientos
+                            Ver el detalle de los {qualitySummary.operations.length} movimientos
                           </button>
                         )}
                       </div>
@@ -1817,24 +2076,6 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
                     </select>
                   </label>
                 )}
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Umbral diferencia €</span>
-                  <input
-                    type="number"
-                    value={absThreshold}
-                    onChange={(event) => setAbsThreshold(parseFloat(event.target.value) || 0)}
-                    className="h-10 w-40 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm outline-none focus:border-[var(--accent)]"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Umbral variación %</span>
-                  <input
-                    type="number"
-                    value={pctThreshold}
-                    onChange={(event) => setPctThreshold(parseFloat(event.target.value) || 0)}
-                    className="h-10 w-40 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm outline-none focus:border-[var(--accent)]"
-                  />
-                </label>
               </div>
               {activeView === 'tabla' && (
                 <button
@@ -2191,13 +2432,13 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
                 <div className="mb-4">
                   <p className="text-sm font-semibold">Movimientos para subir la nota</p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Mismo importe, misma línea, de un mes demasiado alto vs el % de los meses abiertos a uno demasiado bajo. El total de lo que queda no cambia: solo se aplana la forma.
+                    {MONTHLY_MOVES} al mes. Pueden ser entre meses de la misma línea, o entre líneas del mismo responsable (el total de Pablo no cambia: se reparte para que sus líneas se parezcan a su %). Verás cuánto sube esta selección y cuánto sube la empresa entera.
                   </p>
                 </div>
 
                 {qualitySummary.operations.length === 0 ? (
                   <p className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-3 text-xs font-medium text-[var(--success)]">
-                    No veo movimientos claros entre meses abiertos con los filtros actuales.
+                    No veo movimientos claros con los filtros actuales.
                   </p>
                 ) : (
                   <div className="space-y-3">
@@ -2205,19 +2446,29 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
                       <div key={operation.key} className="rounded-md border border-[var(--border)] p-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <p className="text-sm font-semibold">Movimiento {index + 1}</p>
-                            <p className="mt-1 text-xs text-[var(--text-secondary)]">{operation.groupLabel}</p>
+                            <p className="text-sm font-semibold">
+                              Movimiento {index + 1}
+                              <span className="ml-2 rounded bg-[var(--bg-soft)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-secondary)]">
+                                {operationKindLabel(operation.kind)}
+                              </span>
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                              {operation.kind === 'lineas' ? operation.ownerLabel : operation.fromGroupLabel || operation.groupLabel}
+                            </p>
                           </div>
-                          <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-xs font-medium text-[var(--success)]">
-                            +{formatScore(operation.estimatedGain)} · nota {formatScore(operation.resultingScore)}
+                          <p className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-right text-xs font-medium text-[var(--success)]">
+                            <span className="block">Selección +{formatScore(moveScoreGain(operationSelectionScores, index, qualitySummary.score))} · {formatScore(operationSelectionScores[index] ?? qualitySummary.score)}/10</span>
+                            <span className="mt-0.5 block text-[10px] font-medium text-[var(--text-secondary)]">
+                              Empresa +{formatScore(moveScoreGain(operationCompanyScores, index, companyQualitySummary.score))} · {formatScore(operationCompanyScores[index] ?? companyQualitySummary.score)}/10
+                            </span>
                           </p>
                         </div>
-                        <p className="mt-3 text-sm">
-                          Quita <span className="font-mono font-semibold">{formatCurrency(operation.amount)}</span> de <span className="font-semibold">{operation.fromMonth}</span> y mételo en <span className="font-semibold">{operation.toMonth}</span>.
-                        </p>
+                        <div className="mt-3 text-sm">
+                          <QualityOperationCopy operation={operation} />
+                        </div>
                         <div className="mt-2 grid gap-2 text-xs text-[var(--text-secondary)] md:grid-cols-3">
                           <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
-                            % meses abiertos <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.targetPct)}</span>
+                            Objetivo {operation.kind === 'lineas' ? 'del responsable' : 'de la línea'} <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.targetPct)}</span>
                           </p>
                           <p className="rounded bg-[var(--bg-soft)] px-2 py-1">
                             {operation.fromMonth} <span className="font-medium text-[var(--text-primary)]">{formatPercent(operation.fromPct)}</span> → <span className="font-medium text-[var(--success)]">{formatPercent(operation.fromPctAfter)}</span>
