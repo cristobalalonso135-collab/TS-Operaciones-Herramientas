@@ -83,6 +83,10 @@ export interface AbonoComputed extends AbonoCase {
   overdueDays: number | null;
   reviewOverdue: boolean;
   tradeTermName: string | null;
+  pay1Date: string | null;
+  pay1Amount: number | null;
+  pay2Date: string | null;
+  pay2Amount: number | null;
 }
 
 export const EMPTY_CATALOGS: AbonosCatalogs = {
@@ -182,10 +186,32 @@ export function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((to.getTime() - from.getTime()) / 86400000);
 }
 
-export function receivedTotalFor(caseId: string, receipts: AbonoReceipt[]): number {
+export function receiptsForCase(receipts: AbonoReceipt[], caseId: string): AbonoReceipt[] {
   return receipts
     .filter((receipt) => receipt.caseId === caseId)
-    .reduce((sum, receipt) => sum + receipt.amount, 0);
+    .sort((a, b) => {
+      const dateDiff = (a.receivedAt || '').localeCompare(b.receivedAt || '');
+      return dateDiff !== 0 ? dateDiff : a.id.localeCompare(b.id);
+    });
+}
+
+export function receivedTotalFor(caseId: string, receipts: AbonoReceipt[]): number {
+  return receiptsForCase(receipts, caseId).reduce((sum, receipt) => sum + receipt.amount, 0);
+}
+
+export function paymentSlots(receipts: AbonoReceipt[], caseId: string): {
+  pay1Date: string | null;
+  pay1Amount: number | null;
+  pay2Date: string | null;
+  pay2Amount: number | null;
+} {
+  const list = receiptsForCase(receipts, caseId);
+  return {
+    pay1Date: list[0]?.receivedAt || null,
+    pay1Amount: list[0] ? list[0].amount : null,
+    pay2Date: list[1]?.receivedAt || null,
+    pay2Amount: list[1] ? list[1].amount : null,
+  };
 }
 
 export function pendingAmount(expectedAmount: number | null, receivedTotal: number): number {
@@ -207,6 +233,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
   const overdue = knownOpen && pending > 0 && !!row.dueDate && row.dueDate < today;
   const reviewOverdue = knownOpen && !!row.nextReview && row.nextReview <= today;
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
+  const payments = paymentSlots(receipts, row.id);
   return {
     ...row,
     receivedTotal,
@@ -214,6 +241,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     overdueDays: overdue && row.dueDate ? daysBetween(row.dueDate, today) : null,
     reviewOverdue,
     tradeTermName: term?.name ?? null,
+    ...payments,
   };
 }
 

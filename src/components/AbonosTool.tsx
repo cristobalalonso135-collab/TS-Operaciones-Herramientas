@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -16,6 +16,7 @@ import {
   mergeCatalog,
   nextRegistro,
   parseMoney,
+  receiptsForCase,
   statusAfterReceipts,
   todayIso,
   weeklyTasks,
@@ -39,18 +40,115 @@ import {
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, GripVertical, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
-  { id: 'seguimiento', label: 'Abonos / Seguimiento' },
+  { id: 'seguimiento', label: 'Abonos' },
   { id: 'terms', label: 'Trade Terms' },
   { id: 'importar', label: 'Importar' },
   { id: 'exportar', label: 'Exportar' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-type SortKey = 'registro' | 'dueDate' | 'brand' | 'type' | 'area' | 'teamMotivo' | 'origin' | 'expectedAmount' | 'receivedTotal' | 'pending' | 'status' | 'nextReview' | 'addedBy';
+type SortKey =
+  | 'registro'
+  | 'addedBy'
+  | 'dueDate'
+  | 'brand'
+  | 'type'
+  | 'area'
+  | 'teamMotivo'
+  | 'pending'
+  | 'status'
+  | 'comment';
+
+const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number; align?: 'right' }> = [
+  { key: 'registro', label: 'Registro', width: 96 },
+  { key: 'addedBy', label: 'Añadido por', width: 120 },
+  { key: 'dueDate', label: 'Fecha prevista', width: 130 },
+  { key: 'brand', label: 'Empresa', width: 120 },
+  { key: 'type', label: 'Tipo', width: 140 },
+  { key: 'area', label: 'Área', width: 120 },
+  { key: 'teamMotivo', label: 'Equipo / Motivo', width: 160 },
+  { key: 'pending', label: 'Resumen', width: 168, align: 'right' },
+  { key: 'status', label: 'Estado', width: 170 },
+  { key: 'comment', label: 'Comentario', width: 220 },
+];
+
+const COL_STORAGE = 'ts-abonos-cols-v3';
+const BLANK = '__blank__';
+const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
+const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
+const COLUMN_BY_KEY = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col])) as Record<SortKey, (typeof COLUMN_DEFS)[number]>;
+
+function loadColLayout(): { order: SortKey[]; widths: Record<SortKey, number> } {
+  if (typeof window === 'undefined') return { order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS };
+  try {
+    const raw = window.localStorage.getItem(COL_STORAGE);
+    if (!raw) return { order: DEFAULT_ORDER, widths: { ...DEFAULT_WIDTHS } };
+    const parsed = JSON.parse(raw) as { order?: SortKey[]; widths?: Partial<Record<SortKey, number>> };
+    const order = DEFAULT_ORDER.filter((key) => parsed.order?.includes(key)).concat(DEFAULT_ORDER.filter((key) => !parsed.order?.includes(key)));
+    const widths = { ...DEFAULT_WIDTHS };
+    DEFAULT_ORDER.forEach((key) => {
+      const width = parsed.widths?.[key];
+      if (typeof width === 'number' && width >= 72) widths[key] = width;
+    });
+    return { order, widths };
+  } catch {
+    return { order: DEFAULT_ORDER, widths: { ...DEFAULT_WIDTHS } };
+  }
+}
+
+function uniquePresent(values: Array<string | null | undefined>): { options: string[]; hasBlank: boolean } {
+  const hasBlank = values.some((value) => !String(value ?? '').trim());
+  return { options: mergeCatalog([], values.map((value) => String(value ?? '').trim()).filter(Boolean)), hasBlank };
+}
+
+function matchesFilter(selected: string, actual: string): boolean {
+  if (!selected) return true;
+  if (selected === BLANK) return !actual.trim();
+  return actual === selected;
+}
+
+function renderAbonoCell(row: AbonoComputed, key: SortKey) {
+  switch (key) {
+    case 'registro':
+      return `#${row.registro}`;
+    case 'addedBy':
+      return displayDash(row.addedBy);
+    case 'dueDate':
+      return formatIsoDate(row.dueDate);
+    case 'brand':
+      return displayDash(row.brand);
+    case 'type':
+      return displayDash(row.type);
+    case 'area':
+      return displayDash(row.area);
+    case 'teamMotivo':
+      return displayDash(row.teamMotivo);
+    case 'pending':
+      return (
+        <div className="space-y-0.5 text-right font-mono text-[11px] leading-4">
+          <p className="text-[var(--text-secondary)]">Prev. {formatMoney(row.expectedAmount)}</p>
+          <p className="text-[var(--success)]">Rec. {formatMoney(row.receivedTotal)}</p>
+          <p className="font-semibold text-[var(--text-primary)]">Pend. {formatMoney(row.pending)}</p>
+        </div>
+      );
+    case 'status':
+      return <StatusPill row={row} />;
+    case 'comment':
+      return displayDash(row.comment);
+    default:
+      return null;
+  }
+}
+
+function paymentLabel(index: number): string {
+  if (index === 0) return '1er pago';
+  if (index === 1) return '2º pago';
+  return `Pago ${index + 1}`;
+}
 
 const emptyFilters = {
   brand: '',
@@ -171,6 +269,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [note, setNote] = useState<string | null>(null);
   const [filters, setFilters] = useState(emptyFilters);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'dueDate', dir: 'asc' });
+  const [columnOrder, setColumnOrder] = useState<SortKey[]>(DEFAULT_ORDER);
+  const [columnWidths, setColumnWidths] = useState<Record<SortKey, number>>(DEFAULT_WIDTHS);
+  const [colsReady, setColsReady] = useState(false);
+  const dragCol = useRef<SortKey | null>(null);
+  const resizeRef = useRef<{ key: SortKey; startX: number; startW: number } | null>(null);
   const [editing, setEditing] = useState<AbonoCase | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [form, setForm] = useState<Partial<AbonoCase>>(emptyForm());
@@ -193,6 +296,36 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }, []);
 
   useEffect(() => {
+    const layout = loadColLayout();
+    setColumnOrder(layout.order);
+    setColumnWidths(layout.widths);
+    setColsReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!colsReady || typeof window === 'undefined') return;
+    window.localStorage.setItem(COL_STORAGE, JSON.stringify({ order: columnOrder, widths: columnWidths }));
+  }, [colsReady, columnOrder, columnWidths]);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      const session = resizeRef.current;
+      if (!session) return;
+      const next = Math.max(72, session.startW + (event.clientX - session.startX));
+      setColumnWidths((widths) => ({ ...widths, [session.key]: next }));
+    };
+    const onUp = () => {
+      resizeRef.current = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     loadAbonosState()
       .then((result) => {
@@ -206,18 +339,35 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setEditing(null);
+      setForm(emptyForm());
+      setPanelOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [panelOpen]);
+
   const computed = useMemo(() => (state ? computeAll(state) : []), [state]);
   const filtered = useMemo(() => {
     const search = filters.search.trim().toLocaleLowerCase('es');
     return computed.filter((row) => {
-      if (filters.brand && row.brand !== filters.brand) return false;
-      if (filters.type && row.type !== filters.type) return false;
-      if (filters.area && row.area !== filters.area) return false;
-      if (filters.teamMotivo && row.teamMotivo !== filters.teamMotivo) return false;
-      if (filters.origin && row.origin !== filters.origin) return false;
-      if (filters.status && row.status !== filters.status) return false;
-      if (filters.addedBy && row.addedBy !== filters.addedBy) return false;
-      if (filters.year && (row.dueDate || '').slice(0, 4) !== filters.year) return false;
+      if (filters.brand && !matchesFilter(filters.brand, row.brand)) return false;
+      if (filters.type && !matchesFilter(filters.type, row.type)) return false;
+      if (filters.area && !matchesFilter(filters.area, row.area)) return false;
+      if (filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
+      if (filters.origin && !matchesFilter(filters.origin, row.origin)) return false;
+      if (filters.status && !matchesFilter(filters.status, row.status)) return false;
+      if (filters.addedBy && !matchesFilter(filters.addedBy, row.addedBy)) return false;
+      if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
       if (filters.overdue && row.overdueDays === null) return false;
       if (filters.review && !row.reviewOverdue) return false;
       if (search) {
@@ -239,6 +389,12 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     return copy;
   }, [filtered, sort]);
 
+  const listTotals = useMemo(() => filtered.reduce((acc, row) => ({
+    expected: acc.expected + (row.expectedAmount ?? 0),
+    received: acc.received + row.receivedTotal,
+    pending: acc.pending + row.pending,
+  }), { expected: 0, received: 0, pending: 0 }), [filtered]);
+
   const tasks = useMemo(() => weeklyTasks(computed), [computed]);
 
   const kpis = useMemo(() => {
@@ -255,6 +411,18 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     return mergeCatalog([...ABONOS_PEOPLE], state.cases.map((row) => row.addedBy));
   }, [state]);
 
+  const filterOptions = useMemo(() => {
+    const brands = uniquePresent(computed.map((row) => row.brand));
+    const types = uniquePresent(computed.map((row) => row.type));
+    const areas = uniquePresent(computed.map((row) => row.area));
+    const teams = uniquePresent(computed.map((row) => row.teamMotivo));
+    const origins = uniquePresent(computed.map((row) => row.origin));
+    const statuses = uniquePresent(computed.map((row) => row.status));
+    const authors = uniquePresent(computed.map((row) => row.addedBy));
+    const years = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
+    return { brands, types, areas, teams, origins, statuses, authors, years };
+  }, [computed]);
+
   if (!state) {
     return (
       <div className="abonos-shell rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-6 text-sm text-[var(--text-secondary)]">
@@ -270,11 +438,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setTab('seguimiento');
   };
 
+  const closePanel = () => {
+    setEditing(null);
+    setForm(emptyForm());
+    setPanelOpen(false);
+  };
+
   const openEdit = (row: AbonoCase) => {
     setEditing(row);
     setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '' });
     setPanelOpen(true);
-    setTab('seguimiento');
   };
 
   const applyWeeklyTask = async (task: WeeklyTask) => {
@@ -335,15 +508,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const deleteCase = async (id: string) => {
-    if (!window.confirm('¿Eliminar este abono y sus recepciones?')) return;
+    if (!window.confirm(`¿Eliminar el abono #${state.cases.find((row) => row.id === id)?.registro ?? ''} y sus pagos?`)) return;
     await persist({
       ...state,
       cases: state.cases.filter((row) => row.id !== id),
       receipts: state.receipts.filter((row) => row.caseId !== id),
     }, backend);
-    setEditing(null);
-    setForm(emptyForm());
-    setPanelOpen(false);
+    closePanel();
   };
 
   const cancelCase = async (id: string) => {
@@ -492,12 +663,25 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
-  const caseReceipts = editing ? state.receipts.filter((row) => row.caseId === editing.id).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt)) : [];
+  const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
   const brandTerms = state.tradeTerms.filter((term) => term.brand === form.brand && term.active !== false);
-  const years = Array.from(new Set(computed.map((row) => (row.dueDate || '').slice(0, 4)).filter(Boolean))).sort();
+  const tableWidth = columnOrder.reduce((sum, key) => sum + columnWidths[key], 0);
 
   const toggleSort = (key: SortKey) => {
     setSort((current) => current.key === key ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  };
+
+  const moveColumn = (from: SortKey, to: SortKey) => {
+    if (from === to) return;
+    setColumnOrder((order) => {
+      const next = [...order];
+      const fromIdx = next.indexOf(from);
+      const toIdx = next.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0) return order;
+      next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, from);
+      return next;
+    });
   };
 
   return (
@@ -507,7 +691,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">05 Abonos</p>
-          <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento de compensaciones</h2>
+          <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Abonos</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
             Entre semana: altas y cambios de estado. Un día a la semana: las tareas de abajo.
           </p>
@@ -539,7 +723,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold">Tareas de la revisión</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Lo que te toca hacer hoy: reclamar, seguir o completar la ficha. Lo de Pablo no sale aquí.
+              Pincha una tarea o Editar para abrir la ficha. Borrar quita el abono. Lo de Pablo no sale aquí.
             </p>
             <div className="mt-3 space-y-2">
               {tasks.length === 0 && (
@@ -548,20 +732,40 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               {tasks.map((task) => (
                 <div
                   key={task.id}
-                  className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-[var(--border)] bg-white px-3 py-3"
+                  className="space-y-3 rounded-md border border-[var(--border)] bg-white px-3 py-3"
                 >
-                  <button type="button" onClick={() => openEdit(task.row)} className="min-w-0 flex-1 text-left">
+                  <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
                     <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{task.title}</p>
                     <p className="mt-1 text-sm font-medium">#{task.row.registro} · {displayDash(task.row.brand)} · {displayDash(task.row.area)} · {displayDash(task.row.teamMotivo)}</p>
                     <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{task.reason} · {formatMoney(task.row.pending)}</p>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => applyWeeklyTask(task)}
-                    className="h-9 shrink-0 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
-                  >
-                    {task.actionLabel}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(task.kind === 'reclamar' || task.kind === 'seguir') && (
+                      <button
+                        type="button"
+                        onClick={() => applyWeeklyTask(task)}
+                        className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                      >
+                        {task.actionLabel}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => openEdit(task.row)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--border)] px-3 text-xs font-semibold hover:bg-[var(--bg-soft)]"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteCase(task.row.id)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-red-200 px-3 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Borrar
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -576,14 +780,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
               <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Buscar" className="h-10 w-full rounded-md border border-[var(--border)] bg-white pl-9 pr-3 text-sm" />
             </label>
-            <FilterSelect value={filters.brand} options={state.catalogs.brands} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
-            <FilterSelect value={filters.type} options={state.catalogs.types} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
-            <FilterSelect value={filters.area} options={state.catalogs.areas} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
-            <FilterSelect value={filters.teamMotivo} options={state.catalogs.teams} placeholder="Equipo / Motivo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
-            <FilterSelect value={filters.origin} options={[...ABONO_ORIGINS]} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
-            <FilterSelect value={filters.status} options={[...ABONO_STATUSES]} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
-            <FilterSelect value={filters.year} options={years} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
-            <FilterSelect value={filters.addedBy} options={peopleOptions} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
+            <FilterSelect value={filters.brand} options={filterOptions.brands.options} includeBlank={filterOptions.brands.hasBlank} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
+            <FilterSelect value={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
+            <FilterSelect value={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
+            <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo / Motivo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
+            <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
+            <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
+            <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
+            <FilterSelect value={filters.addedBy} options={filterOptions.authors.options} includeBlank={filterOptions.authors.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
             <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
               <input type="checkbox" checked={filters.overdue} onChange={(event) => setFilters({ ...filters, overdue: event.target.checked })} />
               Vencidos
@@ -594,172 +798,104 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             </label>
           </div>
 
+          <div className="grid gap-2 sm:grid-cols-4">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <p className="text-[11px] text-[var(--text-secondary)]">Abonos</p>
+              <p className="mt-0.5 text-sm font-semibold">{sorted.length}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <p className="text-[11px] text-[var(--text-secondary)]">Previsto</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(listTotals.expected)}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <p className="text-[11px] text-[var(--text-secondary)]">Recibido</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(listTotals.received)}</p>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
+              <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(listTotals.pending)}</p>
+            </div>
+          </div>
+
           <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="min-w-[1180px] w-full border-collapse text-sm">
+            <table className="border-collapse text-sm" style={{ tableLayout: 'fixed', width: tableWidth }}>
+              <colgroup>
+                {columnOrder.map((key) => (
+                  <col key={key} style={{ width: columnWidths[key] }} />
+                ))}
+              </colgroup>
               <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
                 <tr>
-                  {([
-                    ['registro', 'Registro'],
-                    ['dueDate', 'Fecha prevista'],
-                    ['brand', 'Empresa'],
-                    ['type', 'Tipo'],
-                    ['area', 'Área'],
-                    ['teamMotivo', 'Equipo / Motivo'],
-                    ['origin', 'Origen'],
-                    ['expectedAmount', 'Previsto'],
-                    ['receivedTotal', 'Recibido'],
-                    ['pending', 'Pendiente'],
-                    ['status', 'Estado'],
-                    ['nextReview', 'Próx. revisión'],
-                    ['addedBy', 'Añadido por'],
-                  ] as Array<[SortKey, string]>).map(([key, label]) => (
-                    <th key={key} className="border-b border-[var(--border)] px-3 py-2 font-medium">
-                      <button type="button" onClick={() => toggleSort(key)} className="hover:text-[var(--text-primary)]">{label}</button>
-                    </th>
-                  ))}
+                  {columnOrder.map((key) => {
+                    const col = COLUMN_BY_KEY[key];
+                    return (
+                      <th
+                        key={key}
+                        className="abonos-th border-b border-[var(--border)] px-3 py-2 font-medium"
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          const from = dragCol.current;
+                          dragCol.current = null;
+                          if (from) moveColumn(from, key);
+                        }}
+                      >
+                        <div className="flex min-w-0 items-center gap-1 pr-2">
+                          <span
+                            draggable
+                            onDragStart={(event) => {
+                              dragCol.current = key;
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', key);
+                            }}
+                            onDragEnd={() => {
+                              dragCol.current = null;
+                            }}
+                            className="inline-flex shrink-0 cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                            aria-label={`Mover columna ${col.label}`}
+                          >
+                            <GripVertical className="h-3.5 w-3.5" />
+                          </span>
+                          <button type="button" onClick={() => toggleSort(key)} className="truncate text-left hover:text-[var(--text-primary)]">
+                            {col.label}
+                          </button>
+                        </div>
+                        <span
+                          className="abonos-col-resizer"
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            resizeRef.current = { key, startX: event.clientX, startW: columnWidths[key] };
+                          }}
+                        />
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((row) => (
                   <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer hover:bg-white">
-                    <td className="border-b border-[var(--border)] px-3 py-2 font-medium">#{row.registro}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{formatIsoDate(row.dueDate)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.brand)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.type)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.area)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.teamMotivo)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.origin)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatMoney(row.expectedAmount)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatMoney(row.receivedTotal)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatMoney(row.pending)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">
-                      <StatusPill row={row} />
-                    </td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{formatIsoDate(row.nextReview)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.addedBy)}</td>
+                    {columnOrder.map((key) => {
+                      const col = COLUMN_BY_KEY[key];
+                      return (
+                        <td
+                          key={key}
+                          className={`border-b border-[var(--border)] px-3 py-2 ${key === 'registro' ? 'font-medium' : ''} ${key === 'pending' ? 'text-right' : col.align === 'right' ? 'text-right font-mono' : ''}`}
+                        >
+                          <div className={key === 'status' || key === 'pending' ? '' : 'truncate'} title={key === 'comment' ? row.comment : undefined}>{renderAbonoCell(row, key)}</div>
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
             {sorted.length === 0 && <p className="p-4 text-sm text-[var(--text-secondary)]">No hay abonos con estos filtros.</p>}
           </div>
-
-          {(panelOpen) && (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
-              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-                <div className="mb-4 flex items-center justify-between">
-                  <p className="text-sm font-semibold">{editing ? `Registro #${editing.registro}` : 'Nuevo abono'}</p>
-                  <button type="button" onClick={() => { setEditing(null); setForm(emptyForm()); setPanelOpen(false); }} className="text-[var(--text-muted)]"><X className="h-4 w-4" /></button>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <CatalogField label="Marca" value={form.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setForm({ ...form, brand, tradeTermId: null })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
-                  <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
-                  <CatalogField label="Equipo / Motivo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
-                    <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Trade Term' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
-                    </select>
-                  </label>
-                  <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto</span>
-                    <input value={form.expectedAmount ?? ''} onChange={(event) => setForm({ ...form, expectedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista</span>
-                    <input type="date" value={form.dueDate || ''} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-                  </label>
-                  {form.origin === 'Trade Term' && (
-                    <label className="space-y-1 md:col-span-2">
-                      <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term</span>
-                      <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                        <option value="">Selecciona</option>
-                        {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
-                      </select>
-                    </label>
-                  )}
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por</span>
-                    <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Informado por</span>
-                    <input value={form.informedBy || ''} onChange={(event) => setForm({ ...form, informedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
-                    <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as AbonoStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Próxima revisión</span>
-                    <input type="date" value={form.nextReview || ''} onChange={(event) => setForm({ ...form, nextReview: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-                  </label>
-                  <label className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
-                    <textarea value={form.comment || ''} onChange={(event) => setForm({ ...form, comment: event.target.value })} rows={3} className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm" />
-                  </label>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button type="button" onClick={saveForm} className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white">Guardar</button>
-                  {editing && (
-                    <>
-                      <button type="button" onClick={() => cancelCase(editing.id)} className="rounded-md border border-[var(--border)] px-4 py-2 text-sm">Cancelar caso</button>
-                      <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-                  <p className="text-xs text-[var(--text-secondary)]">Importe previsto</p>
-                  <p className="text-xl font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
-                  <p className="mt-3 text-xs text-[var(--text-secondary)]">Total recibido</p>
-                  <p className="text-xl font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
-                  <p className="mt-3 text-xs text-[var(--text-secondary)]">Pendiente</p>
-                  <p className="text-xl font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
-                  {currentComputed?.overdueDays !== null && currentComputed?.overdueDays !== undefined && (
-                    <p className="mt-3 text-sm font-medium text-[var(--danger)]">Vencido hace {currentComputed.overdueDays} días</p>
-                  )}
-                  {currentComputed?.reviewOverdue && (
-                    <p className="mt-1 text-sm font-medium text-[var(--warning)]">Revisar hoy</p>
-                  )}
-                </div>
-                {editing && (
-                  <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-                    <p className="text-sm font-semibold">Recepciones</p>
-                    <div className="mt-3 space-y-2">
-                      {caseReceipts.map((receipt) => (
-                        <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-3 py-2 text-sm">
-                          <div>
-                            <p className="font-medium">{formatIsoDate(receipt.receivedAt)} · {formatMoney(receipt.amount)}</p>
-                            <p className="text-xs text-[var(--text-secondary)]">{receipt.reference || receipt.comment || '—'}</p>
-                          </div>
-                          <button type="button" onClick={() => deleteReceipt(receipt.id)} className="text-[var(--danger)]"><Trash2 className="h-4 w-4" /></button>
-                        </div>
-                      ))}
-                      {caseReceipts.length === 0 && <p className="text-xs text-[var(--text-secondary)]">Aún no hay recepciones.</p>}
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <input value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] px-3 text-right font-mono text-sm" />
-                      <input value={receiptDraft.reference} onChange={(event) => setReceiptDraft({ ...receiptDraft, reference: event.target.value })} placeholder="Referencia" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <input value={receiptDraft.comment} onChange={(event) => setReceiptDraft({ ...receiptDraft, comment: event.target.value })} placeholder="Comentario" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <button type="button" onClick={addReceipt} className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">Añadir recepción</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </section>
       )}
 
@@ -960,7 +1096,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           </button>
           <button type="button" onClick={() => exportWorkbook(sorted)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
             <p className="text-sm font-semibold">Exportar vista actual</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Respeta los filtros de Abonos / Seguimiento.</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">Respeta los filtros de Abonos.</p>
           </button>
           <button
             type="button"
@@ -972,6 +1108,203 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <p className="mt-1 text-sm text-[var(--text-secondary)]">Vacía la lista y las recepciones para volver a importar. Los trade terms se quedan.</p>
           </button>
         </section>
+      )}
+
+      {panelOpen && (
+        <div className="abonos-modal-backdrop" onClick={closePanel}>
+          <div
+            className="abonos-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="abonos-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+              <div className="min-w-0">
+                <p id="abonos-modal-title" className="font-display text-lg font-semibold tracking-tight">
+                  {editing ? `Registro #${editing.registro}` : 'Nuevo abono'}
+                </p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  {displayDash(form.brand)} · {displayDash(form.area)} · {displayDash(form.teamMotivo)}
+                </p>
+              </div>
+              <button type="button" onClick={closePanel} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+              <div>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Editar</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <CatalogField label="Marca" value={form.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setForm({ ...form, brand, tradeTermId: null })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
+                  <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
+                  <CatalogField label="Equipo / Motivo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
+                    <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Trade Term' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
+                      {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
+                    </select>
+                  </label>
+                  <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto</span>
+                    <input value={form.expectedAmount ?? ''} onChange={(event) => setForm({ ...form, expectedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista</span>
+                    <input type="date" value={form.dueDate || ''} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                  </label>
+                  {form.origin === 'Trade Term' && (
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term</span>
+                      <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                        <option value="">Selecciona</option>
+                        {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por</span>
+                    <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
+                      {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Informado por</span>
+                    <input value={form.informedBy || ''} onChange={(event) => setForm({ ...form, informedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
+                    <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as AbonoStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
+                      {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Próxima revisión</span>
+                    <input type="date" value={form.nextReview || ''} onChange={(event) => setForm({ ...form, nextReview: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                  </label>
+                  <label className="space-y-1 md:col-span-2">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
+                    <textarea value={form.comment || ''} onChange={(event) => setForm({ ...form, comment: event.target.value })} rows={3} className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm" />
+                  </label>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button type="button" onClick={saveForm} className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white">Guardar</button>
+                  {editing && (
+                    <>
+                      <button type="button" onClick={() => cancelCase(editing.id)} className="rounded-md border border-[var(--border)] px-4 py-2 text-sm">Cancelar caso</button>
+                      <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Resumen</p>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Previsto</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Recibido</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
+                    </div>
+                  </div>
+                  {currentComputed && (
+                    <div className="mt-3">
+                      <StatusPill row={currentComputed} />
+                    </div>
+                  )}
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                    {caseReceipts.length === 0
+                      ? 'Sin pagos registrados.'
+                      : `${caseReceipts.length} pago${caseReceipts.length === 1 ? '' : 's'} · último ${formatIsoDate(caseReceipts[caseReceipts.length - 1]?.receivedAt || null)}`}
+                  </p>
+                  {currentComputed?.overdueDays !== null && currentComputed?.overdueDays !== undefined && (
+                    <p className="mt-2 text-sm font-medium text-[var(--danger)]">Vencido hace {currentComputed.overdueDays} días</p>
+                  )}
+                  {currentComputed?.reviewOverdue && (
+                    <p className="mt-1 text-sm font-medium text-[var(--warning)]">Revisar hoy</p>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Información adicional</p>
+                  <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Fecha de alta</dt>
+                      <dd>{formatIsoDate(editing?.createdAt ? editing.createdAt.slice(0, 10) : null)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Añadido por</dt>
+                      <dd>{displayDash(form.addedBy)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Fecha prevista</dt>
+                      <dd>{formatIsoDate(form.dueDate || null)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Próx. revisión</dt>
+                      <dd>{formatIsoDate(form.nextReview || null)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Origen</dt>
+                      <dd>{displayDash(form.origin)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Trade Term</dt>
+                      <dd>{displayDash(currentComputed?.tradeTermName)}</dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Informado por</dt>
+                      <dd>{displayDash(form.informedBy)}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Pagos</p>
+                  <div className="mt-3 space-y-2">
+                    {caseReceipts.map((receipt, index) => (
+                      <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-3 py-2 text-sm">
+                        <div>
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{paymentLabel(index)}</p>
+                          <p className="font-medium">{formatIsoDate(receipt.receivedAt)} · {formatMoney(receipt.amount)}</p>
+                          <p className="text-xs text-[var(--text-secondary)]">{receipt.reference || receipt.comment || '—'}</p>
+                        </div>
+                        <button type="button" onClick={() => deleteReceipt(receipt.id)} className="text-[var(--danger)]" aria-label="Eliminar pago">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {caseReceipts.length === 0 && (
+                      <p className="text-xs text-[var(--text-secondary)]">{editing ? 'Aún no hay pagos registrados.' : 'Guarda el abono para poder anotar pagos.'}</p>
+                    )}
+                  </div>
+                  {editing && (
+                    <div className="mt-3 grid gap-2">
+                      <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                      <input value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] px-3 text-right font-mono text-sm" />
+                      <input value={receiptDraft.reference} onChange={(event) => setReceiptDraft({ ...receiptDraft, reference: event.target.value })} placeholder="Referencia" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                      <input value={receiptDraft.comment} onChange={(event) => setReceiptDraft({ ...receiptDraft, comment: event.target.value })} placeholder="Comentario" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                      <button type="button" onClick={addReceipt} className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">Añadir pago</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -986,10 +1319,23 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone?: 'dan
   );
 }
 
-function FilterSelect({ value, options, placeholder, onChange }: { value: string; options: string[]; placeholder: string; onChange: (value: string) => void }) {
+function FilterSelect({
+  value,
+  options,
+  placeholder,
+  onChange,
+  includeBlank,
+}: {
+  value: string;
+  options: string[];
+  placeholder: string;
+  onChange: (value: string) => void;
+  includeBlank?: boolean;
+}) {
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
       <option value="">{placeholder}</option>
+      {includeBlank && <option value={BLANK}>—</option>}
       {options.map((option) => <option key={option} value={option}>{option}</option>)}
     </select>
   );

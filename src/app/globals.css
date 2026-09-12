@@ -136,3 +136,45 @@ textarea {
   background-size: 12px;
   padding-right: 2rem;
 }
+
+.abonos-th {
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+.abonos-col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.abonos-col-resizer:hover,
+.abonos-col-resizer:active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.abonos-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  padding: 24px 16px 40px;
+  background: rgba(28, 25, 20, 0.42);
+}
+
+.abonos-modal {
+  width: min(1120px, 100%);
+  margin: auto;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-card);
+  box-shadow: 0 24px 80px rgba(28, 25, 20, 0.22);
+}
