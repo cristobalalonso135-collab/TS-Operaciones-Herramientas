@@ -5,6 +5,8 @@ import {
   EMPTY_ABONOS_STATE,
   EMPTY_CATALOGS,
   mergeCatalog,
+  asOrigin,
+  asStatus,
   type AbonosCatalogs,
   type AbonosState,
   type CatalogKind,
@@ -48,7 +50,9 @@ function seedState(state: AbonosState): AbonosState {
   const cases = state.cases.map((row) => ({
     ...row,
     area: remapLegacyArea(row.area),
-    dueDateUnknown: false,
+    origin: asOrigin(row.origin),
+    status: asStatus(row.status) || 'Pendiente',
+    responsible: String(row.responsible || row.addedBy || '').trim(),
   }));
   const catalogs: AbonosCatalogs = {
     brands: mergeCatalog(EMPTY_CATALOGS.brands, [...state.catalogs.brands, ...cases.map((row) => row.brand), ...state.tradeTerms.map((row) => row.brand)]),

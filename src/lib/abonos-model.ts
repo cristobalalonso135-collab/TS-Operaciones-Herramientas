@@ -1,8 +1,8 @@
 export const ABONOS_PEOPLE = ['Cristóbal Alonso', 'Pablo Laguna'] as const;
 export const DEFAULT_NEW_AUTHOR = 'Cristóbal Alonso';
 
-export const ABONO_ORIGINS = ['Puntual', 'Trade Term'] as const;
-export const ABONO_STATUSES = ['Pendiente', 'Reclamado', 'Recibido parcialmente', 'Recibido', 'Cancelado'] as const;
+export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
+export const ABONO_STATUSES = ['Pendiente', 'Reclamado', 'Liquidado parcialmente', 'Liquidado', 'Cancelado'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
 export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Off Invoice', 'Material gratuito', 'Otro'];
@@ -29,6 +29,7 @@ export interface AbonoCase {
   registro: number;
   createdAt: string;
   addedBy: string;
+  responsible: string;
   dueDate: string | null;
   brand: string;
   type: string;
@@ -41,7 +42,6 @@ export interface AbonoCase {
   status: AbonoStatus | '';
   nextReview: string | null;
   comment: string;
-  dueDateUnknown: boolean;
 }
 
 export interface AbonoReceipt {
@@ -57,7 +57,7 @@ export interface AbonoClaim {
   id: string;
   caseId: string;
   claimedAt: string;
-  kind: 'reclamar' | 'seguir';
+  kind: 'reclamar' | 'seguir' | 'respuesta';
   note: string;
 }
 
@@ -243,16 +243,23 @@ export function pendingAmount(expectedAmount: number | null, receivedTotal: numb
 
 export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number): AbonoStatus | '' {
   if (current === 'Cancelado') return current;
+  if (expectedAmount === null) {
+    if (receivedTotal > 0) return 'Liquidado parcialmente';
+    return current === 'Reclamado' ? current : 'Pendiente';
+  }
   const pending = pendingAmount(expectedAmount, receivedTotal);
-  if (receivedTotal > 0 && pending <= 0.009) return 'Recibido';
-  if (receivedTotal > 0 && pending > 0) return 'Recibido parcialmente';
-  return current;
+  if (receivedTotal > 0 && pending <= 0.009) return 'Liquidado';
+  if (receivedTotal > 0 && pending > 0) return 'Liquidado parcialmente';
+  return current === 'Reclamado' ? current : 'Pendiente';
 }
 
 export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms: TradeTerm[], today = todayIso()): AbonoComputed {
-  const receivedTotal = receivedTotalFor(row.id, receipts);
+  const recordedTotal = receivedTotalFor(row.id, receipts);
+  const receivedTotal = row.status === 'Liquidado' && row.expectedAmount !== null
+    ? Math.max(recordedTotal, row.expectedAmount)
+    : recordedTotal;
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
-  const closed = row.status === 'Recibido' || row.status === 'Cancelado';
+  const closed = row.status === 'Liquidado' || row.status === 'Cancelado';
   const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
   const reviewOverdue = !closed && pending > 0 && !!row.nextReview && row.nextReview <= today;
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
@@ -277,11 +284,15 @@ export function nextRegistro(cases: AbonoCase[]): number {
 }
 
 export function asOrigin(value: string): AbonoOrigin | '' {
-  return value === 'Trade Term' || value === 'Puntual' ? value : '';
+  if (value === 'Puntual') return value;
+  if (value === 'Acuerdo' || value === 'Trade Term') return 'Acuerdo';
+  return '';
 }
 
 export function asStatus(value: string): AbonoStatus | '' {
-  if (value === 'Pendiente' || value === 'Reclamado' || value === 'Recibido parcialmente' || value === 'Recibido' || value === 'Cancelado') return value;
+  if (value === 'Recibido') return 'Liquidado';
+  if (value === 'Recibido parcialmente') return 'Liquidado parcialmente';
+  if (value === 'Pendiente' || value === 'Reclamado' || value === 'Liquidado parcialmente' || value === 'Liquidado' || value === 'Cancelado') return value;
   return '';
 }
 
@@ -289,14 +300,14 @@ export function attentionRows(rows: AbonoComputed[]): AbonoComputed[] {
   return myOpenQueue(rows).slice(0, 12);
 }
 
-export function isMyAbono(addedBy: string): boolean {
-  const name = addedBy.trim().toLocaleLowerCase('es');
+export function isMyAbono(responsible: string): boolean {
+  const name = responsible.trim().toLocaleLowerCase('es');
   return name.startsWith('cristóbal') || name.startsWith('cristobal');
 }
 
 export function myOpenQueue(rows: AbonoComputed[]): AbonoComputed[] {
   return [...rows]
-    .filter((row) => isMyAbono(row.addedBy) && row.status !== 'Recibido' && row.status !== 'Cancelado')
+    .filter((row) => isMyAbono(row.responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado')
     .sort((a, b) => {
       if ((a.overdueDays ?? -1) !== (b.overdueDays ?? -1)) return (b.overdueDays ?? -1) - (a.overdueDays ?? -1);
       if (a.dueDate && !b.dueDate) return -1;
@@ -318,7 +329,7 @@ export interface WeeklyTask {
 }
 
 function stillOpen(row: AbonoComputed): boolean {
-  return isMyAbono(row.addedBy) && row.status !== 'Recibido' && row.status !== 'Cancelado' && row.pending > 0.009;
+  return isMyAbono(row.responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado' && row.pending > 0.009;
 }
 
 export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTask[] {
@@ -352,7 +363,7 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTa
       return;
     }
 
-    if (row.status === 'Recibido parcialmente' && (!row.dueDate || row.dueDate >= today)) {
+    if (row.status === 'Liquidado parcialmente' && (!row.dueDate || row.dueDate >= today)) {
       tasks.push({
         id: `cobro-${row.id}`,
         kind: 'cobro',
@@ -387,8 +398,8 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTa
 export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['reclamar', 'seguir', 'cobro', 'fecha'];
 
 export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: string; bulkLabel: string | null }> = {
-  reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: 'He reclamado todos' },
-  seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: 'Sigo en ello todos' },
+  reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: null },
+  seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: null },
   cobro: { title: 'Comprobar cobro', hint: 'Entró una parte. Mira si ha llegado el resto.', bulkLabel: null },
   fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha. Ábrela y ponla si la tienes.', bulkLabel: null },
 };
@@ -427,7 +438,7 @@ export function claimsForCase(claims: AbonoClaim[], caseId: string): AbonoClaim[
     });
 }
 
-export function makeClaim(caseId: string, kind: 'reclamar' | 'seguir', note = '', claimedAt = todayIso()): AbonoClaim {
+export function makeClaim(caseId: string, kind: AbonoClaim['kind'], note = '', claimedAt = todayIso()): AbonoClaim {
   return {
     id: crypto.randomUUID(),
     caseId,
@@ -438,6 +449,7 @@ export function makeClaim(caseId: string, kind: 'reclamar' | 'seguir', note = ''
 }
 
 export function claimKindLabel(kind: AbonoClaim['kind']): string {
+  if (kind === 'respuesta') return 'Respuesta';
   return kind === 'seguir' ? 'Seguimiento' : 'Reclamación';
 }
 
@@ -481,7 +493,7 @@ export function upcomingCash(rows: AbonoComputed[], today = todayIso()): Upcomin
   const open = rows.filter((row) => (
     row.pending > 0.009
     && row.status !== 'Cancelado'
-    && row.status !== 'Recibido'
+    && row.status !== 'Liquidado'
     && !!row.dueDate
     && row.dueDate >= weekStart
     && row.dueDate <= horizon
@@ -512,7 +524,7 @@ export function upcomingCash(rows: AbonoComputed[], today = todayIso()): Upcomin
 }
 
 export function abonosHubKpis(rows: AbonoComputed[], today = todayIso()) {
-  const open = rows.filter((row) => row.status !== 'Recibido' && row.status !== 'Cancelado' && row.pending > 0.009);
+  const open = rows.filter((row) => row.status !== 'Liquidado' && row.status !== 'Cancelado' && row.pending > 0.009);
   const overdue = open.filter((row) => row.overdueDays !== null);
   const claim = weeklyTasks(rows, today).filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
   return {

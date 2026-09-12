@@ -3,6 +3,7 @@ import {
   asStatus,
   cellToIso,
   parseMoney,
+  statusAfterReceipts,
   todayIso,
   type AbonoCase,
   type AbonoReceipt,
@@ -16,12 +17,14 @@ export interface ImportColumnMap {
   teamMotivo: number | null;
   area: number | null;
   addedBy: number | null;
+  responsible: number | null;
   expectedAmount: number | null;
   pay1Date: number | null;
   pay1Amount: number | null;
   pay2Date: number | null;
   pay2Amount: number | null;
   status: number | null;
+  nextReview: number | null;
   comment: number | null;
   origin: number | null;
 }
@@ -35,12 +38,14 @@ export interface ImportPreviewRow {
   teamMotivo: string;
   area: string;
   addedBy: string;
+  responsible: string;
   expectedAmount: number | null;
   pay1Date: string | null;
   pay1Amount: number | null;
   pay2Date: string | null;
   pay2Amount: number | null;
   status: string;
+  nextReview: string | null;
   comment: string;
   origin: string;
   error: string | null;
@@ -54,12 +59,14 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   teamMotivo: ['equipo/motivo', 'equipo / motivo', 'equipo', 'motivo'],
   area: ['área', 'area'],
   addedBy: ['añadido por', 'anadido por', 'creado por'],
+  responsible: ['responsable de seguimiento', 'responsable'],
   expectedAmount: ['importe previsto', 'previsto'],
   pay1Date: ['fecha 1er pago', 'fecha 1er', 'fecha primer pago'],
   pay1Amount: ['importe 1er pago', 'importe 1er', 'importe primer pago'],
   pay2Date: ['fecha 2º pago', 'fecha 2o pago', 'fecha segundo pago'],
   pay2Amount: ['importe 2º pago', 'importe 2o pago', 'importe segundo pago'],
   status: ['estado'],
+  nextReview: ['próxima revisión', 'proxima revisión', 'próxima revision', 'proxima revision'],
   comment: ['comentario', 'comentarios'],
   origin: ['origen'],
 };
@@ -96,12 +103,14 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     teamMotivo: find(HEADER_ALIASES.teamMotivo),
     area: find(HEADER_ALIASES.area),
     addedBy: find(HEADER_ALIASES.addedBy),
+    responsible: find(HEADER_ALIASES.responsible),
     expectedAmount: find(HEADER_ALIASES.expectedAmount),
     pay1Date: find(HEADER_ALIASES.pay1Date),
     pay1Amount: find(HEADER_ALIASES.pay1Amount),
     pay2Date: find(HEADER_ALIASES.pay2Date),
     pay2Amount: find(HEADER_ALIASES.pay2Amount),
     status: find(HEADER_ALIASES.status),
+    nextReview: find(HEADER_ALIASES.nextReview),
     comment: find(HEADER_ALIASES.comment),
     origin: find(HEADER_ALIASES.origin),
   };
@@ -125,7 +134,17 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         : Number(registroValue);
       const empty = !brand && !type && !teamMotivo && registro === null;
       const dueDate = cellToIso(pick(row, map.dueDate));
+      const addedBy = cellText(pick(row, map.addedBy));
+      const responsible = cellText(pick(row, map.responsible)) || addedBy;
+      const expectedAmount = parseMoney(pick(row, map.expectedAmount));
       if (empty) return null;
+      const error = !brand
+        ? 'Falta empresa.'
+        : !areaRaw
+          ? 'Falta área.'
+          : expectedAmount !== null && expectedAmount < 0
+            ? 'El importe previsto no puede ser negativo.'
+            : null;
       return {
         key: `import-${index}`,
         registro: Number.isFinite(registro) ? Number(registro) : null,
@@ -134,16 +153,18 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         type,
         teamMotivo,
         area: areaRaw,
-        addedBy: cellText(pick(row, map.addedBy)),
-        expectedAmount: parseMoney(pick(row, map.expectedAmount)),
+        addedBy,
+        responsible,
+        expectedAmount,
         pay1Date: cellToIso(pick(row, map.pay1Date)),
         pay1Amount: parseMoney(pick(row, map.pay1Amount)),
         pay2Date: cellToIso(pick(row, map.pay2Date)),
         pay2Amount: parseMoney(pick(row, map.pay2Amount)),
         status: cellText(pick(row, map.status)),
+        nextReview: cellToIso(pick(row, map.nextReview)),
         comment: cellText(pick(row, map.comment)),
         origin: cellText(pick(row, map.origin)),
-        error: null as string | null,
+        error,
       } satisfies ImportPreviewRow;
     })
     .filter((row): row is ImportPreviewRow => Boolean(row));
@@ -156,11 +177,14 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
   rows.forEach((row, index) => {
     if (row.error) return;
     const id = crypto.randomUUID();
+    const importedTotal = (row.pay1Amount || 0) + (row.pay2Amount || 0);
+    const importedStatus = asStatus(row.status);
     cases.push({
       id,
       registro: row.registro ?? index + 1,
       createdAt: '',
       addedBy: row.addedBy,
+      responsible: row.responsible || row.addedBy,
       dueDate: row.dueDate,
       brand: row.brand,
       type: row.type,
@@ -170,10 +194,9 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       tradeTermId: null,
       informedBy: '',
       expectedAmount: row.expectedAmount,
-      status: asStatus(row.status),
-      nextReview: null,
+      status: importedTotal > 0 ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal) : (importedStatus || 'Pendiente'),
+      nextReview: row.nextReview,
       comment: row.comment,
-      dueDateUnknown: false,
     });
     const payments = [
       { date: row.pay1Date, amount: row.pay1Amount },
@@ -199,6 +222,7 @@ export function abonosExportRows(cases: Array<{
   registro: number;
   createdAt: string;
   addedBy: string;
+  responsible: string;
   dueDate: string | null;
   brand: string;
   type: string;
@@ -218,6 +242,7 @@ export function abonosExportRows(cases: Array<{
     'Registro',
     'Fecha de alta',
     'Añadido por',
+    'Responsable de seguimiento',
     'Fecha prevista',
     'Empresa',
     'Tipo',
@@ -227,7 +252,7 @@ export function abonosExportRows(cases: Array<{
     'Trade Term',
     'Informado por',
     'Importe previsto',
-    'Total recibido',
+    'Total liquidado',
     'Pendiente',
     'Estado',
     'Próxima revisión',
@@ -237,6 +262,7 @@ export function abonosExportRows(cases: Array<{
     row.registro,
     row.createdAt ? row.createdAt.slice(0, 10) : '',
     row.addedBy,
+    row.responsible,
     row.dueDate || '',
     row.brand,
     row.type,
@@ -273,37 +299,38 @@ export function receiptsExportRows(cases: Array<{ registro: number; brand: strin
 }
 
 export const ABONOS_TEMPLATE_HEADERS = [
+  'Registro',
   'Empresa',
   'Tipo',
   'Área',
-  'Equipo/Motivo',
+  'Equipo',
+  'Origen',
   'Importe previsto',
   'Fecha prevista',
   'Añadido por',
+  'Responsable de seguimiento',
   'Estado',
-  'Origen',
+  'Próxima revisión',
   'Comentario',
-  'Fecha 1er pago',
-  'Importe 1er pago',
-  'Fecha 2º pago',
-  'Importe 2º pago',
 ];
 
 export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Plantilla de importación de abonos'],
   [''],
-  ['Rellena la hoja Abonos y súbela en Importar. El registro lo asigna la herramienta.'],
+  ['Rellena la hoja Abonos y súbela en Importar. El registro es opcional; si falta, lo asigna la herramienta.'],
   [''],
   ['Empresa', 'Obligatoria. Adidas, Nike, Puma…'],
   ['Tipo', 'Credit Notes, VIK Cash, Fee Pro Clubs, Dto FRA, Off Invoice…'],
   ['Área', 'Solo B2B, Grassroots, Pro Clubs o Teamsports.'],
-  ['Equipo/Motivo', 'Levante, Mallorca, GAP Plan, Kings League…'],
+  ['Equipo', 'Levante, Mallorca, GAP Plan, Kings League…'],
+  ['Origen', 'Puntual o Acuerdo.'],
   ['Importe previsto', 'Número. 15000 o 15.000,00'],
   ['Fecha prevista', 'dd/mm/aaaa. Si no sabes cuándo, déjala vacía.'],
   ['Añadido por', 'Cristóbal o Pablo. Si falta, entra vacío.'],
-  ['Estado', 'Déjalo vacío si aún no se ha cobrado. Recibido / Recibido parcialmente / Reclamado / Pendiente.'],
-  ['Origen', 'Puntual o Trade Term. Se puede dejar vacío.'],
-  ['Pagos', 'Solo si ya ha entrado dinero. Si no, deja esas cuatro columnas vacías.'],
+  ['Responsable de seguimiento', 'Cristóbal o Pablo. Si falta, se usa Añadido por.'],
+  ['Estado', 'Pendiente / Reclamado / Liquidado parcialmente / Liquidado / Cancelado.'],
+  ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel.'],
+  ['Pagos', 'Los pagos parciales se registran después desde la ficha en la aplicación.'],
 ];
 
 export function abonosTemplateRows(): unknown[][] {

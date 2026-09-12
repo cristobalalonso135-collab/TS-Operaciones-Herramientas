@@ -61,7 +61,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 type SortKey =
-  | 'addedBy'
+  | 'responsible'
   | 'dueDate'
   | 'brand'
   | 'type'
@@ -82,11 +82,11 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'area', label: 'Área', width: 108 },
   { key: 'teamMotivo', label: 'Equipo / Motivo', width: 150 },
   { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
-  { key: 'receivedTotal', label: 'Importe recibido', width: 118 },
+  { key: 'receivedTotal', label: 'Importe liquidado', width: 118 },
   { key: 'pending', label: 'Importe pendiente', width: 118 },
   { key: 'status', label: 'Estado', width: 140 },
   { key: 'comment', label: 'Comentario', width: 180 },
-  { key: 'addedBy', label: 'Añadido por', width: 108 },
+  { key: 'responsible', label: 'Responsable', width: 108 },
 ];
 
 const COL_STORAGE = 'ts-abonos-cols-v6';
@@ -126,8 +126,8 @@ function matchesFilter(selected: string, actual: string): boolean {
 
 function renderAbonoCell(row: AbonoComputed, key: SortKey) {
   switch (key) {
-    case 'addedBy':
-      return displayDash(row.addedBy);
+    case 'responsible':
+      return displayDash(row.responsible);
     case 'dueDate':
       return formatIsoDate(row.dueDate);
     case 'brand':
@@ -167,12 +167,13 @@ const emptyFilters = {
   origin: '',
   status: '',
   year: '',
-  addedBy: '',
+  responsible: '',
   search: '',
 };
 
 const emptyForm = (): Partial<AbonoCase> => ({
   addedBy: DEFAULT_NEW_AUTHOR,
+  responsible: DEFAULT_NEW_AUTHOR,
   dueDate: '',
   brand: '',
   type: 'Credit Notes',
@@ -185,7 +186,6 @@ const emptyForm = (): Partial<AbonoCase> => ({
   status: 'Pendiente',
   nextReview: '',
   comment: '',
-  dueDateUnknown: false,
 });
 
 function CatalogField({
@@ -295,7 +295,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [termForm, setTermForm] = useState<Partial<TradeTerm>>({ brand: 'Adidas', name: '', compensation: '', triggerText: '', period: '', active: true, comment: '' });
   const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
   const [claimNote, setClaimNote] = useState('');
-  const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), note: '' });
+  const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
 
   const persist = useCallback(async (next: AbonosState, currentBackend: AbonosBackend) => {
     setState(next);
@@ -377,7 +377,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
       if (filters.origin && !matchesFilter(filters.origin, row.origin)) return false;
       if (filters.status && !matchesFilter(filters.status, row.status)) return false;
-      if (filters.addedBy && !matchesFilter(filters.addedBy, row.addedBy)) return false;
+      if (filters.responsible && !matchesFilter(filters.responsible, row.responsible)) return false;
       if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
       if (search) {
         const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.tradeTermName].join(' ').toLocaleLowerCase('es');
@@ -444,9 +444,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const teams = uniquePresent(computed.map((row) => row.teamMotivo));
     const origins = uniquePresent(computed.map((row) => row.origin));
     const statuses = uniquePresent(computed.map((row) => row.status));
-    const authors = uniquePresent(computed.map((row) => row.addedBy));
+    const responsibles = uniquePresent(computed.map((row) => row.responsible));
     const years = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
-    return { brands, types, areas, teams, origins, statuses, authors, years };
+    return { brands, types, areas, teams, origins, statuses, responsibles, years };
   }, [computed]);
 
   if (!state) {
@@ -473,6 +473,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const openEdit = (row: AbonoCase) => {
     setEditing(row);
     setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '' });
+    setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setPanelOpen(true);
   };
 
@@ -508,7 +509,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       openEdit(task.row);
       return;
     }
-    await applyWeeklyTasks([task]);
+    openEdit(task.row);
   };
 
   const saveForm = async () => {
@@ -522,19 +523,19 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       registro: editing?.registro || nextRegistro(state.cases),
       createdAt: editing ? (editing.createdAt || '') : new Date().toISOString(),
       addedBy: form.addedBy || '',
+      responsible: form.responsible || form.addedBy || '',
       dueDate: form.dueDate || null,
       brand: form.brand,
       type: form.type || '',
       area: form.area,
       teamMotivo: form.teamMotivo || '',
       origin: (form.origin || '') as AbonoOrigin | '',
-      tradeTermId: form.origin === 'Trade Term' ? (form.tradeTermId || null) : null,
+      tradeTermId: form.origin === 'Acuerdo' ? (form.tradeTermId || null) : null,
       informedBy: form.informedBy || '',
       expectedAmount: form.expectedAmount ?? null,
       status: (form.status || '') as AbonoStatus | '',
       nextReview: form.nextReview || null,
       comment: form.comment || '',
-      dueDateUnknown: false,
     };
     const cases = editing
       ? state.cases.map((item) => item.id === row.id ? row : item)
@@ -596,7 +597,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const addClaimFromModal = async () => {
     if (!editing) return;
-    const nextReview = addDaysIso(todayIso(), 7);
+    const nextReview = claimDraft.nextReview || addDaysIso(todayIso(), 7);
     const kind = editing.status === 'Reclamado' ? 'seguir' as const : 'reclamar' as const;
     const cases = state.cases.map((row) => (
       row.id === editing.id ? { ...row, status: 'Reclamado' as const, nextReview } : row
@@ -605,8 +606,26 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     await persist({ ...state, cases, claims }, backend);
     setEditing({ ...editing, status: 'Reclamado', nextReview });
     setForm((current) => ({ ...current, status: 'Reclamado', nextReview }));
-    setClaimDraft({ claimedAt: todayIso(), note: '' });
-    setNote(kind === 'seguir' ? 'Añadido al historial. Te lo vuelvo a sacar en 7 días.' : 'Reclamado y anotado. Te lo vuelvo a sacar en 7 días.');
+    setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
+    setNote(`Gestión guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.`);
+  };
+
+  const addResponseFromModal = async () => {
+    if (!editing || !claimDraft.note.trim()) {
+      setError('Escribe la respuesta recibida.');
+      return;
+    }
+    const nextReview = claimDraft.nextReview || null;
+    const cases = state.cases.map((row) => (
+      row.id === editing.id ? { ...row, nextReview } : row
+    ));
+    const claims = [...state.claims, makeClaim(editing.id, 'respuesta', claimDraft.note, claimDraft.claimedAt || todayIso())];
+    await persist({ ...state, cases, claims }, backend);
+    setEditing({ ...editing, nextReview });
+    setForm((current) => ({ ...current, nextReview }));
+    setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
+    setError(null);
+    setNote(nextReview ? `Respuesta guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.` : 'Respuesta guardada.');
   };
 
   const deleteReceipt = async (id: string) => {
@@ -793,7 +812,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold">Tareas de la revisión</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Pincha un tipo y salen todas. Lo de Pablo no sale aquí.
+              Solo aparecen los compromisos asignados a Cristóbal. Abre una tarea para registrar la gestión y elegir cuándo revisarla.
             </p>
             {tasks.length === 0 ? (
               <p className="mt-3 text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
@@ -973,7 +992,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
-            <FilterSelect value={filters.addedBy} options={filterOptions.authors.options} includeBlank={filterOptions.authors.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
+            <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
@@ -986,7 +1005,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(listTotals.expected)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
-              <p className="text-[11px] text-[var(--text-secondary)]">Recibido</p>
+              <p className="text-[11px] text-[var(--text-secondary)]">Liquidado</p>
               <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(listTotals.received)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
@@ -1128,7 +1147,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <button type="button" onClick={() => toggleTerm(term.id)} className="text-xs font-semibold">{term.active ? 'Sí' : 'No'}</button>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <button type="button" onClick={() => openNew({ brand: term.brand, origin: 'Trade Term', tradeTermId: term.id, type: 'Credit Notes' })} className="mr-3 text-xs font-semibold text-[var(--accent)]">Crear seguimiento</button>
+                      <button type="button" onClick={() => openNew({ brand: term.brand, origin: 'Acuerdo', tradeTermId: term.id, type: 'Credit Notes' })} className="mr-3 text-xs font-semibold text-[var(--accent)]">Crear seguimiento</button>
                       <button type="button" onClick={() => deleteTerm(term.id)} className="text-xs text-[var(--danger)]">Eliminar</button>
                     </td>
                   </tr>
@@ -1202,13 +1221,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           {preview.length > 0 && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <div className="mb-3 flex flex-wrap items-end gap-2">
-                <p className="text-sm font-semibold">{preview.length} filas · Área y Añadido por salen del Excel. Completa las vacías si falta alguna.</p>
+                <p className="text-sm font-semibold">{preview.length} filas · Revisa área, responsable y posibles errores antes de confirmar.</p>
                 <select value={bulkArea} onChange={(event) => setBulkArea(event.target.value)} className="h-9 rounded-md border border-[var(--border)] px-2 text-sm">
                   {state.catalogs.areas.map((area) => <option key={area} value={area}>{area}</option>)}
                 </select>
                 <button
                   type="button"
-                  onClick={() => setPreview(preview.map((row) => row.area ? row : { ...row, area: bulkArea }))}
+                  onClick={() => setPreview(preview.map((row) => row.area ? row : { ...row, area: bulkArea, error: row.brand ? null : row.error }))}
                   className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-medium"
                 >
                   Rellenar vacías
@@ -1227,6 +1246,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <th className="px-2 py-2">Tipo</th>
                       <th className="px-2 py-2">Equipo/Motivo</th>
                       <th className="px-2 py-2">Área</th>
+                      <th className="px-2 py-2">Responsable</th>
                       <th className="px-2 py-2">Añadido por</th>
                       <th className="px-2 py-2">Previsto</th>
                       <th className="px-2 py-2">Error</th>
@@ -1244,7 +1264,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                             value={row.area}
                             onChange={(event) => {
                               const next = [...preview];
-                              next[index] = { ...row, area: event.target.value };
+                              next[index] = { ...row, area: event.target.value, error: event.target.value && row.brand ? null : row.error };
                               setPreview(next);
                             }}
                             className="h-8 rounded border border-[var(--border)] px-1 text-xs"
@@ -1252,6 +1272,18 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                             <option value="">Sin área</option>
                             {mergeCatalog(state.catalogs.areas, [row.area]).map((area) => <option key={area} value={area}>{area}</option>)}
                           </select>
+                        </td>
+                        <td className="px-2 py-1">
+                          <input
+                            value={row.responsible}
+                            onChange={(event) => {
+                              const next = [...preview];
+                              next[index] = { ...row, responsible: event.target.value };
+                              setPreview(next);
+                            }}
+                            list="abonos-import-people"
+                            className="h-8 w-full min-w-[140px] rounded border border-[var(--border)] px-1 text-xs"
+                          />
                         </td>
                         <td className="px-2 py-1">
                           <input
@@ -1332,7 +1364,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <CatalogField label="Equipo / Motivo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
-                    <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Trade Term' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Acuerdo' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
                     </select>
@@ -1351,7 +1383,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                     />
                   </label>
-                  {form.origin === 'Trade Term' && (
+                  {form.origin === 'Acuerdo' && (
                     <label className="space-y-1 md:col-span-2">
                       <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term</span>
                       <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
@@ -1363,6 +1395,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por</span>
                     <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
+                      {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable de seguimiento</span>
+                    <select value={form.responsible || ''} onChange={(event) => setForm({ ...form, responsible: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
                     </select>
@@ -1407,7 +1446,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
                     </div>
                     <div>
-                      <p className="text-[11px] text-[var(--text-secondary)]">Recibido</p>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Liquidado</p>
                       <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
                     </div>
                     <div>
@@ -1443,6 +1482,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Añadido por</dt>
                       <dd>{displayDash(form.addedBy)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Responsable</dt>
+                      <dd>{displayDash(form.responsible)}</dd>
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Fecha prevista</dt>
@@ -1482,15 +1525,25 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </div>
                   {editing && (
                     <div className="mt-3 grid gap-2">
-                      <input type="date" value={claimDraft.claimedAt} onChange={(event) => setClaimDraft({ ...claimDraft, claimedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <input value={claimDraft.note} onChange={(event) => setClaimDraft({ ...claimDraft, note: event.target.value })} placeholder="Nota corta" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <button type="button" onClick={addClaimFromModal} className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-[var(--bg-soft)]">Añadir reclamación</button>
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-secondary)]">Fecha de la gestión</span>
+                        <input type="date" value={claimDraft.claimedAt} onChange={(event) => setClaimDraft({ ...claimDraft, claimedAt: event.target.value })} className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
+                      </label>
+                      <input value={claimDraft.note} onChange={(event) => setClaimDraft({ ...claimDraft, note: event.target.value })} placeholder="Reclamación o respuesta recibida" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                      <label className="space-y-1">
+                        <span className="text-[11px] text-[var(--text-secondary)]">Volver a revisar</span>
+                        <input type="date" value={claimDraft.nextReview} onChange={(event) => setClaimDraft({ ...claimDraft, nextReview: event.target.value })} className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={addClaimFromModal} className="rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-semibold text-white hover:bg-black">He reclamado</button>
+                        <button type="button" onClick={addResponseFromModal} className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-[var(--bg-soft)]">Añadir respuesta</button>
+                      </div>
                     </div>
                   )}
                 </div>
 
                 <div className="rounded-lg border border-[var(--border)] bg-white p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Pagos</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Pagos recibidos</p>
                   <div className="mt-3 space-y-2">
                     {caseReceipts.map((receipt, index) => (
                       <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-3 py-2 text-sm">
@@ -1514,7 +1567,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <input value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] px-3 text-right font-mono text-sm" />
                       <input value={receiptDraft.reference} onChange={(event) => setReceiptDraft({ ...receiptDraft, reference: event.target.value })} placeholder="Referencia" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
                       <input value={receiptDraft.comment} onChange={(event) => setReceiptDraft({ ...receiptDraft, comment: event.target.value })} placeholder="Comentario" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <button type="button" onClick={addReceipt} className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">Añadir pago</button>
+                      <button type="button" onClick={addReceipt} className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">Registrar pago</button>
                     </div>
                   )}
                 </div>
@@ -1569,7 +1622,7 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   if (row.reviewOverdue) {
     return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Revisar · {row.status}</span>;
   }
-  if (row.status === 'Recibido') {
+  if (row.status === 'Liquidado') {
     return <span className={`${pill} bg-[var(--success-soft)] text-[var(--success)]`}>{row.status}</span>;
   }
   return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-secondary)]`}>{row.status}</span>;
