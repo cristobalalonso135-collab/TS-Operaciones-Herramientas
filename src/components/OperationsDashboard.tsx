@@ -1,12 +1,16 @@
 'use client';
 
-import { ArrowLeft, ArrowRight, Calculator, CreditCard, Gift, Globe, LayoutDashboard, Percent, Target, Wallet } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, ArrowRight, Banknote, Calculator, CreditCard, Gift, Globe, LayoutDashboard, Percent, Target, Wallet } from 'lucide-react';
 import type { TrackingViewMode } from '@/components/TrackingTool';
+import { abonosHubKpis, computeAll, formatMoney } from '@/lib/abonos-model';
+import { loadAbonosState } from '@/lib/abonos-store';
 
 interface OperationsDashboardProps {
   onBack: () => void;
   onOpenBudget: () => void;
   onOpenTracking: (view: TrackingViewMode) => void;
+  onOpenAbonos: () => void;
 }
 
 type KpiSource = 'budget' | 'tracking';
@@ -224,7 +228,22 @@ export default function OperationsDashboard({
   onBack,
   onOpenBudget,
   onOpenTracking,
+  onOpenAbonos,
 }: OperationsDashboardProps) {
+  const [abonos, setAbonos] = useState<ReturnType<typeof abonosHubKpis> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadAbonosState()
+      .then((result) => {
+        if (!cancelled) setAbonos(abonosHubKpis(computeAll(result.state)));
+      })
+      .catch(() => {
+        if (!cancelled) setAbonos(abonosHubKpis([]));
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const openKpi = (kpi: DashboardKpi) => {
     if (kpi.source === 'budget') {
       onOpenBudget();
@@ -259,7 +278,7 @@ export default function OperationsDashboard({
           </p>
           <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight sm:text-5xl">Cuadro de mando</h2>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-[var(--text-secondary)]">
-            El 01 mide el plan contra el año pasado. Del 02 al 07 miden el año contra el plan, cada uno con su base. Pincha un recuadro y saltas a Budget o a Seguimiento.
+            El 01 mide el plan contra el año pasado. Del 02 al 07 miden el año contra el plan. Abonos es caja real: lo que todavía no ha entrado.
           </p>
         </div>
       </section>
@@ -277,6 +296,53 @@ export default function OperationsDashboard({
           </div>
         </section>
       ))}
+
+      <section className="space-y-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Abonos</p>
+          <p className="mt-0.5 text-sm text-[var(--text-secondary)]">Lo que Adidas, Nike y el resto nos deben. Pincha y saltas a la revisión.</p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenAbonos}
+          className="flex w-full flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white"
+          style={{ borderColor: 'var(--kpi-abonos-soft)' }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-display text-[11px] font-semibold tracking-[0.18em] text-[var(--text-muted)]">08</p>
+              <h3 className="mt-1 font-display text-lg font-semibold leading-tight">Pendiente de cobro</h3>
+            </div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ backgroundColor: 'var(--kpi-abonos-soft)', color: 'var(--kpi-abonos)' }}>
+              <Banknote className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Pendiente</p>
+              <p className="mt-1 font-display text-2xl font-semibold tracking-tight">{abonos ? formatMoney(abonos.pending) : '…'}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">Vencido</p>
+              <p className={`mt-1 font-display text-2xl font-semibold tracking-tight ${abonos && abonos.overdue > 0 ? 'text-[var(--danger)]' : ''}`}>{abonos ? formatMoney(abonos.overdue) : '…'}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--text-muted)]">A reclamar</p>
+              <p className="mt-1 font-display text-2xl font-semibold tracking-tight">{abonos ? `${abonos.claimCount} · ${formatMoney(abonos.claimPending)}` : '…'}</p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-[var(--text-secondary)]">
+            {abonos ? `${abonos.openCount} abonos abiertos. El vencido es fecha prevista ya pasada.` : 'Cargando abonos…'}
+          </p>
+          <p className="mt-auto flex items-center justify-between gap-2 pt-3 text-[11px] font-medium">
+            <span className="text-[var(--text-muted)]">05 Abonos · Revisión</span>
+            <span className="inline-flex items-center gap-1 text-[var(--accent)]">
+              Abrir Abonos
+              <ArrowRight className="h-3 w-3" />
+            </span>
+          </p>
+        </button>
+      </section>
 
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm sm:p-6">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Cadena</p>

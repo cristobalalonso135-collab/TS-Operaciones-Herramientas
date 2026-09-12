@@ -56,7 +56,7 @@ function seedState(state: AbonosState): AbonosState {
   const tradeTerms = state.tradeTerms.length > 0
     ? state.tradeTerms
     : ADIDAS_SEED_TERMS.map((term) => ({ ...term, id: crypto.randomUUID() }));
-  return { ...state, cases, catalogs, tradeTerms };
+  return { ...state, cases, catalogs, tradeTerms, claims: Array.isArray(state.claims) ? state.claims : [] };
 }
 
 function readLocal(): AbonosState {
@@ -68,6 +68,7 @@ function readLocal(): AbonosState {
     return seedState({
       cases: Array.isArray(parsed.cases) ? parsed.cases : [],
       receipts: Array.isArray(parsed.receipts) ? parsed.receipts : [],
+      claims: Array.isArray(parsed.claims) ? parsed.claims : [],
       tradeTerms: Array.isArray(parsed.tradeTerms) ? parsed.tradeTerms : [],
       catalogs: parsed.catalogs || EMPTY_CATALOGS,
     });

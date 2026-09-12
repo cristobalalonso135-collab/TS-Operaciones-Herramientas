@@ -8,17 +8,22 @@ import {
   ABONO_STATUSES,
   ABONOS_PEOPLE,
   addDaysIso,
+  claimKindLabel,
+  claimsForCase,
   computeAll,
   DEFAULT_NEW_AUTHOR,
   displayDash,
   formatIsoDate,
   formatMoney,
+  groupWeeklyTasks,
+  makeClaim,
   mergeCatalog,
   nextRegistro,
   parseMoney,
   receiptsForCase,
   statusAfterReceipts,
   todayIso,
+  upcomingCash,
   weeklyTasks,
   type AbonoCase,
   type AbonoComputed,
@@ -28,6 +33,7 @@ import {
   type AbonosState,
   type TradeTerm,
   type WeeklyTask,
+  type WeeklyTaskKind,
 } from '@/lib/abonos-model';
 import {
   abonosExportRows,
@@ -40,7 +46,7 @@ import {
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, GripVertical, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, GripVertical, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -289,6 +295,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [headerIndex, setHeaderIndex] = useState(0);
   const [bulkArea, setBulkArea] = useState('Grassroots');
   const [termForm, setTermForm] = useState<Partial<TradeTerm>>({ brand: 'Adidas', name: '', compensation: '', triggerText: '', period: '', active: true, comment: '' });
+  const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
+  const [claimNote, setClaimNote] = useState('');
+  const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), note: '' });
 
   const persist = useCallback(async (next: AbonosState, currentBackend: AbonosBackend) => {
     setState(next);
@@ -400,6 +409,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }), { expected: 0, received: 0, pending: 0 }), [filtered]);
 
   const tasks = useMemo(() => weeklyTasks(computed), [computed]);
+  const taskGroups = useMemo(() => groupWeeklyTasks(tasks), [tasks]);
+  const cash = useMemo(() => upcomingCash(computed), [computed]);
+  const openTaskGroup = taskGroups.find((group) => group.kind === openTaskKind) || null;
+
+  useEffect(() => {
+    if (openTaskKind && !taskGroups.some((group) => group.kind === openTaskKind)) {
+      setOpenTaskKind(null);
+    }
+  }, [openTaskKind, taskGroups]);
 
   const kpis = useMemo(() => {
     const claim = tasks.filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
@@ -454,22 +472,35 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setPanelOpen(true);
   };
 
+  const applyWeeklyTasks = async (list: WeeklyTask[], note = claimNote) => {
+    const actionable = list.filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
+    if (actionable.length === 0) return;
+    const ids = new Set(actionable.map((task) => task.row.id));
+    const nextReview = addDaysIso(todayIso(), 7);
+    const cases = state.cases.map((row) => (
+      ids.has(row.id) ? { ...row, status: 'Reclamado' as const, nextReview } : row
+    ));
+    const claims = [
+      ...state.claims,
+      ...actionable.map((task) => makeClaim(task.row.id, task.kind === 'seguir' ? 'seguir' : 'reclamar', note)),
+    ];
+    await persist({ ...state, cases, claims }, backend);
+    setClaimNote('');
+    const bulk = actionable.length > 1;
+    const follow = actionable.every((task) => task.kind === 'seguir');
+    setNote(
+      follow
+        ? (bulk ? `Marcados ${actionable.length} como en seguimiento. En 7 días vuelven a salir.` : 'Sigue reclamado. Te lo vuelvo a sacar en 7 días.')
+        : (bulk ? `Marcados ${actionable.length} como reclamados. En 7 días vuelven a salir.` : 'Marcado como reclamado. Te lo vuelvo a sacar en 7 días.'),
+    );
+  };
+
   const applyWeeklyTask = async (task: WeeklyTask) => {
     if (task.kind === 'fecha' || task.kind === 'cobro') {
       openEdit(task.row);
       return;
     }
-    const nextReview = addDaysIso(todayIso(), 7);
-    const cases = state.cases.map((row) => {
-      if (row.id !== task.row.id) return row;
-      return {
-        ...row,
-        status: 'Reclamado' as const,
-        nextReview,
-      };
-    });
-    await persist({ ...state, cases }, backend);
-    setNote(task.kind === 'reclamar' ? 'Marcado como reclamado. Te lo vuelvo a sacar en 7 días.' : 'Sigue reclamado. Te lo vuelvo a sacar en 7 días.');
+    await applyWeeklyTasks([task]);
   };
 
   const saveForm = async () => {
@@ -517,6 +548,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       ...state,
       cases: state.cases.filter((row) => row.id !== id),
       receipts: state.receipts.filter((row) => row.caseId !== id),
+      claims: state.claims.filter((row) => row.caseId !== id),
     }, backend);
     closePanel();
   };
@@ -551,6 +583,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm((current) => ({ ...current, status: nextStatus }));
     setReceiptDraft({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
     setNote('Recepción añadida.');
+  };
+
+  const addClaimFromModal = async () => {
+    if (!editing) return;
+    const nextReview = addDaysIso(todayIso(), 7);
+    const kind = editing.status === 'Reclamado' ? 'seguir' as const : 'reclamar' as const;
+    const cases = state.cases.map((row) => (
+      row.id === editing.id ? { ...row, status: 'Reclamado' as const, nextReview } : row
+    ));
+    const claims = [...state.claims, makeClaim(editing.id, kind, claimDraft.note, claimDraft.claimedAt || todayIso())];
+    await persist({ ...state, cases, claims }, backend);
+    setEditing({ ...editing, status: 'Reclamado', nextReview });
+    setForm((current) => ({ ...current, status: 'Reclamado', nextReview }));
+    setClaimDraft({ claimedAt: todayIso(), note: '' });
+    setNote(kind === 'seguir' ? 'Añadido al historial. Te lo vuelvo a sacar en 7 días.' : 'Reclamado y anotado. Te lo vuelvo a sacar en 7 días.');
   };
 
   const deleteReceipt = async (id: string) => {
@@ -645,7 +692,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     }
     if (!window.confirm(`Vas a borrar ${count} abonos y sus recepciones. Los trade terms se quedan. ¿Seguir?`)) return;
     if (!window.confirm('Última confirmación: se vacía la lista para que puedas volver a importar.')) return;
-    await persist({ ...state, cases: [], receipts: [] }, backend);
+    await persist({ ...state, cases: [], receipts: [], claims: [] }, backend);
     setEditing(null);
     setForm(emptyForm());
     setPanelOpen(false);
@@ -668,6 +715,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
   const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
+  const caseClaims = editing ? claimsForCase(state.claims, editing.id) : [];
   const brandTerms = state.tradeTerms.filter((term) => term.brand === form.brand && term.active !== false);
   const tableWidth = columnOrder.reduce((sum, key) => sum + columnWidths[key], 0);
 
@@ -724,55 +772,170 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <Kpi label="A reclamar" value={String(kpis.claimCount)} tone={kpis.claimCount ? 'warning' : undefined} />
             <Kpi label="Importe a reclamar" value={formatMoney(kpis.claimPending)} />
           </div>
+
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold">Tareas de la revisión</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Pincha una tarea o Editar para abrir la ficha. Borrar quita el abono. Lo de Pablo no sale aquí.
+              Pincha un tipo y salen todas. Lo de Pablo no sale aquí.
             </p>
-            <div className="mt-3 space-y-2">
-              {tasks.length === 0 && (
-                <p className="text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
-              )}
-              {tasks.map((task) => (
-                <div
-                  key={task.id}
-                  className="space-y-3 rounded-md border border-[var(--border)] bg-white px-3 py-3"
-                >
-                  <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{task.title}</p>
-                    <p className="mt-1 text-sm font-medium">#{task.row.registro} · {displayDash(task.row.brand)} · {displayDash(task.row.area)} · {displayDash(task.row.teamMotivo)}</p>
-                    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{task.reason} · {formatMoney(task.row.pending)}</p>
-                  </button>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {(task.kind === 'reclamar' || task.kind === 'seguir') && (
+            {tasks.length === 0 ? (
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
+            ) : (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {taskGroups.map((group) => {
+                  const open = openTaskKind === group.kind;
+                  return (
+                    <button
+                      key={group.kind}
+                      type="button"
+                      onClick={() => setOpenTaskKind(open ? null : group.kind)}
+                      className={`rounded-md border px-3 py-3 text-left transition ${open ? 'border-[var(--text-primary)] bg-white' : 'border-[var(--border)] bg-white hover:border-[var(--border-strong)]'}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold">{group.title}</p>
+                          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{group.tasks.length} · {formatMoney(group.pending)}</p>
+                        </div>
+                        <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-[var(--text-muted)] transition ${open ? 'rotate-90' : ''}`} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {openTaskGroup && (
+              <div className="mt-4 space-y-3 border-t border-[var(--border)] pt-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">{openTaskGroup.title}</p>
+                    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{openTaskGroup.hint}</p>
+                  </div>
+                  {openTaskGroup.bulkLabel && (
+                    <div className="flex min-w-[240px] flex-1 flex-col gap-2 sm:max-w-sm sm:flex-row">
+                      <input
+                        value={claimNote}
+                        onChange={(event) => setClaimNote(event.target.value)}
+                        placeholder="Nota (opcional)"
+                        className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm"
+                      />
                       <button
                         type="button"
-                        onClick={() => applyWeeklyTask(task)}
-                        className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                        onClick={() => applyWeeklyTasks(openTaskGroup.tasks)}
+                        className="h-9 shrink-0 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
                       >
-                        {task.actionLabel}
+                        {openTaskGroup.bulkLabel}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => openEdit(task.row)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--border)] px-3 text-xs font-semibold hover:bg-[var(--bg-soft)]"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Editar
+                    </div>
+                  )}
+                </div>
+                {openTaskGroup.tasks.map((task) => (
+                  <div key={task.id} className="space-y-3 rounded-md border border-[var(--border)] bg-white px-3 py-3">
+                    <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
+                      <p className="text-sm font-medium">#{task.row.registro} · {displayDash(task.row.brand)} · {displayDash(task.row.area)} · {displayDash(task.row.teamMotivo)}</p>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{task.reason} · {formatMoney(task.row.pending)}</p>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteCase(task.row.id)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-red-200 px-3 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Borrar
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(task.kind === 'reclamar' || task.kind === 'seguir') && (
+                        <button
+                          type="button"
+                          onClick={() => applyWeeklyTask(task)}
+                          className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                        >
+                          {task.actionLabel}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => openEdit(task.row)}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--border)] px-3 text-xs font-semibold hover:bg-[var(--bg-soft)]"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCase(task.row.id)}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--danger-soft)] px-3 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Borrar
+                      </button>
+                    </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold">Cobros próximas 4 semanas</p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">Por fecha prevista. Solo lo que todavía está pendiente.</p>
+              </div>
+              <p className="text-sm font-semibold">{cash.count} · {formatMoney(cash.pending)}</p>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-4">
+              {cash.weeks.map((week) => (
+                <div key={week.id} className="rounded-md border border-[var(--border)] bg-white px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{week.label}</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">{formatIsoDate(week.start)} – {formatIsoDate(week.end)}</p>
+                  <p className="mt-1 font-mono text-sm font-semibold">{formatMoney(week.pending)}</p>
+                  <p className="text-[11px] text-[var(--text-secondary)]">{week.rows.length} abonos</p>
                 </div>
               ))}
             </div>
+            {cash.brands.length > 0 && (
+              <div className="mt-4 overflow-auto">
+                <table className="w-full min-w-[520px] border-collapse text-sm">
+                  <thead className="text-left text-xs text-[var(--text-secondary)]">
+                    <tr>
+                      <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Empresa</th>
+                      <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Abonos</th>
+                      <th className="border-b border-[var(--border)] px-2 py-2 text-right font-medium">Pendiente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cash.brands.map((brand) => (
+                      <tr key={brand.brand}>
+                        <td className="border-b border-[var(--border)] px-2 py-2 font-medium">{brand.brand}</td>
+                        <td className="border-b border-[var(--border)] px-2 py-2 text-[var(--text-secondary)]">{brand.count}</td>
+                        <td className="border-b border-[var(--border)] px-2 py-2 text-right font-mono">{formatMoney(brand.pending)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {cash.count === 0 && (
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">En las próximas 4 semanas no hay fechas previstas con pendiente.</p>
+            )}
+            {cash.weeks.some((week) => week.rows.length > 0) && (
+              <div className="mt-4 space-y-3">
+                {cash.weeks.filter((week) => week.rows.length > 0).map((week) => (
+                  <div key={`${week.id}-rows`}>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{week.label}</p>
+                    <div className="mt-2 divide-y divide-[var(--border)] rounded-md border border-[var(--border)] bg-white">
+                      {week.rows.map((row) => (
+                        <button
+                          key={row.id}
+                          type="button"
+                          onClick={() => openEdit(row)}
+                          className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left hover:bg-[var(--bg-soft)]"
+                        >
+                          <span className="min-w-0">
+                            <span className="text-sm font-medium">#{row.registro} · {displayDash(row.brand)} · {displayDash(row.teamMotivo)}</span>
+                            <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{formatIsoDate(row.dueDate)}</span>
+                          </span>
+                          <span className="shrink-0 font-mono text-sm">{formatMoney(row.pending)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -1271,6 +1434,28 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <dd>{displayDash(form.informedBy)}</dd>
                     </div>
                   </dl>
+                </div>
+
+                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Reclamaciones</p>
+                  <div className="mt-3 space-y-2">
+                    {caseClaims.map((claim) => (
+                      <div key={claim.id} className="rounded-md bg-[var(--bg-soft)] px-3 py-2 text-sm">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{claimKindLabel(claim.kind)} · {formatIsoDate(claim.claimedAt)}</p>
+                        <p className="mt-0.5 text-[var(--text-secondary)]">{claim.note || 'Sin nota'}</p>
+                      </div>
+                    ))}
+                    {caseClaims.length === 0 && (
+                      <p className="text-xs text-[var(--text-secondary)]">{editing ? 'Aún no hay reclamaciones anotadas.' : 'Guarda el abono para anotar reclamaciones.'}</p>
+                    )}
+                  </div>
+                  {editing && (
+                    <div className="mt-3 grid gap-2">
+                      <input type="date" value={claimDraft.claimedAt} onChange={(event) => setClaimDraft({ ...claimDraft, claimedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                      <input value={claimDraft.note} onChange={(event) => setClaimDraft({ ...claimDraft, note: event.target.value })} placeholder="Nota corta" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
+                      <button type="button" onClick={addClaimFromModal} className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-[var(--bg-soft)]">Añadir reclamación</button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-lg border border-[var(--border)] bg-white p-4">

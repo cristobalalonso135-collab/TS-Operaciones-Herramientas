@@ -635,6 +635,7 @@ export default function Home() {
           setTrackingView(next);
           setView('tracking');
         }}
+        onOpenAbonos={() => setView('abonos')}
       />
     );
   }

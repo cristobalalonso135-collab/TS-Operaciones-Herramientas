@@ -52,6 +52,14 @@ export interface AbonoReceipt {
   comment: string;
 }
 
+export interface AbonoClaim {
+  id: string;
+  caseId: string;
+  claimedAt: string;
+  kind: 'reclamar' | 'seguir';
+  note: string;
+}
+
 export interface TradeTerm {
   id: string;
   brand: string;
@@ -73,6 +81,7 @@ export interface AbonosCatalogs {
 export interface AbonosState {
   cases: AbonoCase[];
   receipts: AbonoReceipt[];
+  claims: AbonoClaim[];
   tradeTerms: TradeTerm[];
   catalogs: AbonosCatalogs;
 }
@@ -99,6 +108,7 @@ export const EMPTY_CATALOGS: AbonosCatalogs = {
 export const EMPTY_ABONOS_STATE: AbonosState = {
   cases: [],
   receipts: [],
+  claims: [],
   tradeTerms: [],
   catalogs: EMPTY_CATALOGS,
 };
@@ -359,6 +369,144 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTa
     if (kindDiff !== 0) return kindDiff;
     return (b.row.pending || 0) - (a.row.pending || 0);
   });
+}
+
+export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['reclamar', 'seguir', 'cobro', 'fecha'];
+
+export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: string; bulkLabel: string | null }> = {
+  reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: 'He reclamado todos' },
+  seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: 'Sigo en ello todos' },
+  cobro: { title: 'Comprobar cobro', hint: 'Entró una parte. Mira si ha llegado el resto.', bulkLabel: null },
+  fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha no sé cuándo reclamártelo.', bulkLabel: null },
+};
+
+export interface WeeklyTaskGroup {
+  kind: WeeklyTaskKind;
+  title: string;
+  hint: string;
+  bulkLabel: string | null;
+  tasks: WeeklyTask[];
+  pending: number;
+}
+
+export function groupWeeklyTasks(tasks: WeeklyTask[]): WeeklyTaskGroup[] {
+  return WEEKLY_TASK_ORDER
+    .map((kind) => {
+      const list = tasks.filter((task) => task.kind === kind);
+      return {
+        kind,
+        title: WEEKLY_TASK_META[kind].title,
+        hint: WEEKLY_TASK_META[kind].hint,
+        bulkLabel: WEEKLY_TASK_META[kind].bulkLabel,
+        tasks: list,
+        pending: list.reduce((sum, task) => sum + task.row.pending, 0),
+      };
+    })
+    .filter((group) => group.tasks.length > 0);
+}
+
+export function claimsForCase(claims: AbonoClaim[], caseId: string): AbonoClaim[] {
+  return [...claims]
+    .filter((claim) => claim.caseId === caseId)
+    .sort((a, b) => {
+      const dateDiff = b.claimedAt.localeCompare(a.claimedAt);
+      return dateDiff !== 0 ? dateDiff : b.id.localeCompare(a.id);
+    });
+}
+
+export function makeClaim(caseId: string, kind: 'reclamar' | 'seguir', note = '', claimedAt = todayIso()): AbonoClaim {
+  return {
+    id: crypto.randomUUID(),
+    caseId,
+    kind,
+    note: note.trim(),
+    claimedAt,
+  };
+}
+
+export function claimKindLabel(kind: AbonoClaim['kind']): string {
+  return kind === 'seguir' ? 'Seguimiento' : 'Reclamación';
+}
+
+export interface CashWeek {
+  id: string;
+  label: string;
+  start: string;
+  end: string;
+  rows: AbonoComputed[];
+  pending: number;
+}
+
+export interface CashBrand {
+  brand: string;
+  pending: number;
+  count: number;
+}
+
+export interface UpcomingCash {
+  weeks: CashWeek[];
+  brands: CashBrand[];
+  pending: number;
+  count: number;
+}
+
+export function upcomingCash(rows: AbonoComputed[], today = todayIso(), days = 27): UpcomingCash {
+  const horizon = addDaysIso(today, days);
+  const open = rows.filter((row) => (
+    row.pending > 0.009
+    && row.status !== 'Cancelado'
+    && row.status !== 'Recibido'
+    && !!row.dueDate
+    && row.dueDate >= today
+    && row.dueDate <= horizon
+  ));
+
+  const weeks: CashWeek[] = Array.from({ length: 4 }, (_, index) => {
+    const start = addDaysIso(today, index * 7);
+    const rawEnd = addDaysIso(today, index * 7 + 6);
+    const end = rawEnd > horizon ? horizon : rawEnd;
+    const list = open
+      .filter((row) => row.dueDate! >= start && row.dueDate! <= end)
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '') || a.registro - b.registro);
+    return {
+      id: `w${index}`,
+      label: index === 0 ? 'Esta semana' : `+${index} sem.`,
+      start,
+      end,
+      rows: list,
+      pending: list.reduce((sum, row) => sum + row.pending, 0),
+    };
+  });
+
+  const brandMap = new Map<string, CashBrand>();
+  open.forEach((row) => {
+    const brand = row.brand.trim() || '—';
+    const current = brandMap.get(brand) || { brand, pending: 0, count: 0 };
+    current.pending += row.pending;
+    current.count += 1;
+    brandMap.set(brand, current);
+  });
+
+  return {
+    weeks,
+    brands: Array.from(brandMap.values()).sort((a, b) => b.pending - a.pending),
+    pending: open.reduce((sum, row) => sum + row.pending, 0),
+    count: open.length,
+  };
+}
+
+export function abonosHubKpis(rows: AbonoComputed[], today = todayIso()) {
+  const open = rows.filter((row) => row.status !== 'Recibido' && row.status !== 'Cancelado' && row.pending > 0.009);
+  const overdue = open.filter((row) => row.overdueDays !== null);
+  const claim = weeklyTasks(rows, today).filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
+  return {
+    openCount: open.length,
+    pending: open.reduce((sum, row) => sum + row.pending, 0),
+    overdue: overdue.reduce((sum, row) => sum + row.pending, 0),
+    overdueCount: overdue.length,
+    claimCount: claim.length,
+    claimPending: claim.reduce((sum, task) => sum + task.row.pending, 0),
+  };
 }
 
 export const ADIDAS_SEED_TERMS: Omit<TradeTerm, 'id'>[] = [
