@@ -181,6 +181,35 @@ textarea {
   line-height: 1.25;
 }
 
+.abonos-row-recibido td {
+  background: #e7f3ea;
+}
+
+.abonos-row-parcial td {
+  background: #f8eee4;
+}
+
+.abonos-row-vencido td {
+  background: #f8e6e2;
+}
+
+.abonos-row-reclamado td {
+  background: #f6f1e0;
+}
+
+.abonos-row-indet td {
+  background: #eef1f4;
+}
+
+.abonos-row-cancelado td {
+  background: #f3f3f1;
+  color: var(--text-muted);
+}
+
+.abonos-table tbody tr:hover td {
+  filter: brightness(0.97);
+}
+
 .abonos-col-resizer {
   position: absolute;
   top: 0;

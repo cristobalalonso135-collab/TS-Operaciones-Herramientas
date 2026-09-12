@@ -8,11 +8,13 @@ import {
   ABONO_STATUSES,
   ABONOS_PEOPLE,
   addDaysIso,
+  caseLabel,
   claimKindLabel,
   claimsForCase,
   computeAll,
   DEFAULT_NEW_AUTHOR,
   displayDash,
+  formatDueLabel,
   formatIsoDate,
   formatMoney,
   groupWeeklyTasks,
@@ -21,6 +23,7 @@ import {
   nextRegistro,
   parseMoney,
   receiptsForCase,
+  rowTone,
   statusAfterReceipts,
   todayIso,
   upcomingCash,
@@ -37,6 +40,8 @@ import {
 } from '@/lib/abonos-model';
 import {
   abonosExportRows,
+  abonosTemplateRows,
+  ABONOS_TEMPLATE_INSTRUCTIONS,
   buildImportPreview,
   detectAbonosHeaderRow,
   guessColumnMap,
@@ -46,7 +51,7 @@ import {
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, ChevronRight, GripVertical, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Download, GripVertical, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -58,7 +63,6 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 type SortKey =
-  | 'registro'
   | 'addedBy'
   | 'dueDate'
   | 'brand'
@@ -74,21 +78,20 @@ type SortKey =
 const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
-  { key: 'registro', label: 'Registro', width: 88 },
-  { key: 'addedBy', label: 'Añadido por', width: 108 },
-  { key: 'dueDate', label: 'Fecha prevista', width: 112 },
+  { key: 'dueDate', label: 'Cuándo', width: 120 },
   { key: 'brand', label: 'Empresa', width: 108 },
   { key: 'type', label: 'Tipo', width: 120 },
   { key: 'area', label: 'Área', width: 108 },
-  { key: 'teamMotivo', label: 'Equipo / Motivo', width: 140 },
+  { key: 'teamMotivo', label: 'Equipo / Motivo', width: 150 },
   { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
   { key: 'receivedTotal', label: 'Importe recibido', width: 118 },
   { key: 'pending', label: 'Importe pendiente', width: 118 },
-  { key: 'status', label: 'Estado', width: 150 },
+  { key: 'status', label: 'Estado', width: 140 },
   { key: 'comment', label: 'Comentario', width: 180 },
+  { key: 'addedBy', label: 'Añadido por', width: 108 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v5';
+const COL_STORAGE = 'ts-abonos-cols-v6';
 const BLANK = '__blank__';
 const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
 const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
@@ -125,12 +128,10 @@ function matchesFilter(selected: string, actual: string): boolean {
 
 function renderAbonoCell(row: AbonoComputed, key: SortKey) {
   switch (key) {
-    case 'registro':
-      return `#${row.registro}`;
     case 'addedBy':
       return displayDash(row.addedBy);
     case 'dueDate':
-      return formatIsoDate(row.dueDate);
+      return formatDueLabel(row);
     case 'brand':
       return displayDash(row.brand);
     case 'type':
@@ -188,6 +189,7 @@ const emptyForm = (): Partial<AbonoCase> => ({
   status: 'Pendiente',
   nextReview: '',
   comment: '',
+  dueDateUnknown: false,
 });
 
 function CatalogField({
@@ -394,6 +396,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const sorted = useMemo(() => {
     const copy = [...filtered];
     copy.sort((a, b) => {
+      if (sort.key === 'dueDate') {
+        const leftUnknown = !a.dueDate || a.dueDateUnknown;
+        const rightUnknown = !b.dueDate || b.dueDateUnknown;
+        if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
+      }
       const left = a[sort.key];
       const right = b[sort.key];
       const result = String(left ?? '').localeCompare(String(right ?? ''), 'es', { numeric: true });
@@ -468,7 +475,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const openEdit = (row: AbonoCase) => {
     setEditing(row);
-    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '' });
+    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '', dueDateUnknown: !!row.dueDateUnknown });
     setPanelOpen(true);
   };
 
@@ -496,11 +503,25 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const applyWeeklyTask = async (task: WeeklyTask) => {
-    if (task.kind === 'fecha' || task.kind === 'cobro') {
+    if (task.kind === 'fecha') {
+      openEdit(task.row);
+      return;
+    }
+    if (task.kind === 'cobro') {
       openEdit(task.row);
       return;
     }
     await applyWeeklyTasks([task]);
+  };
+
+  const markDatesUnknown = async (list: WeeklyTask[]) => {
+    if (list.length === 0) return;
+    const ids = new Set(list.map((task) => task.row.id));
+    const cases = state.cases.map((row) => (
+      ids.has(row.id) ? { ...row, dueDate: null, dueDateUnknown: true } : row
+    ));
+    await persist({ ...state, cases }, backend);
+    setNote(list.length === 1 ? 'Fecha marcada como indeterminada.' : `Marcadas ${list.length} fechas como indeterminadas.`);
   };
 
   const saveForm = async () => {
@@ -514,7 +535,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       registro: editing?.registro || nextRegistro(state.cases),
       createdAt: editing ? (editing.createdAt || '') : new Date().toISOString(),
       addedBy: form.addedBy || '',
-      dueDate: form.dueDate || null,
+      dueDate: form.dueDateUnknown ? null : (form.dueDate || null),
       brand: form.brand,
       type: form.type || '',
       area: form.area,
@@ -526,6 +547,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       status: (form.status || '') as AbonoStatus | '',
       nextReview: form.nextReview || null,
       comment: form.comment || '',
+      dueDateUnknown: !!form.dueDateUnknown,
     };
     const cases = editing
       ? state.cases.map((item) => item.id === row.id ? row : item)
@@ -713,6 +735,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     XLSX.writeFile(workbook, 'Abonos.xlsx');
   };
 
+  const downloadTemplate = async () => {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(abonosTemplateRows()), 'Abonos');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_TEMPLATE_INSTRUCTIONS), 'Instrucciones');
+    XLSX.writeFile(workbook, 'Plantilla_abonos.xlsx');
+  };
+
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
   const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
   const caseClaims = editing ? claimsForCase(state.claims, editing.id) : [];
@@ -813,15 +843,17 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </div>
                   {openTaskGroup.bulkLabel && (
                     <div className="flex min-w-[240px] flex-1 flex-col gap-2 sm:max-w-sm sm:flex-row">
-                      <input
-                        value={claimNote}
-                        onChange={(event) => setClaimNote(event.target.value)}
-                        placeholder="Nota (opcional)"
-                        className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm"
-                      />
+                      {openTaskGroup.kind !== 'fecha' && (
+                        <input
+                          value={claimNote}
+                          onChange={(event) => setClaimNote(event.target.value)}
+                          placeholder="Nota (opcional)"
+                          className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm"
+                        />
+                      )}
                       <button
                         type="button"
-                        onClick={() => applyWeeklyTasks(openTaskGroup.tasks)}
+                        onClick={() => openTaskGroup.kind === 'fecha' ? markDatesUnknown(openTaskGroup.tasks) : applyWeeklyTasks(openTaskGroup.tasks)}
                         className="h-9 shrink-0 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
                       >
                         {openTaskGroup.bulkLabel}
@@ -832,7 +864,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 {openTaskGroup.tasks.map((task) => (
                   <div key={task.id} className="space-y-3 rounded-md border border-[var(--border)] bg-white px-3 py-3">
                     <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
-                      <p className="text-sm font-medium">#{task.row.registro} · {displayDash(task.row.brand)} · {displayDash(task.row.area)} · {displayDash(task.row.teamMotivo)}</p>
+                      <p className="text-sm font-medium">{caseLabel(task.row)}</p>
                       <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{task.reason} · {formatMoney(task.row.pending)}</p>
                     </button>
                     <div className="flex flex-wrap items-center gap-2">
@@ -843,6 +875,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
                         >
                           {task.actionLabel}
+                        </button>
+                      )}
+                      {task.kind === 'fecha' && (
+                        <button
+                          type="button"
+                          onClick={() => markDatesUnknown([task])}
+                          className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-semibold hover:bg-[var(--bg-soft)]"
+                        >
+                          Indeterminada
                         </button>
                       )}
                       <button
@@ -925,8 +966,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left hover:bg-[var(--bg-soft)]"
                         >
                           <span className="min-w-0">
-                            <span className="text-sm font-medium">#{row.registro} · {displayDash(row.brand)} · {displayDash(row.teamMotivo)}</span>
-                            <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{formatIsoDate(row.dueDate)}</span>
+                            <span className="text-sm font-medium">{caseLabel(row)}</span>
+                            <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{formatDueLabel(row)}</span>
                           </span>
                           <span className="shrink-0 font-mono text-sm">{formatMoney(row.pending)}</span>
                         </button>
@@ -1045,11 +1086,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               </thead>
               <tbody>
                 {sorted.map((row) => (
-                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer hover:bg-white">
+                  <tr key={row.id} onClick={() => openEdit(row)} className={`cursor-pointer ${rowTone(row)}`}>
                     {columnOrder.map((key) => (
                       <td
                         key={key}
-                        className={`border-b border-[var(--border)] px-1.5 py-1.5 ${key === 'registro' ? 'font-medium' : ''} ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''}`}
+                        className={`border-b border-[var(--border)] px-1.5 py-1.5 ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''}`}
                       >
                         <div className="abonos-cell" title={key === 'comment' ? row.comment || undefined : undefined}>{renderAbonoCell(row, key)}</div>
                       </td>
@@ -1131,6 +1172,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       {tab === 'importar' && (
         <section className="space-y-4">
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Plantilla Excel</p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">Descárgala, rellena filas y súbela aquí. El número de registro lo pone la herramienta.</p>
+              </div>
+              <button
+                type="button"
+                onClick={downloadTemplate}
+                className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-semibold hover:bg-[var(--bg-soft)]"
+              >
+                <Download className="h-4 w-4" />
+                Descargar plantilla
+              </button>
+            </div>
             <FileUpload
               inputId="abonos-import"
               label="Importar Excel de abonos"
@@ -1286,10 +1341,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
               <div className="min-w-0">
                 <p id="abonos-modal-title" className="font-display text-lg font-semibold tracking-tight">
-                  {editing ? `Registro #${editing.registro}` : 'Nuevo abono'}
+                  {editing ? caseLabel({ brand: form.brand || editing.brand, area: form.area || editing.area, teamMotivo: form.teamMotivo || editing.teamMotivo }) : 'Nuevo abono'}
                 </p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  {displayDash(form.brand)} · {displayDash(form.area)} · {displayDash(form.teamMotivo)}
+                  {formatDueLabel({ dueDate: form.dueDate || null, dueDateUnknown: !!form.dueDateUnknown })} · {formatMoney(form.expectedAmount ?? null)}
+                  {editing ? ` · #${editing.registro}` : ''}
                 </p>
               </div>
               <button type="button" onClick={closePanel} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
@@ -1318,7 +1374,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista</span>
-                    <input type="date" value={form.dueDate || ''} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                    <input
+                      type="date"
+                      value={form.dueDateUnknown ? '' : (form.dueDate || '')}
+                      disabled={!!form.dueDateUnknown}
+                      onChange={(event) => setForm({ ...form, dueDate: event.target.value, dueDateUnknown: false })}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--bg-soft)]"
+                    />
+                    <label className="flex items-center gap-2 pt-1 text-xs text-[var(--text-secondary)]">
+                      <input
+                        type="checkbox"
+                        checked={!!form.dueDateUnknown}
+                        onChange={(event) => setForm({ ...form, dueDateUnknown: event.target.checked, dueDate: event.target.checked ? '' : form.dueDate })}
+                      />
+                      Fecha indeterminada — no sé cuándo y no me lo pidas cada semana
+                    </label>
                   </label>
                   {form.origin === 'Trade Term' && (
                     <label className="space-y-1 md:col-span-2">
@@ -1415,7 +1485,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Fecha prevista</dt>
-                      <dd>{formatIsoDate(form.dueDate || null)}</dd>
+                      <dd>{formatDueLabel({ dueDate: form.dueDate || null, dueDateUnknown: !!form.dueDateUnknown })}</dd>
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Próx. revisión</dt>

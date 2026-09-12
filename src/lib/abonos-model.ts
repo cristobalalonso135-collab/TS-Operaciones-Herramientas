@@ -41,6 +41,7 @@ export interface AbonoCase {
   status: AbonoStatus | '';
   nextReview: string | null;
   comment: string;
+  dueDateUnknown: boolean;
 }
 
 export interface AbonoReceipt {
@@ -133,6 +134,29 @@ export function formatIsoDate(value: string | null): string {
   const [year, month, day] = value.split('-');
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
+}
+
+export function isDateUnknown(row: { dueDate?: string | null; dueDateUnknown?: boolean }): boolean {
+  return !!row.dueDateUnknown && !row.dueDate;
+}
+
+export function formatDueLabel(row: { dueDate?: string | null; dueDateUnknown?: boolean }): string {
+  if (isDateUnknown(row)) return 'Indeterminada';
+  return formatIsoDate(row.dueDate || null);
+}
+
+export function caseLabel(row: { brand: string; area: string; teamMotivo: string }): string {
+  return [row.brand, row.area, row.teamMotivo].map((value) => displayDash(value)).join(' · ');
+}
+
+export function rowTone(row: AbonoComputed): string {
+  if (row.status === 'Cancelado') return 'abonos-row-cancelado';
+  if (row.status === 'Recibido') return 'abonos-row-recibido';
+  if (row.status === 'Recibido parcialmente') return 'abonos-row-parcial';
+  if (row.overdueDays !== null) return 'abonos-row-vencido';
+  if (row.status === 'Reclamado') return 'abonos-row-reclamado';
+  if (isDateUnknown(row)) return 'abonos-row-indet';
+  return '';
 }
 
 export function displayDash(value: string | null | undefined): string {
@@ -239,9 +263,9 @@ export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: n
 export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms: TradeTerm[], today = todayIso()): AbonoComputed {
   const receivedTotal = receivedTotalFor(row.id, receipts);
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
-  const knownOpen = row.status === 'Pendiente' || row.status === 'Reclamado' || row.status === 'Recibido parcialmente';
-  const overdue = knownOpen && pending > 0 && !!row.dueDate && row.dueDate < today;
-  const reviewOverdue = knownOpen && !!row.nextReview && row.nextReview <= today;
+  const closed = row.status === 'Recibido' || row.status === 'Cancelado';
+  const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
+  const reviewOverdue = !closed && pending > 0 && !!row.nextReview && row.nextReview <= today;
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
   const payments = paymentSlots(receipts, row.id);
   return {
@@ -351,7 +375,7 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTa
       return;
     }
 
-    if (!row.dueDate) {
+    if (!row.dueDate && !row.dueDateUnknown) {
       tasks.push({
         id: `fecha-${row.id}`,
         kind: 'fecha',
@@ -377,7 +401,7 @@ export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: str
   reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: 'He reclamado todos' },
   seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: 'Sigo en ello todos' },
   cobro: { title: 'Comprobar cobro', hint: 'Entró una parte. Mira si ha llegado el resto.', bulkLabel: null },
-  fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha no sé cuándo reclamártelo.', bulkLabel: null },
+  fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha. Pon una o márcala como indeterminada si no sabes cuándo.', bulkLabel: 'Fecha indeterminada' },
 };
 
 export interface WeeklyTaskGroup {

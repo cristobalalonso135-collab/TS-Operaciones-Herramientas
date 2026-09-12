@@ -45,7 +45,11 @@ function isAbonosPayload(value: unknown): value is AbonosState {
 }
 
 function seedState(state: AbonosState): AbonosState {
-  const cases = state.cases.map((row) => ({ ...row, area: remapLegacyArea(row.area) }));
+  const cases = state.cases.map((row) => ({
+    ...row,
+    area: remapLegacyArea(row.area),
+    dueDateUnknown: Boolean(row.dueDateUnknown) && !row.dueDate,
+  }));
   const catalogs: AbonosCatalogs = {
     brands: mergeCatalog(EMPTY_CATALOGS.brands, [...state.catalogs.brands, ...cases.map((row) => row.brand), ...state.tradeTerms.map((row) => row.brand)]),
     types: mergeCatalog(EMPTY_CATALOGS.types, [...state.catalogs.types, ...cases.map((row) => row.type)]),

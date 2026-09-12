@@ -11,6 +11,7 @@ import {
 export interface ImportColumnMap {
   registro: number | null;
   dueDate: number | null;
+  dueDateUnknown: number | null;
   brand: number | null;
   type: number | null;
   teamMotivo: number | null;
@@ -30,6 +31,7 @@ export interface ImportPreviewRow {
   key: string;
   registro: number | null;
   dueDate: string | null;
+  dueDateUnknown: boolean;
   brand: string;
   type: string;
   teamMotivo: string;
@@ -49,6 +51,7 @@ export interface ImportPreviewRow {
 const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   registro: ['registro', 'id', 'nº', 'n°'],
   dueDate: ['fecha prevista', 'fecha'],
+  dueDateUnknown: ['fecha indeterminada', 'indeterminada', 'sin fecha'],
   brand: ['empresa', 'marca'],
   type: ['tipo'],
   teamMotivo: ['equipo/motivo', 'equipo / motivo', 'equipo', 'motivo'],
@@ -75,7 +78,9 @@ function cellText(value: unknown): string {
 export function detectAbonosHeaderRow(rows: unknown[][]): number {
   const index = rows.findIndex((row) => {
     const joined = (row || []).map(normalizeHeader).join(' | ');
-    return joined.includes('registro') && (joined.includes('empresa') || joined.includes('marca'));
+    const hasBrand = joined.includes('empresa') || joined.includes('marca');
+    const hasShape = joined.includes('tipo') || joined.includes('importe') || joined.includes('equipo') || joined.includes('área') || joined.includes('area');
+    return hasBrand && hasShape;
   });
   return index >= 0 ? index : 0;
 }
@@ -89,6 +94,7 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
   return {
     registro: find(HEADER_ALIASES.registro),
     dueDate: find(HEADER_ALIASES.dueDate),
+    dueDateUnknown: find(HEADER_ALIASES.dueDateUnknown),
     brand: find(HEADER_ALIASES.brand),
     type: find(HEADER_ALIASES.type),
     teamMotivo: find(HEADER_ALIASES.teamMotivo),
@@ -103,6 +109,11 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     comment: find(HEADER_ALIASES.comment),
     origin: find(HEADER_ALIASES.origin),
   };
+}
+
+function parseYes(value: unknown): boolean {
+  const text = cellText(value).toLocaleLowerCase('es');
+  return text === 'sí' || text === 'si' || text === 's' || text === 'x' || text === '1' || text === 'true' || text === 'indeterminada' || text === 'indeterminado';
 }
 
 function pick(row: unknown[], index: number | null): unknown {
@@ -122,11 +133,14 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         ? null
         : Number(registroValue);
       const empty = !brand && !type && !teamMotivo && registro === null;
+      const dueDate = cellToIso(pick(row, map.dueDate));
+      const dueDateUnknown = !dueDate && parseYes(pick(row, map.dueDateUnknown));
       if (empty) return null;
       return {
         key: `import-${index}`,
         registro: Number.isFinite(registro) ? Number(registro) : null,
-        dueDate: cellToIso(pick(row, map.dueDate)),
+        dueDate,
+        dueDateUnknown,
         brand,
         type,
         teamMotivo,
@@ -158,7 +172,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       registro: row.registro ?? index + 1,
       createdAt: '',
       addedBy: row.addedBy,
-      dueDate: row.dueDate,
+      dueDate: row.dueDateUnknown ? null : row.dueDate,
       brand: row.brand,
       type: row.type,
       area: row.area,
@@ -170,6 +184,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       status: asStatus(row.status),
       nextReview: null,
       comment: row.comment,
+      dueDateUnknown: row.dueDateUnknown && !row.dueDate,
     });
     const payments = [
       { date: row.pay1Date, amount: row.pay1Amount },
@@ -266,4 +281,44 @@ export function receiptsExportRows(cases: Array<{ registro: number; brand: strin
     ];
   });
   return [header, ...body];
+}
+
+export const ABONOS_TEMPLATE_HEADERS = [
+  'Empresa',
+  'Tipo',
+  'Área',
+  'Equipo/Motivo',
+  'Importe previsto',
+  'Fecha prevista',
+  'Fecha indeterminada',
+  'Añadido por',
+  'Estado',
+  'Origen',
+  'Comentario',
+  'Fecha 1er pago',
+  'Importe 1er pago',
+  'Fecha 2º pago',
+  'Importe 2º pago',
+];
+
+export const ABONOS_TEMPLATE_INSTRUCTIONS = [
+  ['Plantilla de importación de abonos'],
+  [''],
+  ['Rellena la hoja Abonos y súbela en Importar. El registro lo asigna la herramienta.'],
+  [''],
+  ['Empresa', 'Obligatoria. Adidas, Nike, Puma…'],
+  ['Tipo', 'Credit Notes, VIK Cash, Fee Pro Clubs, Dto FRA, Off Invoice…'],
+  ['Área', 'Solo B2B, Grassroots, Pro Clubs o Teamsports.'],
+  ['Equipo/Motivo', 'Levante, Mallorca, GAP Plan, Kings League…'],
+  ['Importe previsto', 'Número. 15000 o 15.000,00'],
+  ['Fecha prevista', 'dd/mm/aaaa. Si no sabes cuándo, déjala vacía.'],
+  ['Fecha indeterminada', 'Pon Sí si no hay fecha y no quieres que te lo pida cada semana.'],
+  ['Añadido por', 'Cristóbal o Pablo. Si falta, entra vacío.'],
+  ['Estado', 'Déjalo vacío si aún no se ha cobrado. Recibido / Recibido parcialmente / Reclamado / Pendiente.'],
+  ['Origen', 'Puntual o Trade Term. Se puede dejar vacío.'],
+  ['Pagos', 'Solo si ya ha entrado dinero. Si no, deja esas cuatro columnas vacías.'],
+];
+
+export function abonosTemplateRows(): unknown[][] {
+  return [ABONOS_TEMPLATE_HEADERS, Array(ABONOS_TEMPLATE_HEADERS.length).fill('')];
 }
