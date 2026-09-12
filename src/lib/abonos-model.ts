@@ -6,7 +6,7 @@ export const ABONO_STATUSES = ['Pendiente', 'Reclamado', 'Recibido parcialmente'
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
 export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Off Invoice', 'Material gratuito', 'Otro'];
-export const DEFAULT_AREAS = ['B2B', 'Grassroots', 'Pro Clubs'];
+export const DEFAULT_AREAS = ['B2B', 'Grassroots', 'Pro Clubs', 'Teamsports'];
 export const DEFAULT_TEAMS = [
   'General',
   'TODOS',

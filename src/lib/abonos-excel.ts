@@ -123,7 +123,6 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         : Number(registroValue);
       const empty = !brand && !type && !teamMotivo && registro === null;
       if (empty) return null;
-      const error = !brand ? 'Falta empresa' : (!type ? 'Falta tipo' : null);
       return {
         key: `import-${index}`,
         registro: Number.isFinite(registro) ? Number(registro) : null,
@@ -141,7 +140,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         status: cellText(pick(row, map.status)),
         comment: cellText(pick(row, map.comment)),
         origin: cellText(pick(row, map.origin)) || 'Puntual',
-        error,
+        error: null,
       } satisfies ImportPreviewRow;
     })
     .filter((row): row is ImportPreviewRow => Boolean(row));

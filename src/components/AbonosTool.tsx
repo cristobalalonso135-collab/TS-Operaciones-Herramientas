@@ -440,12 +440,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const applyImport = async () => {
-    const valid = preview.filter((row) => !row.error);
-    const missingArea = valid.filter((row) => !row.area).length;
-    const missingAuthor = valid.filter((row) => !row.addedBy).length;
-    if (missingArea > 0 && !window.confirm(`Hay ${missingArea} filas sin Área. Se importarán igual y podrás completarlas después. ¿Seguir?`)) return;
-    if (missingAuthor > 0 && !window.confirm(`Hay ${missingAuthor} filas sin Añadido por. Se importarán igual y podrás completarlas después. ¿Seguir?`)) return;
-    const { cases, receipts } = previewToRecords(valid);
+    const { cases, receipts } = previewToRecords(preview);
     const used = new Set(state.cases.map((row) => row.registro));
     let nextReg = nextRegistro(state.cases);
     const imported = cases.map((row) => {
@@ -851,7 +846,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FileUpload
               inputId="abonos-import"
               label="Importar Excel de abonos"
-              hint="Una sola carga. Incluye Área (B2B, Grassroots, Pro Clubs) y Añadido por; no las invento yo. Después los registros nuevos se crean aquí."
+              hint="Una sola carga. Área: B2B, Grassroots, Pro Clubs o Teamsports. Los huecos (tipo, fecha, estado) entran igual."
               onFileLoaded={handleImportFile}
               keepDropzone
             />
