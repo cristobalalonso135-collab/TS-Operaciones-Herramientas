@@ -305,9 +305,15 @@ export function isMyAbono(responsible: string): boolean {
   return name.startsWith('cristóbal') || name.startsWith('cristobal');
 }
 
-export function myOpenQueue(rows: AbonoComputed[]): AbonoComputed[] {
+function matchesResponsibleScope(row: AbonoComputed, responsible: string): boolean {
+  if (!responsible || responsible === 'Todos') return true;
+  if (isMyAbono(responsible)) return isMyAbono(row.responsible);
+  return row.responsible.trim().toLocaleLowerCase('es') === responsible.trim().toLocaleLowerCase('es');
+}
+
+export function myOpenQueue(rows: AbonoComputed[], responsible = 'Cristóbal'): AbonoComputed[] {
   return [...rows]
-    .filter((row) => isMyAbono(row.responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado')
+    .filter((row) => matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado')
     .sort((a, b) => {
       if ((a.overdueDays ?? -1) !== (b.overdueDays ?? -1)) return (b.overdueDays ?? -1) - (a.overdueDays ?? -1);
       if (a.dueDate && !b.dueDate) return -1;
@@ -328,14 +334,14 @@ export interface WeeklyTask {
   row: AbonoComputed;
 }
 
-function stillOpen(row: AbonoComputed): boolean {
-  return isMyAbono(row.responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado' && row.pending > 0.009;
+function stillOpen(row: AbonoComputed, responsible: string): boolean {
+  return matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado' && row.pending > 0.009;
 }
 
-export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTask[] {
+export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsible = 'Cristóbal'): WeeklyTask[] {
   const tasks: WeeklyTask[] = [];
-  myOpenQueue(rows).forEach((row) => {
-    if (!stillOpen(row)) return;
+  myOpenQueue(rows, responsible).forEach((row) => {
+    if (!stillOpen(row, responsible)) return;
     const reviewDue = !!row.nextReview && row.nextReview <= today;
     const noReview = !row.nextReview;
 

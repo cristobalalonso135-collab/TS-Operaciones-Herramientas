@@ -296,6 +296,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
   const [claimNote, setClaimNote] = useState('');
   const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
+  const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
 
   const persist = useCallback(async (next: AbonosState, currentBackend: AbonosBackend) => {
     setState(next);
@@ -409,9 +410,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     pending: acc.pending + row.pending,
   }), { expected: 0, received: 0, pending: 0 }), [filtered]);
 
-  const tasks = useMemo(() => weeklyTasks(computed), [computed]);
+  const reviewRows = useMemo(
+    () => reviewResponsible ? computed.filter((row) => matchesFilter(reviewResponsible, row.responsible)) : computed,
+    [computed, reviewResponsible],
+  );
+  const tasks = useMemo(() => weeklyTasks(computed, todayIso(), reviewResponsible), [computed, reviewResponsible]);
   const taskGroups = useMemo(() => groupWeeklyTasks(tasks), [tasks]);
-  const cash = useMemo(() => upcomingCash(computed), [computed]);
+  const cash = useMemo(() => upcomingCash(reviewRows), [reviewRows]);
   const openTaskGroup = taskGroups.find((group) => group.kind === openTaskKind) || null;
 
   useEffect(() => {
@@ -803,6 +808,22 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
       {tab === 'dashboard' && (
         <section className="space-y-4">
+          <div className="flex justify-end">
+            <label className="w-full sm:w-64">
+              <span className="mb-1 block text-xs font-medium text-[var(--text-secondary)]">Responsable</span>
+              <select
+                value={reviewResponsible}
+                onChange={(event) => setReviewResponsible(event.target.value)}
+                className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+              >
+                <option value="">Todos</option>
+                {filterOptions.responsibles.options.map((responsible) => (
+                  <option key={responsible} value={responsible}>{responsible}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-3">
             <Kpi label="Tareas esta semana" value={String(kpis.taskCount)} />
             <Kpi label="Vencidos" value={`${kpis.overdueCount} · ${formatMoney(kpis.overduePending)}`} tone={kpis.overdueCount ? 'danger' : undefined} />
@@ -812,7 +833,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold">Tareas de la revisión</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Solo aparecen los compromisos asignados a Cristóbal. Abre una tarea para registrar la gestión y elegir cuándo revisarla.
+              {reviewResponsible
+                ? `Solo aparecen los compromisos asignados a ${reviewResponsible}.`
+                : 'Aparecen los compromisos de todos los responsables.'}{' '}
+              Abre una tarea para registrar la gestión y elegir cuándo revisarla.
             </p>
             {tasks.length === 0 ? (
               <p className="mt-3 text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
