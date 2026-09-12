@@ -104,6 +104,12 @@ export function todayIso(): string {
   return toIsoDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
 }
 
+export function addDaysIso(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return toIsoDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
 export function toIsoDate(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
@@ -247,6 +253,84 @@ export function myOpenQueue(rows: AbonoComputed[]): AbonoComputed[] {
       if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
       return a.registro - b.registro;
     });
+}
+
+export type WeeklyTaskKind = 'reclamar' | 'seguir' | 'cobro' | 'fecha';
+
+export interface WeeklyTask {
+  id: string;
+  kind: WeeklyTaskKind;
+  title: string;
+  reason: string;
+  actionLabel: string;
+  row: AbonoComputed;
+}
+
+function stillOpen(row: AbonoComputed): boolean {
+  return isMyAbono(row.addedBy) && row.status !== 'Recibido' && row.status !== 'Cancelado' && row.pending > 0.009;
+}
+
+export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTask[] {
+  const tasks: WeeklyTask[] = [];
+  myOpenQueue(rows).forEach((row) => {
+    if (!stillOpen(row)) return;
+    const reviewDue = !!row.nextReview && row.nextReview <= today;
+    const noReview = !row.nextReview;
+
+    if (row.dueDate && row.dueDate < today && row.status !== 'Reclamado') {
+      tasks.push({
+        id: `reclamar-${row.id}`,
+        kind: 'reclamar',
+        title: 'Reclamar',
+        reason: `Previsto ${formatIsoDate(row.dueDate)}${row.overdueDays ? ` · ${row.overdueDays} días` : ''}.`,
+        actionLabel: 'He reclamado',
+        row,
+      });
+      return;
+    }
+
+    if (row.status === 'Reclamado' && (reviewDue || noReview)) {
+      tasks.push({
+        id: `seguir-${row.id}`,
+        kind: 'seguir',
+        title: 'Seguir reclamando',
+        reason: reviewDue ? `Toca revisar (próxima revisión ${formatIsoDate(row.nextReview)}).` : 'Está reclamado y no tiene próxima revisión.',
+        actionLabel: 'Sigo en ello',
+        row,
+      });
+      return;
+    }
+
+    if (row.status === 'Recibido parcialmente' && (!row.dueDate || row.dueDate >= today)) {
+      tasks.push({
+        id: `cobro-${row.id}`,
+        kind: 'cobro',
+        title: 'Comprobar cobro',
+        reason: 'Entró una parte. Mira si ha llegado el resto.',
+        actionLabel: 'Abrir ficha',
+        row,
+      });
+      return;
+    }
+
+    if (!row.dueDate) {
+      tasks.push({
+        id: `fecha-${row.id}`,
+        kind: 'fecha',
+        title: 'Poner fecha prevista',
+        reason: 'Sin fecha no sé cuándo reclamártelo.',
+        actionLabel: 'Abrir ficha',
+        row,
+      });
+    }
+  });
+
+  const order: WeeklyTaskKind[] = ['reclamar', 'seguir', 'cobro', 'fecha'];
+  return tasks.sort((a, b) => {
+    const kindDiff = order.indexOf(a.kind) - order.indexOf(b.kind);
+    if (kindDiff !== 0) return kindDiff;
+    return (b.row.pending || 0) - (a.row.pending || 0);
+  });
 }
 
 export const ADIDAS_SEED_TERMS: Omit<TradeTerm, 'id'>[] = [

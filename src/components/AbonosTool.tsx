@@ -7,17 +7,18 @@ import {
   ABONO_ORIGINS,
   ABONO_STATUSES,
   ABONOS_PEOPLE,
+  addDaysIso,
   computeAll,
   DEFAULT_NEW_AUTHOR,
   displayDash,
   formatIsoDate,
   formatMoney,
   mergeCatalog,
-  myOpenQueue,
   nextRegistro,
   parseMoney,
   statusAfterReceipts,
   todayIso,
+  weeklyTasks,
   type AbonoCase,
   type AbonoComputed,
   type AbonoOrigin,
@@ -25,6 +26,7 @@ import {
   type AbonoStatus,
   type AbonosState,
   type TradeTerm,
+  type WeeklyTask,
 } from '@/lib/abonos-model';
 import {
   abonosExportRows,
@@ -40,7 +42,7 @@ import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend }
 import { AlertTriangle, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
-  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'dashboard', label: 'Revisión' },
   { id: 'seguimiento', label: 'Abonos / Seguimiento' },
   { id: 'terms', label: 'Trade Terms' },
   { id: 'importar', label: 'Importar' },
@@ -237,15 +239,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     return copy;
   }, [filtered, sort]);
 
-  const myQueue = useMemo(() => myOpenQueue(computed), [computed]);
+  const tasks = useMemo(() => weeklyTasks(computed), [computed]);
 
   const kpis = useMemo(() => {
+    const claim = tasks.filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
     return {
-      pending: myQueue.reduce((sum, row) => sum + row.pending, 0),
-      openCount: myQueue.length,
-      noDate: myQueue.filter((row) => !row.dueDate).length,
+      taskCount: tasks.length,
+      claimCount: claim.length,
+      claimPending: claim.reduce((sum, task) => sum + task.row.pending, 0),
     };
-  }, [myQueue]);
+  }, [tasks]);
 
   const peopleOptions = useMemo(() => {
     if (!state) return [...ABONOS_PEOPLE];
@@ -272,6 +275,24 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '' });
     setPanelOpen(true);
     setTab('seguimiento');
+  };
+
+  const applyWeeklyTask = async (task: WeeklyTask) => {
+    if (task.kind === 'fecha' || task.kind === 'cobro') {
+      openEdit(task.row);
+      return;
+    }
+    const nextReview = addDaysIso(todayIso(), 7);
+    const cases = state.cases.map((row) => {
+      if (row.id !== task.row.id) return row;
+      return {
+        ...row,
+        status: 'Reclamado' as const,
+        nextReview,
+      };
+    });
+    await persist({ ...state, cases }, backend);
+    setNote(task.kind === 'reclamar' ? 'Marcado como reclamado. Te lo vuelvo a sacar en 7 días.' : 'Sigue reclamado. Te lo vuelvo a sacar en 7 días.');
   };
 
   const saveForm = async () => {
@@ -472,7 +493,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">05 Abonos</p>
           <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento de compensaciones</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Lo que las marcas nos deben: trade terms y casos puntuales, hasta que entra el dinero.
+            Entre semana: altas y cambios de estado. Un día a la semana: las tareas de abajo.
           </p>
         </div>
         <button
@@ -495,36 +516,37 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       {tab === 'dashboard' && (
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Kpi label="Te tocan" value={String(kpis.openCount)} />
-            <Kpi label="Pendiente en los tuyos" value={formatMoney(kpis.pending)} />
-            <Kpi label="Sin fecha prevista" value={String(kpis.noDate)} tone={kpis.noDate ? 'warning' : undefined} />
+            <Kpi label="Tareas esta semana" value={String(kpis.taskCount)} />
+            <Kpi label="A reclamar" value={String(kpis.claimCount)} tone={kpis.claimCount ? 'warning' : undefined} />
+            <Kpi label="Importe a reclamar" value={formatMoney(kpis.claimPending)} />
           </div>
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <p className="text-sm font-semibold">Lo que te toca</p>
+            <p className="text-sm font-semibold">Tareas de la revisión</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Casos a tu nombre que no están cerrados. Lo de Pablo está en Abonos / Seguimiento.
+              Lo que te toca hacer hoy: reclamar, seguir o completar la ficha. Lo de Pablo no sale aquí.
             </p>
             <div className="mt-3 space-y-2">
-              {myQueue.length === 0 && (
-                <p className="text-sm text-[var(--text-secondary)]">Nada abierto a tu nombre.</p>
+              {tasks.length === 0 && (
+                <p className="text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
               )}
-              {myQueue.map((row) => (
-                <button
-                  key={row.id}
-                  type="button"
-                  onClick={() => openEdit(row)}
-                  className="flex w-full items-start justify-between gap-3 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-left hover:border-[var(--border-strong)]"
+              {tasks.map((task) => (
+                <div
+                  key={task.id}
+                  className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-[var(--border)] bg-white px-3 py-3"
                 >
-                  <div>
-                    <p className="text-sm font-medium">#{row.registro} · {displayDash(row.brand)} · {displayDash(row.area)} · {displayDash(row.teamMotivo)}</p>
-                    <p className="text-xs text-[var(--text-secondary)]">{displayDash(row.type)} · previsto {formatIsoDate(row.dueDate)} · {displayDash(row.status)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold">{formatMoney(row.pending)}</p>
-                    {row.overdueDays !== null && <p className="text-[11px] font-medium text-[var(--danger)]">Vencido hace {row.overdueDays} días</p>}
-                    {row.overdueDays === null && row.reviewOverdue && <p className="text-[11px] font-medium text-[var(--warning)]">Revisar hoy</p>}
-                  </div>
-                </button>
+                  <button type="button" onClick={() => openEdit(task.row)} className="min-w-0 flex-1 text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{task.title}</p>
+                    <p className="mt-1 text-sm font-medium">#{task.row.registro} · {displayDash(task.row.brand)} · {displayDash(task.row.area)} · {displayDash(task.row.teamMotivo)}</p>
+                    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{task.reason} · {formatMoney(task.row.pending)}</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyWeeklyTask(task)}
+                    className="h-9 shrink-0 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                  >
+                    {task.actionLabel}
+                  </button>
+                </div>
               ))}
             </div>
           </div>

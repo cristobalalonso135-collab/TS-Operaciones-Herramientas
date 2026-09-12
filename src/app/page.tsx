@@ -695,7 +695,7 @@ export default function Home() {
         number: '05',
         title: 'Abonos',
         description: 'Lo que Adidas, Nike y el resto nos deben: trade terms, credit notes y seguimiento hasta que entra.',
-        detail: 'Dashboard · Seguimiento · Trade Terms · Importar',
+        detail: 'Revisión · Seguimiento · Trade Terms · Importar',
         tone: 'bg-[#f6edd0] text-[#8a6d12]',
       },
     ];
