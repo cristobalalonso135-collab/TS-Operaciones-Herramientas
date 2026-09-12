@@ -1259,7 +1259,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                               {linked.map((row) => (
                                 <div key={row.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-2 py-1.5">
                                   <button type="button" onClick={() => openEdit(row)} className="min-w-0 text-left">
-                                    <span className="block text-xs font-medium">{caseLabel(row)}</span>
+                                    <span className="block text-xs font-medium">{taskName(row)}</span>
                                     <span className="mt-0.5 flex items-center gap-1">
                                       <StatusPill row={row} />
                                       <span className="font-mono text-[11px] text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
@@ -1314,8 +1314,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                                       className="mt-0.5"
                                     />
                                     <span className="min-w-0 flex-1">
-                                      <span className="font-medium">{caseLabel(row)}</span>
+                                      <span className="font-medium">{taskName(row)}</span>
                                       <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                                        <span className="text-[var(--text-secondary)]">{[row.brand, row.area, row.teamMotivo].filter(Boolean).join(' · ')}</span>
                                         <StatusPill row={row} />
                                         <span className="font-mono text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
                                         {other && <span className="text-[var(--text-muted)]">Ahora: {other.name}</span>}
