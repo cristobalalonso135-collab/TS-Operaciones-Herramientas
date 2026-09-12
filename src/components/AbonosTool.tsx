@@ -7,14 +7,13 @@ import {
   ABONO_ORIGINS,
   ABONO_STATUSES,
   ABONOS_PEOPLE,
-  attentionRows,
   computeAll,
-  DEFAULT_AREAS,
   DEFAULT_NEW_AUTHOR,
   displayDash,
   formatIsoDate,
   formatMoney,
   mergeCatalog,
+  myOpenQueue,
   nextRegistro,
   parseMoney,
   statusAfterReceipts,
@@ -166,7 +165,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<TabId>('dashboard');
   const [state, setState] = useState<AbonosState | null>(null);
   const [backend, setBackend] = useState<AbonosBackend>('local');
-  const [setupSql, setSetupSql] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [filters, setFilters] = useState(emptyFilters);
@@ -175,8 +173,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [form, setForm] = useState<Partial<AbonoCase>>(emptyForm());
   const [receiptDraft, setReceiptDraft] = useState({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
-  const [dashArea, setDashArea] = useState('');
-  const [dashBrand, setDashBrand] = useState('');
   const [importHeaders, setImportHeaders] = useState<unknown[]>([]);
   const [importRows, setImportRows] = useState<unknown[][]>([]);
   const [importMap, setImportMap] = useState<ImportColumnMap | null>(null);
@@ -201,7 +197,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         if (cancelled) return;
         setState(result.state);
         setBackend(result.backend);
-        setSetupSql(result.setupSql || null);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'No he podido cargar abonos.');
@@ -242,37 +237,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     return copy;
   }, [filtered, sort]);
 
-  const dashboardRows = useMemo(() => computed.filter((row) => {
-    if (row.status === 'Cancelado') return false;
-    if (dashArea && row.area !== dashArea) return false;
-    if (dashBrand && row.brand !== dashBrand) return false;
-    return true;
-  }), [computed, dashArea, dashBrand]);
+  const myQueue = useMemo(() => myOpenQueue(computed), [computed]);
 
   const kpis = useMemo(() => {
-    const open = dashboardRows.filter((row) => row.status === 'Pendiente' || row.status === 'Reclamado' || row.status === 'Recibido parcialmente');
     return {
-      expected: dashboardRows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0),
-      received: dashboardRows.reduce((sum, row) => sum + row.receivedTotal, 0),
-      pending: dashboardRows.reduce((sum, row) => sum + row.pending, 0),
-      overdue: dashboardRows.filter((row) => row.overdueDays !== null).reduce((sum, row) => sum + row.pending, 0),
-      openCount: open.length,
-      reviewCount: dashboardRows.filter((row) => row.reviewOverdue).length,
+      pending: myQueue.reduce((sum, row) => sum + row.pending, 0),
+      openCount: myQueue.length,
+      noDate: myQueue.filter((row) => !row.dueDate).length,
     };
-  }, [dashboardRows]);
+  }, [myQueue]);
 
   const peopleOptions = useMemo(() => {
     if (!state) return [...ABONOS_PEOPLE];
     return mergeCatalog([...ABONOS_PEOPLE], state.cases.map((row) => row.addedBy));
   }, [state]);
-
-  const byArea = useMemo(() => {
-    const areas = mergeCatalog(DEFAULT_AREAS, dashboardRows.map((row) => row.area));
-    return areas.map((area) => ({
-      area,
-      pending: dashboardRows.filter((row) => row.area === area).reduce((sum, row) => sum + row.pending, 0),
-    }));
-  }, [dashboardRows]);
 
   if (!state) {
     return (
@@ -507,18 +485,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         </button>
       </div>
 
-      {setupSql && backend === 'local' && (
-        <div className="rounded-lg border border-[var(--warning)]/30 bg-[#f8eee4] px-4 py-3 text-sm text-[var(--warning)]">
-          Los datos están en este navegador. Para que Pablo vea lo mismo, crea la tabla en Supabase y recarga.
-          <button
-            type="button"
-            className="ml-2 font-semibold underline"
-            onClick={() => navigator.clipboard.writeText(setupSql)}
-          >
-            Copiar SQL
-          </button>
-        </div>
-      )}
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
@@ -528,39 +494,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
       {tab === 'dashboard' && (
         <section className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setDashArea('')} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${!dashArea ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}>Todas las áreas</button>
-            {state.catalogs.areas.map((area) => (
-              <button key={area} type="button" onClick={() => setDashArea(area)} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${dashArea === area ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'}`}>{area}</button>
-            ))}
-            <select value={dashBrand} onChange={(event) => setDashBrand(event.target.value)} className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs">
-              <option value="">Todas las marcas</option>
-              {state.catalogs.brands.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
-            </select>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <Kpi label="Importe previsto" value={formatMoney(kpis.expected)} />
-            <Kpi label="Total recibido" value={formatMoney(kpis.received)} />
-            <Kpi label="Pendiente total" value={formatMoney(kpis.pending)} />
-            <Kpi label="Pendiente vencido" value={formatMoney(kpis.overdue)} tone="danger" />
-            <Kpi label="Casos pendientes" value={String(kpis.openCount)} />
-            <Kpi label="Pendientes de revisión" value={String(kpis.reviewCount)} tone="warning" />
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            {byArea.map((item) => (
-              <div key={item.area} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-                <p className="text-xs text-[var(--text-secondary)]">{item.area}</p>
-                <p className="mt-1 text-lg font-semibold">{formatMoney(item.pending)}</p>
-              </div>
-            ))}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Kpi label="Te tocan" value={String(kpis.openCount)} />
+            <Kpi label="Pendiente en los tuyos" value={formatMoney(kpis.pending)} />
+            <Kpi label="Sin fecha prevista" value={String(kpis.noDate)} tone={kpis.noDate ? 'warning' : undefined} />
           </div>
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <p className="text-sm font-semibold">Necesitan atención</p>
+            <p className="text-sm font-semibold">Lo que te toca</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              Casos a tu nombre que no están cerrados. Lo de Pablo está en Abonos / Seguimiento.
+            </p>
             <div className="mt-3 space-y-2">
-              {attentionRows(dashboardRows).length === 0 && (
-                <p className="text-sm text-[var(--text-secondary)]">Nada urgente con este filtro.</p>
+              {myQueue.length === 0 && (
+                <p className="text-sm text-[var(--text-secondary)]">Nada abierto a tu nombre.</p>
               )}
-              {attentionRows(dashboardRows).map((row) => (
+              {myQueue.map((row) => (
                 <button
                   key={row.id}
                   type="button"
@@ -568,8 +516,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   className="flex w-full items-start justify-between gap-3 rounded-md border border-[var(--border)] bg-white px-3 py-2 text-left hover:border-[var(--border-strong)]"
                 >
                   <div>
-                    <p className="text-sm font-medium">#{row.registro} · {row.brand} · {row.area} · {row.teamMotivo || '—'}</p>
-                    <p className="text-xs text-[var(--text-secondary)]">{row.type} · previsto {formatIsoDate(row.dueDate)}</p>
+                    <p className="text-sm font-medium">#{row.registro} · {displayDash(row.brand)} · {displayDash(row.area)} · {displayDash(row.teamMotivo)}</p>
+                    <p className="text-xs text-[var(--text-secondary)]">{displayDash(row.type)} · previsto {formatIsoDate(row.dueDate)} · {displayDash(row.status)}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold">{formatMoney(row.pending)}</p>

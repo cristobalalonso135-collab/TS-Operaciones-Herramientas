@@ -66,9 +66,6 @@ export default function RootLayout({
                 <p className="text-xs text-[var(--text-secondary)]">Herramientas internas · Teamsports</p>
               </div>
             </div>
-            <span className="rounded-md border border-[var(--border)] bg-[var(--bg-soft)]/80 px-2.5 py-1 text-xs text-[var(--text-secondary)]">
-              Budget FY 26/27
-            </span>
           </div>
         </nav>
         <main className="mx-auto max-w-[1680px] px-6 py-8">{children}</main>

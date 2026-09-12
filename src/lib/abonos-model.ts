@@ -229,16 +229,24 @@ export function asStatus(value: string): AbonoStatus | '' {
 }
 
 export function attentionRows(rows: AbonoComputed[]): AbonoComputed[] {
+  return myOpenQueue(rows).slice(0, 12);
+}
+
+export function isMyAbono(addedBy: string): boolean {
+  const name = addedBy.trim().toLocaleLowerCase('es');
+  return name.startsWith('cristóbal') || name.startsWith('cristobal');
+}
+
+export function myOpenQueue(rows: AbonoComputed[]): AbonoComputed[] {
   return [...rows]
-    .filter((row) => row.status === 'Pendiente' || row.status === 'Reclamado' || row.status === 'Recibido parcialmente')
+    .filter((row) => isMyAbono(row.addedBy) && row.status !== 'Recibido' && row.status !== 'Cancelado')
     .sort((a, b) => {
-      const aOverdue = a.overdueDays ?? -1;
-      const bOverdue = b.overdueDays ?? -1;
-      if (aOverdue !== bOverdue) return bOverdue - aOverdue;
-      if (a.reviewOverdue !== b.reviewOverdue) return Number(b.reviewOverdue) - Number(a.reviewOverdue);
-      return (a.createdAt || '').localeCompare(b.createdAt || '');
-    })
-    .slice(0, 12);
+      if ((a.overdueDays ?? -1) !== (b.overdueDays ?? -1)) return (b.overdueDays ?? -1) - (a.overdueDays ?? -1);
+      if (a.dueDate && !b.dueDate) return -1;
+      if (!a.dueDate && b.dueDate) return 1;
+      if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+      return a.registro - b.registro;
+    });
 }
 
 export const ADIDAS_SEED_TERMS: Omit<TradeTerm, 'id'>[] = [
