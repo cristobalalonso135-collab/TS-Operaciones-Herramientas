@@ -913,7 +913,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <div className="flex flex-wrap items-end justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold">Cobros próximas 4 semanas</p>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">Por fecha prevista. Solo lo que todavía está pendiente.</p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">Semanas de lunes a domingo. Solo lo que todavía está pendiente.</p>
               </div>
               <p className="text-sm font-semibold">{cash.count} · {formatMoney(cash.pending)}</p>
             </div>

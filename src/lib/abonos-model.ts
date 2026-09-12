@@ -125,6 +125,14 @@ export function addDaysIso(iso: string, days: number): string {
   return toIsoDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
 }
 
+export function startOfWeekMonday(iso: string): string {
+  const date = new Date(`${iso}T00:00:00`);
+  const weekday = date.getDay();
+  const sinceMonday = weekday === 0 ? 6 : weekday - 1;
+  date.setDate(date.getDate() - sinceMonday);
+  return toIsoDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
 export function toIsoDate(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
@@ -474,32 +482,35 @@ export interface UpcomingCash {
   count: number;
 }
 
-export function upcomingCash(rows: AbonoComputed[], today = todayIso(), days = 27): UpcomingCash {
-  const horizon = addDaysIso(today, days);
-  const open = rows.filter((row) => (
-    row.pending > 0.009
-    && row.status !== 'Cancelado'
-    && row.status !== 'Recibido'
-    && !!row.dueDate
-    && row.dueDate >= today
-    && row.dueDate <= horizon
-  ));
-
+export function upcomingCash(rows: AbonoComputed[], today = todayIso()): UpcomingCash {
+  const weekStart = startOfWeekMonday(today);
   const weeks: CashWeek[] = Array.from({ length: 4 }, (_, index) => {
-    const start = addDaysIso(today, index * 7);
-    const rawEnd = addDaysIso(today, index * 7 + 6);
-    const end = rawEnd > horizon ? horizon : rawEnd;
-    const list = open
-      .filter((row) => row.dueDate! >= start && row.dueDate! <= end)
-      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '') || a.registro - b.registro);
+    const start = addDaysIso(weekStart, index * 7);
+    const end = addDaysIso(start, 6);
     return {
       id: `w${index}`,
       label: index === 0 ? 'Esta semana' : `+${index} sem.`,
       start,
       end,
-      rows: list,
-      pending: list.reduce((sum, row) => sum + row.pending, 0),
+      rows: [] as AbonoComputed[],
+      pending: 0,
     };
+  });
+  const horizon = weeks[weeks.length - 1].end;
+  const open = rows.filter((row) => (
+    row.pending > 0.009
+    && row.status !== 'Cancelado'
+    && row.status !== 'Recibido'
+    && !!row.dueDate
+    && row.dueDate >= weekStart
+    && row.dueDate <= horizon
+  ));
+
+  weeks.forEach((week) => {
+    week.rows = open
+      .filter((row) => row.dueDate! >= week.start && row.dueDate! <= week.end)
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || '') || a.registro - b.registro);
+    week.pending = week.rows.reduce((sum, row) => sum + row.pending, 0);
   });
 
   const brandMap = new Map<string, CashBrand>();
