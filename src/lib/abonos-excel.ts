@@ -140,7 +140,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         status: cellText(pick(row, map.status)),
         comment: cellText(pick(row, map.comment)),
         origin: cellText(pick(row, map.origin)) || 'Puntual',
-        error: null,
+        error: null as string | null,
       } satisfies ImportPreviewRow;
     })
     .filter((row): row is ImportPreviewRow => Boolean(row));
