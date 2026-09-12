@@ -170,8 +170,6 @@ const emptyFilters = {
   status: '',
   year: '',
   addedBy: '',
-  overdue: false,
-  review: false,
   search: '',
 };
 
@@ -383,8 +381,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.status && !matchesFilter(filters.status, row.status)) return false;
       if (filters.addedBy && !matchesFilter(filters.addedBy, row.addedBy)) return false;
       if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
-      if (filters.overdue && row.overdueDays === null) return false;
-      if (filters.review && !row.reviewOverdue) return false;
       if (search) {
         const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.tradeTermName].join(' ').toLocaleLowerCase('es');
         if (!blob.includes(search)) return false;
@@ -427,11 +423,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }, [openTaskKind, taskGroups]);
 
   const kpis = useMemo(() => {
-    const claim = tasks.filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
+    const claim = tasks.filter((task) => task.kind === 'reclamar');
+    const review = tasks.filter((task) => task.kind === 'seguir');
     return {
       taskCount: tasks.length,
-      claimCount: claim.length,
-      claimPending: claim.reduce((sum, task) => sum + task.row.pending, 0),
+      overdueCount: claim.length,
+      overduePending: claim.reduce((sum, task) => sum + task.row.pending, 0),
+      reviewCount: review.length,
+      reviewPending: review.reduce((sum, task) => sum + task.row.pending, 0),
     };
   }, [tasks]);
 
@@ -799,8 +798,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <Kpi label="Tareas esta semana" value={String(kpis.taskCount)} />
-            <Kpi label="A reclamar" value={String(kpis.claimCount)} tone={kpis.claimCount ? 'warning' : undefined} />
-            <Kpi label="Importe a reclamar" value={formatMoney(kpis.claimPending)} />
+            <Kpi label="Vencidos" value={`${kpis.overdueCount} · ${formatMoney(kpis.overduePending)}`} tone={kpis.overdueCount ? 'danger' : undefined} />
+            <Kpi label="Pendientes de revisión" value={`${kpis.reviewCount} · ${formatMoney(kpis.reviewPending)}`} tone={kpis.reviewCount ? 'warning' : undefined} />
           </div>
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
@@ -996,14 +995,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
             <FilterSelect value={filters.addedBy} options={filterOptions.authors.options} includeBlank={filterOptions.authors.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
-            <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <input type="checkbox" checked={filters.overdue} onChange={(event) => setFilters({ ...filters, overdue: event.target.checked })} />
-              Vencidos
-            </label>
-            <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-              <input type="checkbox" checked={filters.review} onChange={(event) => setFilters({ ...filters, review: event.target.checked })} />
-              Pendientes de revisión
-            </label>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
