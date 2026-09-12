@@ -1640,6 +1640,9 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   if (!row.status) {
     return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-muted)]`}>—</span>;
   }
+  if (row.status === 'Liquidado parcialmente') {
+    return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>{row.overdueDays !== null ? 'Vencido · ' : ''}{row.status}</span>;
+  }
   if (row.overdueDays !== null) {
     return <span className={`${pill} bg-[var(--danger-soft)] text-[var(--danger)]`}><AlertTriangle className="mr-0.5 inline h-3 w-3 align-text-bottom" /> Vencido · {row.status}</span>;
   }
