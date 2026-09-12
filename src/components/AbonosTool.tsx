@@ -27,6 +27,7 @@ import {
   receiptsForCase,
   shortPersonName,
   statusAfterReceipts,
+  taskName,
   termRollup,
   todayIso,
   upcomingCash,
@@ -954,8 +955,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 {openTaskGroup.tasks.map((task) => (
                   <div key={task.id} className="space-y-3 rounded-md border border-[var(--border)] bg-white px-3 py-3">
                     <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
-                      <p className="text-sm font-medium">{caseLabel(task.row)}</p>
-                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{task.reason} · {formatMoney(task.row.pending)}</p>
+                      <p className="text-sm font-medium">{taskName(task.row)}</p>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                        {[task.row.brand, task.row.area].filter(Boolean).join(' · ')} · {task.reason} · {formatMoney(task.row.pending)}
+                      </p>
                     </button>
                     <div className="flex flex-wrap items-center gap-2">
                       {(task.kind === 'reclamar' || task.kind === 'seguir') && (

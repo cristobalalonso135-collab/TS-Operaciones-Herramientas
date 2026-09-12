@@ -152,6 +152,14 @@ export function caseLabel(row: { brand: string; area: string; teamMotivo: string
   return [row.brand, row.area, row.teamMotivo].map((value) => displayDash(value)).join(' · ');
 }
 
+export function taskName(row: { brand: string; type?: string; area: string; teamMotivo: string; comment?: string }): string {
+  const comment = String(row.comment || '').trim();
+  if (comment) return comment;
+  const team = String(row.teamMotivo || '').trim();
+  if (team) return team;
+  return caseLabel(row);
+}
+
 export function displayDash(value: string | null | undefined): string {
   const text = String(value ?? '').trim();
   return text || '—';
