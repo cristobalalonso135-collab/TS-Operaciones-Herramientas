@@ -462,6 +462,22 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setTab('seguimiento');
   };
 
+  const clearAllAbonos = async () => {
+    const count = state.cases.length;
+    if (count === 0) {
+      setNote('No hay abonos que borrar.');
+      return;
+    }
+    if (!window.confirm(`Vas a borrar ${count} abonos y sus recepciones. Los trade terms se quedan. ¿Seguir?`)) return;
+    if (!window.confirm('Última confirmación: se vacía la lista para que puedas volver a importar.')) return;
+    await persist({ ...state, cases: [], receipts: [] }, backend);
+    setEditing(null);
+    setForm(emptyForm());
+    setPanelOpen(false);
+    setPreview([]);
+    setNote(`Borrados ${count} abonos.`);
+  };
+
   const exportWorkbook = async (rows: AbonoComputed[]) => {
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
@@ -822,6 +838,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               onFileLoaded={handleImportFile}
               keepDropzone
             />
+            <button
+              type="button"
+              onClick={clearAllAbonos}
+              disabled={state.cases.length === 0}
+              className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-[var(--danger)] hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-40"
+            >
+              <Trash2 className="h-4 w-4" />
+              Borrar todos los abonos ({state.cases.length})
+            </button>
           </div>
           {importMap && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
@@ -936,6 +961,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           <button type="button" onClick={() => exportWorkbook(sorted)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
             <p className="text-sm font-semibold">Exportar vista actual</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">Respeta los filtros de Abonos / Seguimiento.</p>
+          </button>
+          <button
+            type="button"
+            onClick={clearAllAbonos}
+            disabled={state.cases.length === 0}
+            className="rounded-lg border border-red-200 bg-[var(--danger-soft)] p-5 text-left hover:border-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-50 md:col-span-2"
+          >
+            <p className="text-sm font-semibold text-[var(--danger)]">Borrar todos los abonos</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">Vacía la lista y las recepciones para volver a importar. Los trade terms se quedan.</p>
           </button>
         </section>
       )}
