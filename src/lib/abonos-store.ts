@@ -6,7 +6,10 @@ import {
   EMPTY_CATALOGS,
   mergeCatalog,
   asOrigin,
+  asSource,
   asStatus,
+  namesNeedShortening,
+  shortPersonName,
   type AbonosCatalogs,
   type AbonosState,
   type CatalogKind,
@@ -52,14 +55,17 @@ function isAbonosPayload(value: unknown): value is AbonosState {
 
 function seedState(state: AbonosState): AbonosState {
   const cases = state.cases.map((row) => {
-    const responsible = String(row.responsible || row.addedBy || '').trim();
+    const responsible = shortPersonName(row.responsible || row.addedBy);
     const status: AbonosState['cases'][number]['status'] = asStatus(row.status) || (isPablo(responsible) ? '' : 'Pendiente');
     return {
       ...row,
+      addedBy: shortPersonName(row.addedBy),
+      responsible,
       area: remapLegacyArea(row.area),
       origin: asOrigin(row.origin),
+      source: asSource(String(row.source || '')),
+      informedBy: String(row.informedBy || '').trim(),
       status,
-      responsible,
       communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,
     };
   });
@@ -152,7 +158,9 @@ export async function loadAbonosState(): Promise<{ state: AbonosState; backend: 
   try {
     const dedicated = await readDedicated();
     if (dedicated.kind === 'ok' && dedicated.payload) {
-      return { state: seedState(dedicated.payload), backend: 'supabase' };
+      const state = seedState(dedicated.payload);
+      if (namesNeedShortening(dedicated.payload)) await writeDedicated(state);
+      return { state, backend: 'supabase' };
     }
 
     const shared = await readSharedSnapshot();

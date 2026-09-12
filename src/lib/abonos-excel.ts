@@ -1,8 +1,10 @@
 import {
   asOrigin,
+  asSource,
   asStatus,
   cellToIso,
   parseMoney,
+  shortPersonName,
   statusAfterReceipts,
   todayIso,
   type AbonoCase,
@@ -28,6 +30,8 @@ export interface ImportColumnMap {
   nextReview: number | null;
   comment: number | null;
   origin: number | null;
+  source: number | null;
+  informedBy: number | null;
 }
 
 export interface ImportPreviewRow {
@@ -50,6 +54,8 @@ export interface ImportPreviewRow {
   nextReview: string | null;
   comment: string;
   origin: string;
+  source: string;
+  informedBy: string;
   error: string | null;
 }
 
@@ -72,6 +78,8 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   nextReview: ['próxima revisión', 'proxima revisión', 'próxima revision', 'proxima revision'],
   comment: ['comentario', 'comentarios'],
   origin: ['origen'],
+  source: ['llegó por', 'llego por', 'canal'],
+  informedBy: ['nombre del correo', 'informado por'],
 };
 
 function normalizeHeader(value: unknown): string {
@@ -121,6 +129,8 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     nextReview: find(HEADER_ALIASES.nextReview),
     comment: find(HEADER_ALIASES.comment),
     origin: find(HEADER_ALIASES.origin),
+    source: find(HEADER_ALIASES.source),
+    informedBy: find(HEADER_ALIASES.informedBy),
   };
 }
 
@@ -161,8 +171,8 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         type,
         teamMotivo,
         area: areaRaw,
-        addedBy,
-        responsible,
+        addedBy: shortPersonName(addedBy),
+        responsible: shortPersonName(responsible),
         expectedAmount,
         communicatedAmount: parseMoney(pick(row, map.communicatedAmount)),
         pay1Date: cellToIso(pick(row, map.pay1Date)),
@@ -173,6 +183,8 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         nextReview: cellToIso(pick(row, map.nextReview)),
         comment: cellText(pick(row, map.comment)),
         origin: cellText(pick(row, map.origin)),
+        source: cellText(pick(row, map.source)),
+        informedBy: cellText(pick(row, map.informedBy)),
         error,
       } satisfies ImportPreviewRow;
     })
@@ -192,16 +204,17 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       id,
       registro: row.registro ?? index + 1,
       createdAt: '',
-      addedBy: row.addedBy,
-      responsible: row.responsible || row.addedBy,
+      addedBy: shortPersonName(row.addedBy),
+      responsible: shortPersonName(row.responsible || row.addedBy),
       dueDate: row.dueDate,
       brand: row.brand,
       type: row.type,
       area: row.area,
       teamMotivo: row.teamMotivo,
       origin: asOrigin(row.origin),
+      source: asSource(row.source),
       tradeTermId: null,
-      informedBy: '',
+      informedBy: row.informedBy,
       expectedAmount: row.expectedAmount,
       communicatedAmount: row.communicatedAmount,
       status: importedTotal > 0
@@ -241,6 +254,7 @@ export function abonosExportRows(cases: Array<{
   area: string;
   teamMotivo: string;
   origin: string;
+  source: string;
   tradeTermName: string | null;
   informedBy: string;
   expectedAmount: number | null;
@@ -262,8 +276,9 @@ export function abonosExportRows(cases: Array<{
     'Área',
     'Equipo',
     'Origen',
+    'Llegó por',
+    'Nombre del correo',
     'Trade Term',
-    'Informado por',
     'Importe previsto',
     'Importe comunicado',
     'Total liquidado',
@@ -283,8 +298,9 @@ export function abonosExportRows(cases: Array<{
     row.area,
     row.teamMotivo,
     row.origin,
-    row.tradeTermName || '',
+    row.source,
     row.informedBy,
+    row.tradeTermName || '',
     row.expectedAmount ?? '',
     row.communicatedAmount ?? '',
     row.receivedTotal,
@@ -320,6 +336,8 @@ export const ABONOS_TEMPLATE_HEADERS = [
   'Área',
   'Equipo',
   'Origen',
+  'Llegó por',
+  'Nombre del correo',
   'Importe previsto',
   'Importe comunicado',
   'Fecha prevista',
@@ -340,6 +358,8 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Área', 'Solo B2B, Grassroots, Pro Clubs o Teamsports.'],
   ['Equipo', 'Levante, Mallorca, GAP Plan, Kings League…'],
   ['Origen', 'Puntual o Acuerdo.'],
+  ['Llegó por', 'Correo, Teams, Reunión, Teléfono, WhatsApp, Excel u Otro. Opcional; sobre todo para las altas tuyas.'],
+  ['Nombre del correo', 'Si llegó por correo: persona o asunto. En otro canal, quién te lo dijo.'],
   ['Importe previsto', 'Número. 15000 o 15.000,00'],
   ['Importe comunicado', 'Opcional. Importe que la marca dice haber pagado; Finanzas aún debe confirmarlo.'],
   ['Fecha prevista', 'dd/mm/aaaa. Si no sabes cuándo, déjala vacía.'],

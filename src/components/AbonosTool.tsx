@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   ABONO_ORIGINS,
+  ABONO_SOURCES,
   ABONO_STATUSES,
   ABONOS_PEOPLE,
   addDaysIso,
@@ -16,13 +17,17 @@ import {
   displayDash,
   formatIsoDate,
   formatMoney,
+  formatSourceLabel,
   groupWeeklyTasks,
+  linkedCases,
   makeClaim,
   mergeCatalog,
   nextRegistro,
   parseMoney,
   receiptsForCase,
+  shortPersonName,
   statusAfterReceipts,
+  termRollup,
   todayIso,
   upcomingCash,
   weeklyTasks,
@@ -30,6 +35,7 @@ import {
   type AbonoComputed,
   type AbonoOrigin,
   type AbonoReceipt,
+  type AbonoSource,
   type AbonoStatus,
   type AbonosState,
   type TradeTerm,
@@ -62,6 +68,7 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 type SortKey =
   | 'responsible'
+  | 'source'
   | 'dueDate'
   | 'brand'
   | 'type'
@@ -87,9 +94,10 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'status', label: 'Estado', width: 140 },
   { key: 'comment', label: 'Comentario', width: 180 },
   { key: 'responsible', label: 'Responsable', width: 108 },
+  { key: 'source', label: 'Llegó por', width: 150 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v6';
+const COL_STORAGE = 'ts-abonos-cols-v7';
 const BLANK = '__blank__';
 const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
 const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
@@ -137,6 +145,8 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
   switch (key) {
     case 'responsible':
       return displayDash(row.responsible);
+    case 'source':
+      return formatSourceLabel(row);
     case 'dueDate':
       return formatIsoDate(row.dueDate);
     case 'brand':
@@ -178,6 +188,7 @@ const emptyFilters = {
   year: '',
   addedBy: '',
   responsible: '',
+  source: '',
   search: '',
 };
 
@@ -190,6 +201,7 @@ const emptyForm = (): Partial<AbonoCase> => ({
   area: '',
   teamMotivo: '',
   origin: 'Puntual',
+  source: '',
   tradeTermId: null,
   informedBy: '',
   expectedAmount: null,
@@ -308,6 +320,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [claimNote, setClaimNote] = useState('');
   const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
   const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
+  const [linkingTermId, setLinkingTermId] = useState<string | null>(null);
+  const [linkSearch, setLinkSearch] = useState('');
+  const [linkPicked, setLinkPicked] = useState<string[]>([]);
 
   const persist = useCallback(async (next: AbonosState, currentBackend: AbonosBackend) => {
     setState(next);
@@ -391,9 +406,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.status && !matchesFilter(filters.status, row.status)) return false;
       if (filters.addedBy && !matchesPersonFilter(filters.addedBy, row.addedBy)) return false;
       if (filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
+      if (filters.source && !matchesFilter(filters.source, row.source)) return false;
       if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
       if (search) {
-        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.tradeTermName, row.addedBy, row.responsible].join(' ').toLocaleLowerCase('es');
+        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible].join(' ').toLocaleLowerCase('es');
         if (!blob.includes(search)) return false;
       }
       return true;
@@ -454,7 +470,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     if (!state) return [...ABONOS_PEOPLE];
     return mergeCatalog(
       [...ABONOS_PEOPLE],
-      state.cases.flatMap((row) => [row.addedBy, row.responsible]),
+      state.cases.flatMap((row) => [shortPersonName(row.addedBy), shortPersonName(row.responsible)]),
     );
   }, [state]);
 
@@ -465,10 +481,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const teams = uniquePresent(computed.map((row) => row.teamMotivo));
     const origins = uniquePresent(computed.map((row) => row.origin));
     const statuses = uniquePresent(computed.map((row) => row.status));
-    const addedBy = uniquePresent(computed.map((row) => row.addedBy));
-    const responsibles = uniquePresent(computed.map((row) => row.responsible));
+    const addedBy = uniquePresent(computed.map((row) => shortPersonName(row.addedBy)));
+    const responsibles = uniquePresent(computed.map((row) => shortPersonName(row.responsible)));
+    const sources = uniquePresent(computed.map((row) => row.source));
     const years = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
-    return { brands, types, areas, teams, origins, statuses, addedBy, responsibles, years };
+    return { brands, types, areas, teams, origins, statuses, addedBy, responsibles, sources, years };
   }, [computed]);
 
   if (!state) {
@@ -542,14 +559,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       id: editing?.id || crypto.randomUUID(),
       registro: editing?.registro || nextRegistro(state.cases),
       createdAt: editing ? (editing.createdAt || '') : new Date().toISOString(),
-      addedBy: form.addedBy || '',
-      responsible: form.responsible || form.addedBy || '',
+      addedBy: shortPersonName(form.addedBy || ''),
+      responsible: shortPersonName(form.responsible || form.addedBy || ''),
       dueDate: form.dueDate || null,
       brand: form.brand,
       type: form.type || '',
       area: form.area,
       teamMotivo: form.teamMotivo || '',
       origin: (form.origin || '') as AbonoOrigin | '',
+      source: (form.source || '') as AbonoSource | '',
       tradeTermId: form.origin === 'Acuerdo' ? (form.tradeTermId || null) : null,
       informedBy: form.informedBy || '',
       expectedAmount: form.expectedAmount ?? null,
@@ -687,6 +705,39 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       ...state,
       tradeTerms: state.tradeTerms.filter((term) => term.id !== id),
       cases: state.cases.map((row) => row.tradeTermId === id ? { ...row, tradeTermId: null } : row),
+    }, backend);
+    if (linkingTermId === id) {
+      setLinkingTermId(null);
+      setLinkPicked([]);
+    }
+  };
+
+  const startLinking = (termId: string) => {
+    setLinkingTermId((current) => current === termId ? null : termId);
+    setLinkSearch('');
+    setLinkPicked([]);
+  };
+
+  const linkPickedToTerm = async () => {
+    if (!linkingTermId || linkPicked.length === 0) return;
+    const ids = new Set(linkPicked);
+    await persist({
+      ...state,
+      cases: state.cases.map((row) => (
+        ids.has(row.id)
+          ? { ...row, tradeTermId: linkingTermId, origin: row.origin || 'Acuerdo' }
+          : row
+      )),
+    }, backend);
+    setNote(linkPicked.length === 1 ? 'Abono vinculado al trade term.' : `${linkPicked.length} abonos vinculados al trade term.`);
+    setLinkPicked([]);
+    setLinkingTermId(null);
+  };
+
+  const unlinkCaseFromTerm = async (caseId: string) => {
+    await persist({
+      ...state,
+      cases: state.cases.map((row) => row.id === caseId ? { ...row, tradeTermId: null } : row),
     }, backend);
   };
 
@@ -1027,6 +1078,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
             <FilterSelect value={filters.addedBy} options={filterOptions.addedBy.options} includeBlank={filterOptions.addedBy.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
             <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
+            <FilterSelect value={filters.source} options={filterOptions.sources.options} includeBlank={filterOptions.sources.hasBlank} placeholder="Llegó por" onChange={(source) => setFilters({ ...filters, source })} />
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
@@ -1157,7 +1209,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <button type="button" onClick={saveTerm} className="mt-3 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white">Guardar trade term</button>
           </div>
           <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="min-w-[900px] w-full text-sm">
+            <table className="min-w-[1100px] w-full text-sm">
               <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
                 <tr>
                   <th className="px-3 py-2">Marca</th>
@@ -1166,26 +1218,129 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <th className="px-3 py-2">Trigger</th>
                   <th className="px-3 py-2">Fecha</th>
                   <th className="px-3 py-2">Activo</th>
+                  <th className="px-3 py-2">Seguimiento</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
-                {state.tradeTerms.map((term) => (
-                  <tr key={term.id} className="border-t border-[var(--border)]">
-                    <td className="px-3 py-2">{term.brand}</td>
-                    <td className="px-3 py-2 font-medium">{term.name}</td>
-                    <td className="px-3 py-2">{term.compensation}</td>
-                    <td className="px-3 py-2 text-[var(--text-secondary)]">{term.triggerText || '—'}</td>
-                    <td className="px-3 py-2">{term.period || '—'}</td>
-                    <td className="px-3 py-2">
-                      <button type="button" onClick={() => toggleTerm(term.id)} className="text-xs font-semibold">{term.active ? 'Sí' : 'No'}</button>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button type="button" onClick={() => openNew({ brand: term.brand, origin: 'Acuerdo', tradeTermId: term.id, type: 'Credit Notes' })} className="mr-3 text-xs font-semibold text-[var(--accent)]">Crear seguimiento</button>
-                      <button type="button" onClick={() => deleteTerm(term.id)} className="text-xs text-[var(--danger)]">Eliminar</button>
-                    </td>
-                  </tr>
-                ))}
+                {state.tradeTerms.map((term) => {
+                  const linked = linkedCases(computed, term.id);
+                  const rollup = termRollup(linked);
+                  const query = linkSearch.trim().toLocaleLowerCase('es');
+                  const candidates = computed.filter((row) => {
+                    if (row.tradeTermId === term.id) return false;
+                    if (term.brand && row.brand && row.brand !== term.brand) return false;
+                    if (!query) return true;
+                    const blob = [row.brand, row.area, row.teamMotivo, row.type, row.comment, row.responsible, String(row.registro)].join(' ').toLocaleLowerCase('es');
+                    return blob.includes(query);
+                  });
+                  return (
+                    <Fragment key={term.id}>
+                      <tr className="border-t border-[var(--border)] align-top">
+                        <td className="px-3 py-2">{term.brand}</td>
+                        <td className="px-3 py-2 font-medium">{term.name}</td>
+                        <td className="px-3 py-2">{term.compensation}</td>
+                        <td className="px-3 py-2 text-[var(--text-secondary)]">{term.triggerText || '—'}</td>
+                        <td className="px-3 py-2">{term.period || '—'}</td>
+                        <td className="px-3 py-2">
+                          <button type="button" onClick={() => toggleTerm(term.id)} className="text-xs font-semibold">{term.active ? 'Sí' : 'No'}</button>
+                        </td>
+                        <td className="px-3 py-2">
+                          {linked.length === 0 ? (
+                            <p className="text-xs text-[var(--text-muted)]">Sin vincular</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-medium">
+                                {rollup.status} · {linked.length} · {formatMoney(rollup.pending)}
+                              </p>
+                              {linked.map((row) => (
+                                <div key={row.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-2 py-1.5">
+                                  <button type="button" onClick={() => openEdit(row)} className="min-w-0 text-left">
+                                    <span className="block text-xs font-medium">{caseLabel(row)}</span>
+                                    <span className="mt-0.5 flex items-center gap-1">
+                                      <StatusPill row={row} />
+                                      <span className="font-mono text-[11px] text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => unlinkCaseFromTerm(row.id)}
+                                    className="shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                                    aria-label="Quitar vínculo"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button type="button" onClick={() => startLinking(term.id)} className="mr-3 text-xs font-semibold text-[var(--accent)]">
+                            {linkingTermId === term.id ? 'Cerrar' : 'Vincular'}
+                          </button>
+                          <button type="button" onClick={() => openNew({ brand: term.brand, origin: 'Acuerdo', tradeTermId: term.id, type: 'Credit Notes' })} className="mr-3 text-xs font-semibold text-[var(--accent)]">Crear seguimiento</button>
+                          <button type="button" onClick={() => deleteTerm(term.id)} className="text-xs text-[var(--danger)]">Eliminar</button>
+                        </td>
+                      </tr>
+                      {linkingTermId === term.id && (
+                        <tr className="border-t border-[var(--border)] bg-[var(--bg-soft)]">
+                          <td colSpan={8} className="px-3 py-3">
+                            <p className="text-xs font-semibold">Vincular abonos a {term.name}</p>
+                            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">Elige tareas que ya tienes. El trade term copiará su estado.</p>
+                            <input
+                              value={linkSearch}
+                              onChange={(event) => setLinkSearch(event.target.value)}
+                              placeholder="Buscar por equipo, área, comentario…"
+                              className="mt-2 h-9 w-full max-w-md rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                            />
+                            <div className="mt-2 max-h-56 space-y-1 overflow-auto">
+                              {candidates.length === 0 ? (
+                                <p className="text-xs text-[var(--text-secondary)]">No hay abonos de {term.brand} para vincular.</p>
+                              ) : candidates.map((row) => {
+                                const checked = linkPicked.includes(row.id);
+                                const other = row.tradeTermId ? state.tradeTerms.find((item) => item.id === row.tradeTermId) : null;
+                                return (
+                                  <label key={row.id} className="flex cursor-pointer items-start gap-2 rounded-md bg-white px-2 py-1.5 text-xs">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => setLinkPicked((current) => (
+                                        checked ? current.filter((id) => id !== row.id) : [...current, row.id]
+                                      ))}
+                                      className="mt-0.5"
+                                    />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="font-medium">{caseLabel(row)}</span>
+                                      <span className="mt-0.5 flex flex-wrap items-center gap-1">
+                                        <StatusPill row={row} />
+                                        <span className="font-mono text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
+                                        {other && <span className="text-[var(--text-muted)]">Ahora: {other.name}</span>}
+                                      </span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={linkPickedToTerm}
+                                disabled={linkPicked.length === 0}
+                                className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white disabled:opacity-40"
+                              >
+                                Vincular {linkPicked.length || ''}
+                              </button>
+                              <button type="button" onClick={() => { setLinkingTermId(null); setLinkPicked([]); }} className="h-9 rounded-md px-3 text-xs font-semibold">
+                                Cancelar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1441,8 +1596,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     </select>
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Informado por</span>
-                    <input value={form.informedBy || ''} onChange={(event) => setForm({ ...form, informedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Llegó por</span>
+                    <select value={form.source || ''} onChange={(event) => setForm({ ...form, source: event.target.value as AbonoSource | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
+                      {ABONO_SOURCES.map((source) => <option key={source} value={source}>{source}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">{form.source === 'Correo' ? 'Nombre del correo' : 'Quién / detalle'}</span>
+                    <input
+                      value={form.informedBy || ''}
+                      onChange={(event) => setForm({ ...form, informedBy: event.target.value })}
+                      placeholder={form.source === 'Correo' ? 'Persona o asunto del correo' : 'Persona, chat, fichero…'}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    />
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
@@ -1544,9 +1711,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <dt className="text-[11px] text-[var(--text-secondary)]">Trade Term</dt>
                       <dd>{displayDash(currentComputed?.tradeTermName)}</dd>
                     </div>
-                    <div className="col-span-2">
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Informado por</dt>
-                      <dd>{displayDash(form.informedBy)}</dd>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Llegó por</dt>
+                      <dd>{formatSourceLabel({ source: form.source, informedBy: form.informedBy })}</dd>
                     </div>
                   </dl>
                 </div>

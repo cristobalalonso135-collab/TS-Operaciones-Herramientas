@@ -1,7 +1,8 @@
-export const ABONOS_PEOPLE = ['Cristóbal Alonso', 'Pablo Laguna'] as const;
-export const DEFAULT_NEW_AUTHOR = 'Cristóbal Alonso';
+export const ABONOS_PEOPLE = ['Cristóbal', 'Pablo'] as const;
+export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
 
 export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
+export const ABONO_SOURCES = ['Correo', 'Teams', 'Reunión', 'Teléfono', 'WhatsApp', 'Excel', 'Otro'] as const;
 export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
@@ -21,6 +22,7 @@ export const DEFAULT_TEAMS = [
 ];
 
 export type AbonoOrigin = (typeof ABONO_ORIGINS)[number];
+export type AbonoSource = (typeof ABONO_SOURCES)[number];
 export type AbonoStatus = (typeof ABONO_STATUSES)[number];
 export type CatalogKind = 'brand' | 'type' | 'area' | 'team';
 
@@ -36,6 +38,7 @@ export interface AbonoCase {
   area: string;
   teamMotivo: string;
   origin: AbonoOrigin | '';
+  source: AbonoSource | '';
   tradeTermId: string | null;
   informedBy: string;
   expectedAmount: number | null;
@@ -152,6 +155,15 @@ export function caseLabel(row: { brand: string; area: string; teamMotivo: string
 export function displayDash(value: string | null | undefined): string {
   const text = String(value ?? '').trim();
   return text || '—';
+}
+
+export function shortPersonName(value: string | null | undefined): string {
+  const name = String(value ?? '').trim();
+  if (!name) return '';
+  const key = name.toLocaleLowerCase('es');
+  if (key.startsWith('cristóbal') || key.startsWith('cristobal')) return 'Cristóbal';
+  if (key.startsWith('pablo')) return 'Pablo';
+  return name;
 }
 
 export function formatMoney(value: number | null | undefined): string {
@@ -287,6 +299,27 @@ export function asOrigin(value: string): AbonoOrigin | '' {
   if (value === 'Puntual') return value;
   if (value === 'Acuerdo' || value === 'Trade Term') return 'Acuerdo';
   return '';
+}
+
+export function asSource(value: string): AbonoSource | '' {
+  const text = value.trim();
+  if ((ABONO_SOURCES as readonly string[]).includes(text)) return text as AbonoSource;
+  const key = text.toLocaleLowerCase('es');
+  if (key.includes('correo') || key.includes('mail') || key.includes('email')) return 'Correo';
+  if (key.includes('teams')) return 'Teams';
+  if (key.includes('reun')) return 'Reunión';
+  if (key.includes('tel') || key.includes('llam')) return 'Teléfono';
+  if (key.includes('whats')) return 'WhatsApp';
+  if (key.includes('excel')) return 'Excel';
+  if (key === 'otro') return 'Otro';
+  return '';
+}
+
+export function formatSourceLabel(row: { source?: string | null; informedBy?: string | null }): string {
+  const source = String(row.source || '').trim();
+  const detail = String(row.informedBy || '').trim();
+  if (source && detail) return `${source} · ${detail}`;
+  return displayDash(source || detail);
 }
 
 export function asStatus(value: string): AbonoStatus | '' {
@@ -548,6 +581,30 @@ export function abonosHubKpis(rows: AbonoComputed[], today = todayIso()) {
     claimCount: claim.length,
     claimPending: claim.reduce((sum, task) => sum + task.row.pending, 0),
   };
+}
+
+export function linkedCases(rows: AbonoComputed[], termId: string): AbonoComputed[] {
+  return rows
+    .filter((row) => row.tradeTermId === termId)
+    .sort((a, b) => a.registro - b.registro);
+}
+
+export function termRollup(rows: AbonoComputed[]): { count: number; pending: number; status: string } {
+  if (rows.length === 0) return { count: 0, pending: 0, status: 'Sin vincular' };
+  const pending = rows.reduce((sum, row) => sum + row.pending, 0);
+  if (rows.every((row) => row.status === 'Liquidado')) return { count: rows.length, pending, status: 'Liquidado' };
+  if (rows.some((row) => row.overdueDays !== null)) return { count: rows.length, pending, status: 'Vencido' };
+  if (rows.some((row) => row.status === 'Pago comunicado')) return { count: rows.length, pending, status: 'Pago comunicado' };
+  if (rows.some((row) => row.status === 'Liquidado parcialmente')) return { count: rows.length, pending, status: 'Liquidado parcialmente' };
+  if (rows.some((row) => row.status === 'Pendiente' || !row.status)) return { count: rows.length, pending, status: 'Pendiente' };
+  return { count: rows.length, pending, status: rows[0].status || 'Pendiente' };
+}
+
+export function namesNeedShortening(state: Pick<AbonosState, 'cases'>): boolean {
+  return state.cases.some((row) => (
+    shortPersonName(row.addedBy) !== String(row.addedBy || '').trim()
+    || shortPersonName(row.responsible) !== String(row.responsible || '').trim()
+  ));
 }
 
 export const ADIDAS_SEED_TERMS: Omit<TradeTerm, 'id'>[] = [
