@@ -118,3 +118,9 @@ textarea {
 .tools-rise-delay-4 { animation-delay: 0.2s; }
 .tools-rise-delay-5 { animation-delay: 0.25s; }
 .tools-rise-delay-6 { animation-delay: 0.3s; }
+
+.abonos-shell {
+  --accent: #c4a035;
+  --accent-hover: #a88820;
+  --accent-soft: #f6edd0;
+}

@@ -40,9 +40,10 @@ export function isMissingTableError(message: string): boolean {
 
 export async function fetchSnapshotsFromDb(): Promise<TrackingSnapshot[]> {
   const client = requireClient();
-  const { data, error } = await client.from(TABLE).select('payload').order('week_key', { ascending: false });
+  const { data, error } = await client.from(TABLE).select('week_key, payload').order('week_key', { ascending: false });
   if (error) throw new Error(error.message);
-  const rows = ((data ?? []) as Pick<SnapshotRow, 'payload'>[])
+  const rows = ((data ?? []) as Pick<SnapshotRow, 'week_key' | 'payload'>[])
+    .filter((row) => !String(row.week_key || '').startsWith('__'))
     .map((row) => row.payload)
     .filter((payload): payload is TrackingSnapshot => Boolean(payload && payload.weekKey));
   return rows.sort(compareSnapshots);

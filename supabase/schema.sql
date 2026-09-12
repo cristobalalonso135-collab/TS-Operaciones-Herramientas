@@ -108,3 +108,22 @@ CREATE POLICY seguimiento_snapshots_read ON seguimiento_snapshots FOR SELECT USI
 CREATE POLICY seguimiento_snapshots_insert ON seguimiento_snapshots FOR INSERT WITH CHECK (true);
 CREATE POLICY seguimiento_snapshots_update ON seguimiento_snapshots FOR UPDATE USING (true) WITH CHECK (true);
 CREATE POLICY seguimiento_snapshots_delete ON seguimiento_snapshots FOR DELETE USING (true);
+
+-- Abonos / credit notes / compensaciones
+CREATE TABLE IF NOT EXISTS abonos_store (
+  id TEXT PRIMARY KEY,
+  saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  payload JSONB NOT NULL
+);
+
+ALTER TABLE abonos_store ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS abonos_store_read ON abonos_store;
+DROP POLICY IF EXISTS abonos_store_insert ON abonos_store;
+DROP POLICY IF EXISTS abonos_store_update ON abonos_store;
+DROP POLICY IF EXISTS abonos_store_delete ON abonos_store;
+
+CREATE POLICY abonos_store_read ON abonos_store FOR SELECT USING (true);
+CREATE POLICY abonos_store_insert ON abonos_store FOR INSERT WITH CHECK (true);
+CREATE POLICY abonos_store_update ON abonos_store FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY abonos_store_delete ON abonos_store FOR DELETE USING (true);

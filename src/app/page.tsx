@@ -12,6 +12,7 @@ import DailyVariationTool from '@/components/DailyVariationTool';
 import TrackingTool, { type TrackingViewMode } from '@/components/TrackingTool';
 import OperationsDashboard from '@/components/OperationsDashboard';
 import StockTool from '@/components/StockTool';
+import AbonosTool from '@/components/AbonosTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   parseExcelData,
@@ -412,7 +413,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -651,6 +652,10 @@ export default function Home() {
     return <StockTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'abonos') {
+    return <AbonosTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -685,6 +690,14 @@ export default function Home() {
         detail: 'Resumen · Riesgo · Tendencia',
         tone: 'bg-[var(--kpi-debt-soft)] text-[var(--kpi-debt)]',
       },
+      {
+        id: 'abonos' as const,
+        number: '05',
+        title: 'Abonos',
+        description: 'Lo que Adidas, Nike y el resto nos deben: trade terms, credit notes y seguimiento hasta que entra.',
+        detail: 'Dashboard · Seguimiento · Trade Terms · Importar',
+        tone: 'bg-[#f6edd0] text-[#8a6d12]',
+      },
     ];
 
     return (
@@ -700,7 +713,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Tres entradas comerciales y una de almacén. El resto vive en pestañas dentro de cada herramienta.
+              Cinco entradas: comercial, almacén y abonos. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
