@@ -141,6 +141,44 @@ textarea {
   position: relative;
   overflow: hidden;
   user-select: none;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.abonos-table {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.abonos-table th,
+.abonos-table td {
+  text-align: center;
+  vertical-align: middle;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.abonos-th-label {
+  display: block;
+  min-width: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.abonos-cell {
+  display: block;
+  min-width: 0;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
 }
 
 .abonos-col-resizer {

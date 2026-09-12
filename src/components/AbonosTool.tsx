@@ -59,24 +59,30 @@ type SortKey =
   | 'type'
   | 'area'
   | 'teamMotivo'
+  | 'expectedAmount'
+  | 'receivedTotal'
   | 'pending'
   | 'status'
   | 'comment';
 
-const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number; align?: 'right' }> = [
-  { key: 'registro', label: 'Registro', width: 96 },
-  { key: 'addedBy', label: 'Añadido por', width: 120 },
-  { key: 'dueDate', label: 'Fecha prevista', width: 130 },
-  { key: 'brand', label: 'Empresa', width: 120 },
-  { key: 'type', label: 'Tipo', width: 140 },
-  { key: 'area', label: 'Área', width: 120 },
-  { key: 'teamMotivo', label: 'Equipo / Motivo', width: 160 },
-  { key: 'pending', label: 'Resumen', width: 168, align: 'right' },
-  { key: 'status', label: 'Estado', width: 170 },
-  { key: 'comment', label: 'Comentario', width: 220 },
+const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
+
+const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
+  { key: 'registro', label: 'Registro', width: 88 },
+  { key: 'addedBy', label: 'Añadido por', width: 108 },
+  { key: 'dueDate', label: 'Fecha prevista', width: 112 },
+  { key: 'brand', label: 'Empresa', width: 108 },
+  { key: 'type', label: 'Tipo', width: 120 },
+  { key: 'area', label: 'Área', width: 108 },
+  { key: 'teamMotivo', label: 'Equipo / Motivo', width: 140 },
+  { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
+  { key: 'receivedTotal', label: 'Importe recibido', width: 118 },
+  { key: 'pending', label: 'Importe pendiente', width: 118 },
+  { key: 'status', label: 'Estado', width: 150 },
+  { key: 'comment', label: 'Comentario', width: 180 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v3';
+const COL_STORAGE = 'ts-abonos-cols-v5';
 const BLANK = '__blank__';
 const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
 const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
@@ -127,14 +133,12 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
       return displayDash(row.area);
     case 'teamMotivo':
       return displayDash(row.teamMotivo);
+    case 'expectedAmount':
+      return formatMoney(row.expectedAmount);
+    case 'receivedTotal':
+      return formatMoney(row.receivedTotal);
     case 'pending':
-      return (
-        <div className="space-y-0.5 text-right font-mono text-[11px] leading-4">
-          <p className="text-[var(--text-secondary)]">Prev. {formatMoney(row.expectedAmount)}</p>
-          <p className="text-[var(--success)]">Rec. {formatMoney(row.receivedTotal)}</p>
-          <p className="font-semibold text-[var(--text-primary)]">Pend. {formatMoney(row.pending)}</p>
-        </div>
-      );
+      return formatMoney(row.pending);
     case 'status':
       return <StatusPill row={row} />;
     case 'comment':
@@ -818,20 +822,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           </div>
 
           <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="border-collapse text-sm" style={{ tableLayout: 'fixed', width: tableWidth }}>
+            <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: tableWidth }}>
               <colgroup>
                 {columnOrder.map((key) => (
                   <col key={key} style={{ width: columnWidths[key] }} />
                 ))}
               </colgroup>
-              <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
+              <thead className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                 <tr>
                   {columnOrder.map((key) => {
                     const col = COLUMN_BY_KEY[key];
                     return (
                       <th
                         key={key}
-                        className="abonos-th border-b border-[var(--border)] px-3 py-2 font-medium"
+                        className="abonos-th border-b border-[var(--border)] px-1.5 py-1.5"
                         onDragOver={(event) => {
                           event.preventDefault();
                           event.dataTransfer.dropEffect = 'move';
@@ -843,7 +847,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           if (from) moveColumn(from, key);
                         }}
                       >
-                        <div className="flex min-w-0 items-center gap-1 pr-2">
+                        <div className="flex min-w-0 items-start justify-center gap-0.5 pr-1.5">
                           <span
                             draggable
                             onDragStart={(event) => {
@@ -854,12 +858,12 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                             onDragEnd={() => {
                               dragCol.current = null;
                             }}
-                            className="inline-flex shrink-0 cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                            className="mt-0.5 inline-flex shrink-0 cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
                             aria-label={`Mover columna ${col.label}`}
                           >
-                            <GripVertical className="h-3.5 w-3.5" />
+                            <GripVertical className="h-3 w-3" />
                           </span>
-                          <button type="button" onClick={() => toggleSort(key)} className="truncate text-left hover:text-[var(--text-primary)]">
+                          <button type="button" onClick={() => toggleSort(key)} className="abonos-th-label hover:text-[var(--text-primary)]">
                             {col.label}
                           </button>
                         </div>
@@ -879,17 +883,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               <tbody>
                 {sorted.map((row) => (
                   <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer hover:bg-white">
-                    {columnOrder.map((key) => {
-                      const col = COLUMN_BY_KEY[key];
-                      return (
-                        <td
-                          key={key}
-                          className={`border-b border-[var(--border)] px-3 py-2 ${key === 'registro' ? 'font-medium' : ''} ${key === 'pending' ? 'text-right' : col.align === 'right' ? 'text-right font-mono' : ''}`}
-                        >
-                          <div className={key === 'status' || key === 'pending' ? '' : 'truncate'} title={key === 'comment' ? row.comment : undefined}>{renderAbonoCell(row, key)}</div>
-                        </td>
-                      );
-                    })}
+                    {columnOrder.map((key) => (
+                      <td
+                        key={key}
+                        className={`border-b border-[var(--border)] px-1.5 py-1.5 ${key === 'registro' ? 'font-medium' : ''} ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''}`}
+                      >
+                        <div className="abonos-cell" title={key === 'comment' ? row.comment || undefined : undefined}>{renderAbonoCell(row, key)}</div>
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -1342,17 +1343,18 @@ function FilterSelect({
 }
 
 function StatusPill({ row }: { row: AbonoComputed }) {
+  const pill = 'inline-block max-w-full rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-tight';
   if (!row.status) {
-    return <span className="rounded-md bg-[var(--bg-soft)] px-2 py-1 text-[11px] font-medium text-[var(--text-muted)]">—</span>;
+    return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-muted)]`}>—</span>;
   }
   if (row.overdueDays !== null) {
-    return <span className="inline-flex items-center gap-1 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[11px] font-medium text-[var(--danger)]"><AlertTriangle className="h-3 w-3" /> Vencido · {row.status}</span>;
+    return <span className={`${pill} bg-[var(--danger-soft)] text-[var(--danger)]`}><AlertTriangle className="mr-0.5 inline h-3 w-3 align-text-bottom" /> Vencido · {row.status}</span>;
   }
   if (row.reviewOverdue) {
-    return <span className="rounded-md bg-[#f8eee4] px-2 py-1 text-[11px] font-medium text-[var(--warning)]">Revisar · {row.status}</span>;
+    return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Revisar · {row.status}</span>;
   }
   if (row.status === 'Recibido') {
-    return <span className="rounded-md bg-[var(--success-soft)] px-2 py-1 text-[11px] font-medium text-[var(--success)]">{row.status}</span>;
+    return <span className={`${pill} bg-[var(--success-soft)] text-[var(--success)]`}>{row.status}</span>;
   }
-  return <span className="rounded-md bg-[var(--bg-soft)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)]">{row.status}</span>;
+  return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-secondary)]`}>{row.status}</span>;
 }
