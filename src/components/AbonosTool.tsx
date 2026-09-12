@@ -11,6 +11,7 @@ import {
   computeAll,
   DEFAULT_AREAS,
   DEFAULT_NEW_AUTHOR,
+  displayDash,
   formatIsoDate,
   formatMoney,
   mergeCatalog,
@@ -249,7 +250,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }), [computed, dashArea, dashBrand]);
 
   const kpis = useMemo(() => {
-    const open = dashboardRows.filter((row) => row.status !== 'Recibido');
+    const open = dashboardRows.filter((row) => row.status === 'Pendiente' || row.status === 'Reclamado' || row.status === 'Recibido parcialmente');
     return {
       expected: dashboardRows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0),
       received: dashboardRows.reduce((sum, row) => sum + row.receivedTotal, 0),
@@ -296,27 +297,26 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const saveForm = async () => {
-    if (!form.brand || !form.area || !form.type) {
-      setError('Marca, área y tipo son obligatorios.');
+    if (!form.brand || !form.area) {
+      setError('Marca y área son obligatorios.');
       return;
     }
     setError(null);
-    const origin = (form.origin || 'Puntual') as AbonoOrigin;
     const row: AbonoCase = {
       id: editing?.id || crypto.randomUUID(),
       registro: editing?.registro || nextRegistro(state.cases),
-      createdAt: editing?.createdAt || new Date().toISOString(),
+      createdAt: editing ? (editing.createdAt || '') : new Date().toISOString(),
       addedBy: form.addedBy || '',
       dueDate: form.dueDate || null,
       brand: form.brand,
-      type: form.type,
+      type: form.type || '',
       area: form.area,
       teamMotivo: form.teamMotivo || '',
-      origin,
-      tradeTermId: origin === 'Trade Term' ? (form.tradeTermId || null) : null,
+      origin: (form.origin || '') as AbonoOrigin | '',
+      tradeTermId: form.origin === 'Trade Term' ? (form.tradeTermId || null) : null,
       informedBy: form.informedBy || '',
       expectedAmount: form.expectedAmount ?? null,
-      status: (form.status || 'Pendiente') as AbonoStatus,
+      status: (form.status || '') as AbonoStatus | '',
       nextReview: form.nextReview || null,
       comment: form.comment || '',
     };
@@ -638,11 +638,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer hover:bg-white">
                     <td className="border-b border-[var(--border)] px-3 py-2 font-medium">#{row.registro}</td>
                     <td className="border-b border-[var(--border)] px-3 py-2">{formatIsoDate(row.dueDate)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{row.brand}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{row.type}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{row.area || '—'}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{row.teamMotivo || '—'}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{row.origin}</td>
+                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.brand)}</td>
+                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.type)}</td>
+                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.area)}</td>
+                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.teamMotivo)}</td>
+                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.origin)}</td>
                     <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatMoney(row.expectedAmount)}</td>
                     <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatMoney(row.receivedTotal)}</td>
                     <td className="border-b border-[var(--border)] px-3 py-2 text-right font-mono">{formatMoney(row.pending)}</td>
@@ -650,7 +650,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <StatusPill row={row} />
                     </td>
                     <td className="border-b border-[var(--border)] px-3 py-2">{formatIsoDate(row.nextReview)}</td>
-                    <td className="border-b border-[var(--border)] px-3 py-2">{row.addedBy}</td>
+                    <td className="border-b border-[var(--border)] px-3 py-2">{displayDash(row.addedBy)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -671,7 +671,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <CatalogField label="Equipo / Motivo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
-                    <select value={form.origin} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin, tradeTermId: event.target.value === 'Puntual' ? null : form.tradeTermId })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Trade Term' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
                       {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
                     </select>
                   </label>
@@ -696,7 +697,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por</span>
                     <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">Sin indicar</option>
+                      <option value="">—</option>
                       {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
                     </select>
                   </label>
@@ -706,7 +707,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
-                    <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as AbonoStatus })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as AbonoStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
                       {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
                   </label>
@@ -990,6 +992,9 @@ function FilterSelect({ value, options, placeholder, onChange }: { value: string
 }
 
 function StatusPill({ row }: { row: AbonoComputed }) {
+  if (!row.status) {
+    return <span className="rounded-md bg-[var(--bg-soft)] px-2 py-1 text-[11px] font-medium text-[var(--text-muted)]">—</span>;
+  }
   if (row.overdueDays !== null) {
     return <span className="inline-flex items-center gap-1 rounded-md bg-[var(--danger-soft)] px-2 py-1 text-[11px] font-medium text-[var(--danger)]"><AlertTriangle className="h-3 w-3" /> Vencido · {row.status}</span>;
   }

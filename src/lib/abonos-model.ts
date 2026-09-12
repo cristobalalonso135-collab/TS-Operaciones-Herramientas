@@ -34,11 +34,11 @@ export interface AbonoCase {
   type: string;
   area: string;
   teamMotivo: string;
-  origin: AbonoOrigin;
+  origin: AbonoOrigin | '';
   tradeTermId: string | null;
   informedBy: string;
   expectedAmount: number | null;
-  status: AbonoStatus;
+  status: AbonoStatus | '';
   nextReview: string | null;
   comment: string;
 }
@@ -115,6 +115,11 @@ export function formatIsoDate(value: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
+export function displayDash(value: string | null | undefined): string {
+  const text = String(value ?? '').trim();
+  return text || '—';
+}
+
 export function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -181,7 +186,7 @@ export function pendingAmount(expectedAmount: number | null, receivedTotal: numb
   return Math.max(0, (expectedAmount ?? 0) - receivedTotal);
 }
 
-export function statusAfterReceipts(current: AbonoStatus, expectedAmount: number | null, receivedTotal: number): AbonoStatus {
+export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number): AbonoStatus | '' {
   if (current === 'Cancelado') return current;
   const pending = pendingAmount(expectedAmount, receivedTotal);
   if (receivedTotal > 0 && pending <= 0.009) return 'Recibido';
@@ -192,9 +197,9 @@ export function statusAfterReceipts(current: AbonoStatus, expectedAmount: number
 export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms: TradeTerm[], today = todayIso()): AbonoComputed {
   const receivedTotal = receivedTotalFor(row.id, receipts);
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
-  const cancelled = row.status === 'Cancelado';
-  const overdue = !cancelled && pending > 0 && !!row.dueDate && row.dueDate < today;
-  const reviewOverdue = !cancelled && row.status !== 'Recibido' && !!row.nextReview && row.nextReview <= today;
+  const knownOpen = row.status === 'Pendiente' || row.status === 'Reclamado' || row.status === 'Recibido parcialmente';
+  const overdue = knownOpen && pending > 0 && !!row.dueDate && row.dueDate < today;
+  const reviewOverdue = knownOpen && !!row.nextReview && row.nextReview <= today;
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
   return {
     ...row,
@@ -214,18 +219,18 @@ export function nextRegistro(cases: AbonoCase[]): number {
   return cases.reduce((max, row) => Math.max(max, row.registro), 0) + 1;
 }
 
-export function asOrigin(value: string): AbonoOrigin {
-  return value === 'Trade Term' ? 'Trade Term' : 'Puntual';
+export function asOrigin(value: string): AbonoOrigin | '' {
+  return value === 'Trade Term' || value === 'Puntual' ? value : '';
 }
 
-export function asStatus(value: string): AbonoStatus {
-  if (value === 'Reclamado' || value === 'Recibido parcialmente' || value === 'Recibido' || value === 'Cancelado') return value;
-  return 'Pendiente';
+export function asStatus(value: string): AbonoStatus | '' {
+  if (value === 'Pendiente' || value === 'Reclamado' || value === 'Recibido parcialmente' || value === 'Recibido' || value === 'Cancelado') return value;
+  return '';
 }
 
 export function attentionRows(rows: AbonoComputed[]): AbonoComputed[] {
   return [...rows]
-    .filter((row) => row.status !== 'Cancelado' && row.status !== 'Recibido')
+    .filter((row) => row.status === 'Pendiente' || row.status === 'Reclamado' || row.status === 'Recibido parcialmente')
     .sort((a, b) => {
       const aOverdue = a.overdueDays ?? -1;
       const bOverdue = b.overdueDays ?? -1;

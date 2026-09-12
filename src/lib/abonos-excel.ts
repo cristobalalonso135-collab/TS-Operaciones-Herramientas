@@ -139,7 +139,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         pay2Amount: parseMoney(pick(row, map.pay2Amount)),
         status: cellText(pick(row, map.status)),
         comment: cellText(pick(row, map.comment)),
-        origin: cellText(pick(row, map.origin)) || 'Puntual',
+        origin: cellText(pick(row, map.origin)),
         error: null as string | null,
       } satisfies ImportPreviewRow;
     })
@@ -149,7 +149,6 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
 export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]; receipts: AbonoReceipt[] } {
   const cases: AbonoCase[] = [];
   const receipts: AbonoReceipt[] = [];
-  const createdAt = new Date().toISOString();
 
   rows.forEach((row, index) => {
     if (row.error) return;
@@ -157,7 +156,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
     cases.push({
       id,
       registro: row.registro ?? index + 1,
-      createdAt,
+      createdAt: '',
       addedBy: row.addedBy,
       dueDate: row.dueDate,
       brand: row.brand,
@@ -232,7 +231,7 @@ export function abonosExportRows(cases: Array<{
   ];
   const body = cases.map((row) => [
     row.registro,
-    row.createdAt.slice(0, 10),
+    row.createdAt ? row.createdAt.slice(0, 10) : '',
     row.addedBy,
     row.dueDate || '',
     row.brand,
