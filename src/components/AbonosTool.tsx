@@ -124,6 +124,15 @@ function matchesFilter(selected: string, actual: string): boolean {
   return actual === selected;
 }
 
+function matchesPersonFilter(selected: string, actual: string): boolean {
+  if (!selected) return true;
+  if (selected === BLANK) return !actual.trim();
+  const a = actual.trim().toLocaleLowerCase('es');
+  const s = selected.trim().toLocaleLowerCase('es');
+  if (!a) return false;
+  return a === s || a.startsWith(`${s} `) || s.startsWith(`${a} `) || a.startsWith(s) || s.startsWith(a);
+}
+
 function renderAbonoCell(row: AbonoComputed, key: SortKey) {
   switch (key) {
     case 'responsible':
@@ -167,6 +176,7 @@ const emptyFilters = {
   origin: '',
   status: '',
   year: '',
+  addedBy: '',
   responsible: '',
   search: '',
 };
@@ -379,10 +389,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
       if (filters.origin && !matchesFilter(filters.origin, row.origin)) return false;
       if (filters.status && !matchesFilter(filters.status, row.status)) return false;
-      if (filters.responsible && !matchesFilter(filters.responsible, row.responsible)) return false;
+      if (filters.addedBy && !matchesPersonFilter(filters.addedBy, row.addedBy)) return false;
+      if (filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
       if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
       if (search) {
-        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.tradeTermName].join(' ').toLocaleLowerCase('es');
+        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.tradeTermName, row.addedBy, row.responsible].join(' ').toLocaleLowerCase('es');
         if (!blob.includes(search)) return false;
       }
       return true;
@@ -412,7 +423,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }), { expected: 0, received: 0, pending: 0 }), [filtered]);
 
   const reviewRows = useMemo(
-    () => reviewResponsible ? computed.filter((row) => matchesFilter(reviewResponsible, row.responsible)) : computed,
+    () => reviewResponsible ? computed.filter((row) => matchesPersonFilter(reviewResponsible, row.responsible)) : computed,
     [computed, reviewResponsible],
   );
   const taskClaims = state?.claims || [];
@@ -441,7 +452,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const peopleOptions = useMemo(() => {
     if (!state) return [...ABONOS_PEOPLE];
-    return mergeCatalog([...ABONOS_PEOPLE], state.cases.map((row) => row.addedBy));
+    return mergeCatalog(
+      [...ABONOS_PEOPLE],
+      state.cases.flatMap((row) => [row.addedBy, row.responsible]),
+    );
   }, [state]);
 
   const filterOptions = useMemo(() => {
@@ -451,9 +465,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const teams = uniquePresent(computed.map((row) => row.teamMotivo));
     const origins = uniquePresent(computed.map((row) => row.origin));
     const statuses = uniquePresent(computed.map((row) => row.status));
+    const addedBy = uniquePresent(computed.map((row) => row.addedBy));
     const responsibles = uniquePresent(computed.map((row) => row.responsible));
     const years = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
-    return { brands, types, areas, teams, origins, statuses, responsibles, years };
+    return { brands, types, areas, teams, origins, statuses, addedBy, responsibles, years };
   }, [computed]);
 
   if (!state) {
@@ -811,7 +826,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
               >
                 <option value="">Todos</option>
-                {filterOptions.responsibles.options.map((responsible) => (
+                {mergeCatalog(filterOptions.responsibles.options, peopleOptions).map((responsible) => (
                   <option key={responsible} value={responsible}>{responsible}</option>
                 ))}
               </select>
@@ -1010,6 +1025,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
+            <FilterSelect value={filters.addedBy} options={filterOptions.addedBy.options} includeBlank={filterOptions.addedBy.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
             <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
           </div>
 
