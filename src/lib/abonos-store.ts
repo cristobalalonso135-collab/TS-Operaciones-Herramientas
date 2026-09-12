@@ -48,7 +48,7 @@ function seedState(state: AbonosState): AbonosState {
   const cases = state.cases.map((row) => ({
     ...row,
     area: remapLegacyArea(row.area),
-    dueDateUnknown: Boolean(row.dueDateUnknown) && !row.dueDate,
+    dueDateUnknown: false,
   }));
   const catalogs: AbonosCatalogs = {
     brands: mergeCatalog(EMPTY_CATALOGS.brands, [...state.catalogs.brands, ...cases.map((row) => row.brand), ...state.tradeTerms.map((row) => row.brand)]),

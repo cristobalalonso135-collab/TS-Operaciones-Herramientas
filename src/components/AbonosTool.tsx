@@ -14,7 +14,6 @@ import {
   computeAll,
   DEFAULT_NEW_AUTHOR,
   displayDash,
-  formatDueLabel,
   formatIsoDate,
   formatMoney,
   groupWeeklyTasks,
@@ -23,7 +22,6 @@ import {
   nextRegistro,
   parseMoney,
   receiptsForCase,
-  rowTone,
   statusAfterReceipts,
   todayIso,
   upcomingCash,
@@ -131,7 +129,7 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
     case 'addedBy':
       return displayDash(row.addedBy);
     case 'dueDate':
-      return formatDueLabel(row);
+      return formatIsoDate(row.dueDate);
     case 'brand':
       return displayDash(row.brand);
     case 'type':
@@ -393,8 +391,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const copy = [...filtered];
     copy.sort((a, b) => {
       if (sort.key === 'dueDate') {
-        const leftUnknown = !a.dueDate || a.dueDateUnknown;
-        const rightUnknown = !b.dueDate || b.dueDateUnknown;
+        const leftUnknown = !a.dueDate;
+        const rightUnknown = !b.dueDate;
         if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
       }
       const left = a[sort.key];
@@ -474,7 +472,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const openEdit = (row: AbonoCase) => {
     setEditing(row);
-    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '', dueDateUnknown: !!row.dueDateUnknown });
+    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '' });
     setPanelOpen(true);
   };
 
@@ -513,16 +511,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     await applyWeeklyTasks([task]);
   };
 
-  const markDatesUnknown = async (list: WeeklyTask[]) => {
-    if (list.length === 0) return;
-    const ids = new Set(list.map((task) => task.row.id));
-    const cases = state.cases.map((row) => (
-      ids.has(row.id) ? { ...row, dueDate: null, dueDateUnknown: true } : row
-    ));
-    await persist({ ...state, cases }, backend);
-    setNote(list.length === 1 ? 'Fecha marcada como indeterminada.' : `Marcadas ${list.length} fechas como indeterminadas.`);
-  };
-
   const saveForm = async () => {
     if (!form.brand || !form.area) {
       setError('Marca y área son obligatorios.');
@@ -534,7 +522,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       registro: editing?.registro || nextRegistro(state.cases),
       createdAt: editing ? (editing.createdAt || '') : new Date().toISOString(),
       addedBy: form.addedBy || '',
-      dueDate: form.dueDateUnknown ? null : (form.dueDate || null),
+      dueDate: form.dueDate || null,
       brand: form.brand,
       type: form.type || '',
       area: form.area,
@@ -546,7 +534,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       status: (form.status || '') as AbonoStatus | '',
       nextReview: form.nextReview || null,
       comment: form.comment || '',
-      dueDateUnknown: !!form.dueDateUnknown,
+      dueDateUnknown: false,
     };
     const cases = editing
       ? state.cases.map((item) => item.id === row.id ? row : item)
@@ -852,7 +840,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       )}
                       <button
                         type="button"
-                        onClick={() => openTaskGroup.kind === 'fecha' ? markDatesUnknown(openTaskGroup.tasks) : applyWeeklyTasks(openTaskGroup.tasks)}
+                        onClick={() => applyWeeklyTasks(openTaskGroup.tasks)}
                         className="h-9 shrink-0 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
                       >
                         {openTaskGroup.bulkLabel}
@@ -874,15 +862,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
                         >
                           {task.actionLabel}
-                        </button>
-                      )}
-                      {task.kind === 'fecha' && (
-                        <button
-                          type="button"
-                          onClick={() => markDatesUnknown([task])}
-                          className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-semibold hover:bg-[var(--bg-soft)]"
-                        >
-                          Indeterminada
                         </button>
                       )}
                       <button
@@ -966,7 +945,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         >
                           <span className="min-w-0">
                             <span className="text-sm font-medium">{caseLabel(row)}</span>
-                            <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{formatDueLabel(row)}</span>
+                            <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{formatIsoDate(row.dueDate)}</span>
                           </span>
                           <span className="shrink-0 font-mono text-sm">{formatMoney(row.pending)}</span>
                         </button>
@@ -1077,7 +1056,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               </thead>
               <tbody>
                 {sorted.map((row) => (
-                  <tr key={row.id} onClick={() => openEdit(row)} className={`cursor-pointer ${rowTone(row)}`}>
+                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer">
                     {columnOrder.map((key) => (
                       <td
                         key={key}
@@ -1335,7 +1314,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   {editing ? caseLabel({ brand: form.brand || editing.brand, area: form.area || editing.area, teamMotivo: form.teamMotivo || editing.teamMotivo }) : 'Nuevo abono'}
                 </p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  {formatDueLabel({ dueDate: form.dueDate || null, dueDateUnknown: !!form.dueDateUnknown })} · {formatMoney(form.expectedAmount ?? null)}
+                  {formatIsoDate(form.dueDate || null)} · {formatMoney(form.expectedAmount ?? null)}
                   {editing ? ` · #${editing.registro}` : ''}
                 </p>
               </div>
@@ -1367,19 +1346,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista</span>
                     <input
                       type="date"
-                      value={form.dueDateUnknown ? '' : (form.dueDate || '')}
-                      disabled={!!form.dueDateUnknown}
-                      onChange={(event) => setForm({ ...form, dueDate: event.target.value, dueDateUnknown: false })}
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm disabled:bg-[var(--bg-soft)]"
+                      value={form.dueDate || ''}
+                      onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                     />
-                    <label className="flex items-center gap-2 pt-1 text-xs text-[var(--text-secondary)]">
-                      <input
-                        type="checkbox"
-                        checked={!!form.dueDateUnknown}
-                        onChange={(event) => setForm({ ...form, dueDateUnknown: event.target.checked, dueDate: event.target.checked ? '' : form.dueDate })}
-                      />
-                      Fecha indeterminada — no sé cuándo y no me lo pidas cada semana
-                    </label>
                   </label>
                   {form.origin === 'Trade Term' && (
                     <label className="space-y-1 md:col-span-2">
@@ -1476,7 +1446,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Fecha prevista</dt>
-                      <dd>{formatDueLabel({ dueDate: form.dueDate || null, dueDateUnknown: !!form.dueDateUnknown })}</dd>
+                      <dd>{formatIsoDate(form.dueDate || null)}</dd>
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Próx. revisión</dt>

@@ -144,27 +144,8 @@ export function formatIsoDate(value: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
-export function isDateUnknown(row: { dueDate?: string | null; dueDateUnknown?: boolean }): boolean {
-  return !!row.dueDateUnknown && !row.dueDate;
-}
-
-export function formatDueLabel(row: { dueDate?: string | null; dueDateUnknown?: boolean }): string {
-  if (isDateUnknown(row)) return 'Indeterminada';
-  return formatIsoDate(row.dueDate || null);
-}
-
 export function caseLabel(row: { brand: string; area: string; teamMotivo: string }): string {
   return [row.brand, row.area, row.teamMotivo].map((value) => displayDash(value)).join(' · ');
-}
-
-export function rowTone(row: AbonoComputed): string {
-  if (row.status === 'Cancelado') return 'abonos-row-cancelado';
-  if (row.status === 'Recibido') return 'abonos-row-recibido';
-  if (row.status === 'Recibido parcialmente') return 'abonos-row-parcial';
-  if (row.overdueDays !== null) return 'abonos-row-vencido';
-  if (row.status === 'Reclamado') return 'abonos-row-reclamado';
-  if (isDateUnknown(row)) return 'abonos-row-indet';
-  return '';
 }
 
 export function displayDash(value: string | null | undefined): string {
@@ -383,7 +364,7 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso()): WeeklyTa
       return;
     }
 
-    if (!row.dueDate && !row.dueDateUnknown) {
+    if (!row.dueDate) {
       tasks.push({
         id: `fecha-${row.id}`,
         kind: 'fecha',
@@ -409,7 +390,7 @@ export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: str
   reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: 'He reclamado todos' },
   seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: 'Sigo en ello todos' },
   cobro: { title: 'Comprobar cobro', hint: 'Entró una parte. Mira si ha llegado el resto.', bulkLabel: null },
-  fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha. Pon una o márcala como indeterminada si no sabes cuándo.', bulkLabel: 'Fecha indeterminada' },
+  fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha. Ábrela y ponla si la tienes.', bulkLabel: null },
 };
 
 export interface WeeklyTaskGroup {
