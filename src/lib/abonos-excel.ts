@@ -19,6 +19,7 @@ export interface ImportColumnMap {
   addedBy: number | null;
   responsible: number | null;
   expectedAmount: number | null;
+  communicatedAmount: number | null;
   pay1Date: number | null;
   pay1Amount: number | null;
   pay2Date: number | null;
@@ -40,6 +41,7 @@ export interface ImportPreviewRow {
   addedBy: string;
   responsible: string;
   expectedAmount: number | null;
+  communicatedAmount: number | null;
   pay1Date: string | null;
   pay1Amount: number | null;
   pay2Date: string | null;
@@ -61,6 +63,7 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   addedBy: ['añadido por', 'anadido por', 'creado por'],
   responsible: ['responsable de seguimiento', 'responsable'],
   expectedAmount: ['importe previsto', 'previsto'],
+  communicatedAmount: ['importe comunicado', 'importe comunicado por la marca'],
   pay1Date: ['fecha 1er pago', 'fecha 1er', 'fecha primer pago'],
   pay1Amount: ['importe 1er pago', 'importe 1er', 'importe primer pago'],
   pay2Date: ['fecha 2º pago', 'fecha 2o pago', 'fecha segundo pago'],
@@ -109,6 +112,7 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     addedBy: find(HEADER_ALIASES.addedBy),
     responsible: find(HEADER_ALIASES.responsible),
     expectedAmount: find(HEADER_ALIASES.expectedAmount),
+    communicatedAmount: find(HEADER_ALIASES.communicatedAmount),
     pay1Date: find(HEADER_ALIASES.pay1Date),
     pay1Amount: find(HEADER_ALIASES.pay1Amount),
     pay2Date: find(HEADER_ALIASES.pay2Date),
@@ -160,6 +164,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         addedBy,
         responsible,
         expectedAmount,
+        communicatedAmount: parseMoney(pick(row, map.communicatedAmount)),
         pay1Date: cellToIso(pick(row, map.pay1Date)),
         pay1Amount: parseMoney(pick(row, map.pay1Amount)),
         pay2Date: cellToIso(pick(row, map.pay2Date)),
@@ -198,6 +203,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       tradeTermId: null,
       informedBy: '',
       expectedAmount: row.expectedAmount,
+      communicatedAmount: row.communicatedAmount,
       status: importedTotal > 0
         ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal)
         : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
@@ -238,6 +244,7 @@ export function abonosExportRows(cases: Array<{
   tradeTermName: string | null;
   informedBy: string;
   expectedAmount: number | null;
+  communicatedAmount: number | null;
   receivedTotal: number;
   pending: number;
   status: string;
@@ -258,6 +265,7 @@ export function abonosExportRows(cases: Array<{
     'Trade Term',
     'Informado por',
     'Importe previsto',
+    'Importe comunicado',
     'Total liquidado',
     'Pendiente',
     'Estado',
@@ -278,6 +286,7 @@ export function abonosExportRows(cases: Array<{
     row.tradeTermName || '',
     row.informedBy,
     row.expectedAmount ?? '',
+    row.communicatedAmount ?? '',
     row.receivedTotal,
     row.pending,
     row.status,
@@ -312,6 +321,7 @@ export const ABONOS_TEMPLATE_HEADERS = [
   'Equipo',
   'Origen',
   'Importe previsto',
+  'Importe comunicado',
   'Fecha prevista',
   'Añadido por',
   'Responsable de seguimiento',
@@ -331,10 +341,11 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Equipo', 'Levante, Mallorca, GAP Plan, Kings League…'],
   ['Origen', 'Puntual o Acuerdo.'],
   ['Importe previsto', 'Número. 15000 o 15.000,00'],
+  ['Importe comunicado', 'Opcional. Importe que la marca dice haber pagado; Finanzas aún debe confirmarlo.'],
   ['Fecha prevista', 'dd/mm/aaaa. Si no sabes cuándo, déjala vacía.'],
   ['Añadido por', 'Cristóbal o Pablo. Si falta, entra vacío.'],
   ['Responsable de seguimiento', 'Cristóbal o Pablo. Si falta, se usa Añadido por.'],
-  ['Estado', 'Pendiente / Reclamado / Liquidado parcialmente / Liquidado / Cancelado.'],
+  ['Estado', 'Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado.'],
   ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel.'],
   ['Filas de Pablo', 'Puedes dejar campos sin información vacíos. La aplicación los mostrará con un guion.'],
   ['Pagos', 'Los pagos parciales se registran después desde la ficha en la aplicación.'],

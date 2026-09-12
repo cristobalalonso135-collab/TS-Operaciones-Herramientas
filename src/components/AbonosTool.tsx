@@ -183,6 +183,7 @@ const emptyForm = (): Partial<AbonoCase> => ({
   tradeTermId: null,
   informedBy: '',
   expectedAmount: null,
+  communicatedAmount: null,
   status: 'Pendiente',
   nextReview: '',
   comment: '',
@@ -414,7 +415,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     () => reviewResponsible ? computed.filter((row) => matchesFilter(reviewResponsible, row.responsible)) : computed,
     [computed, reviewResponsible],
   );
-  const tasks = useMemo(() => weeklyTasks(computed, todayIso(), reviewResponsible), [computed, reviewResponsible]);
+  const taskClaims = state?.claims || [];
+  const tasks = useMemo(() => weeklyTasks(computed, todayIso(), reviewResponsible, taskClaims), [computed, reviewResponsible, taskClaims]);
   const taskGroups = useMemo(() => groupWeeklyTasks(tasks), [tasks]);
   const cash = useMemo(() => upcomingCash(reviewRows), [reviewRows]);
   const openTaskGroup = taskGroups.find((group) => group.kind === openTaskKind) || null;
@@ -487,9 +489,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     if (actionable.length === 0) return;
     const ids = new Set(actionable.map((task) => task.row.id));
     const nextReview = addDaysIso(todayIso(), 7);
-    const cases = state.cases.map((row) => (
-      ids.has(row.id) ? { ...row, status: 'Reclamado' as const, nextReview } : row
-    ));
+    const cases = state.cases.map((row) => ids.has(row.id) ? { ...row, nextReview } : row);
     const claims = [
       ...state.claims,
       ...actionable.map((task) => makeClaim(task.row.id, task.kind === 'seguir' ? 'seguir' : 'reclamar', note)),
@@ -538,6 +538,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       tradeTermId: form.origin === 'Acuerdo' ? (form.tradeTermId || null) : null,
       informedBy: form.informedBy || '',
       expectedAmount: form.expectedAmount ?? null,
+      communicatedAmount: form.communicatedAmount ?? null,
       status: (form.status || '') as AbonoStatus | '',
       nextReview: form.nextReview || null,
       comment: form.comment || '',
@@ -566,12 +567,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       claims: state.claims.filter((row) => row.caseId !== id),
     }, backend);
     closePanel();
-  };
-
-  const cancelCase = async (id: string) => {
-    const cases = state.cases.map((row) => row.id === id ? { ...row, status: 'Cancelado' as const } : row);
-    await persist({ ...state, cases }, backend);
-    if (editing?.id === id) setForm((current) => ({ ...current, status: 'Cancelado' }));
   };
 
   const addReceipt = async () => {
@@ -603,14 +598,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const addClaimFromModal = async () => {
     if (!editing) return;
     const nextReview = claimDraft.nextReview || addDaysIso(todayIso(), 7);
-    const kind = editing.status === 'Reclamado' ? 'seguir' as const : 'reclamar' as const;
-    const cases = state.cases.map((row) => (
-      row.id === editing.id ? { ...row, status: 'Reclamado' as const, nextReview } : row
-    ));
+    const hasPriorClaim = claimsForCase(state.claims, editing.id).some((claim) => claim.kind === 'reclamar' || claim.kind === 'seguir');
+    const kind = hasPriorClaim ? 'seguir' as const : 'reclamar' as const;
+    const cases = state.cases.map((row) => row.id === editing.id ? { ...row, nextReview } : row);
     const claims = [...state.claims, makeClaim(editing.id, kind, claimDraft.note, claimDraft.claimedAt || todayIso())];
     await persist({ ...state, cases, claims }, backend);
-    setEditing({ ...editing, status: 'Reclamado', nextReview });
-    setForm((current) => ({ ...current, status: 'Reclamado', nextReview }));
+    setEditing({ ...editing, nextReview });
+    setForm((current) => ({ ...current, nextReview }));
     setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setNote(`Gestión guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.`);
   };
@@ -1441,6 +1435,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
                   </label>
+                  {form.status === 'Pago comunicado' && (
+                    <label className="space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Importe comunicado por la marca</span>
+                      <input value={form.communicatedAmount ?? ''} onChange={(event) => setForm({ ...form, communicatedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
+                      {form.communicatedAmount !== null && form.communicatedAmount !== undefined
+                        && Math.abs(form.communicatedAmount - (currentComputed?.pending ?? Math.max(0, form.expectedAmount ?? 0))) > 0.009 && (
+                        <span className="block text-xs font-medium text-[var(--warning)]">No coincide con el importe pendiente.</span>
+                      )}
+                    </label>
+                  )}
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Próxima revisión</span>
                     <input type="date" value={form.nextReview || ''} onChange={(event) => setForm({ ...form, nextReview: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
@@ -1453,10 +1457,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button type="button" onClick={saveForm} className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white">Guardar</button>
                   {editing && (
-                    <>
-                      <button type="button" onClick={() => cancelCase(editing.id)} className="rounded-md border border-[var(--border)] px-4 py-2 text-sm">Cancelar caso</button>
-                      <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
-                    </>
+                    <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
                   )}
                 </div>
               </div>
@@ -1642,6 +1643,15 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   }
   if (row.status === 'Liquidado parcialmente') {
     return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>{row.overdueDays !== null ? 'Vencido · ' : ''}{row.status}</span>;
+  }
+  if (row.status === 'Pago comunicado') {
+    const mismatch = row.communicatedAmount !== null && Math.abs(row.communicatedAmount - row.pending) > 0.009;
+    return (
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
+        <span className={`${pill} bg-violet-100 text-violet-700`}>Pago comunicado</span>
+        {mismatch && <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Importe no cuadra</span>}
+      </span>
+    );
   }
   if (row.overdueDays !== null) {
     return <span className={`${pill} bg-[var(--danger-soft)] text-[var(--danger)]`}><AlertTriangle className="mr-0.5 inline h-3 w-3 align-text-bottom" /> Vencido · {row.status}</span>;

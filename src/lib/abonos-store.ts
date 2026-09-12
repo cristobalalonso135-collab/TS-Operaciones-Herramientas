@@ -60,6 +60,7 @@ function seedState(state: AbonosState): AbonosState {
       origin: asOrigin(row.origin),
       status,
       responsible,
+      communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,
     };
   });
   const catalogs: AbonosCatalogs = {

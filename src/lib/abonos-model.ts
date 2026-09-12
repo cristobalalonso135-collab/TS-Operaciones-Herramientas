@@ -2,7 +2,7 @@ export const ABONOS_PEOPLE = ['Cristóbal Alonso', 'Pablo Laguna'] as const;
 export const DEFAULT_NEW_AUTHOR = 'Cristóbal Alonso';
 
 export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
-export const ABONO_STATUSES = ['Pendiente', 'Reclamado', 'Liquidado parcialmente', 'Liquidado', 'Cancelado'] as const;
+export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
 export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Off Invoice', 'Material gratuito', 'Otro'];
@@ -39,6 +39,7 @@ export interface AbonoCase {
   tradeTermId: string | null;
   informedBy: string;
   expectedAmount: number | null;
+  communicatedAmount: number | null;
   status: AbonoStatus | '';
   nextReview: string | null;
   comment: string;
@@ -242,15 +243,14 @@ export function pendingAmount(expectedAmount: number | null, receivedTotal: numb
 }
 
 export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number): AbonoStatus | '' {
-  if (current === 'Cancelado') return current;
   if (expectedAmount === null) {
     if (receivedTotal > 0) return 'Liquidado parcialmente';
-    return current === 'Reclamado' ? current : 'Pendiente';
+    return current === 'Pago comunicado' ? current : 'Pendiente';
   }
   const pending = pendingAmount(expectedAmount, receivedTotal);
   if (receivedTotal > 0 && pending <= 0.009) return 'Liquidado';
   if (receivedTotal > 0 && pending > 0) return 'Liquidado parcialmente';
-  return current === 'Reclamado' ? current : 'Pendiente';
+  return current === 'Pago comunicado' ? current : 'Pendiente';
 }
 
 export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms: TradeTerm[], today = todayIso()): AbonoComputed {
@@ -259,7 +259,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     ? Math.max(recordedTotal, row.expectedAmount)
     : recordedTotal;
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
-  const closed = row.status === 'Liquidado' || row.status === 'Cancelado';
+  const closed = row.status === 'Liquidado';
   const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
   const reviewOverdue = !closed && pending > 0 && !!row.nextReview && row.nextReview <= today;
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
@@ -292,7 +292,8 @@ export function asOrigin(value: string): AbonoOrigin | '' {
 export function asStatus(value: string): AbonoStatus | '' {
   if (value === 'Recibido') return 'Liquidado';
   if (value === 'Recibido parcialmente') return 'Liquidado parcialmente';
-  if (value === 'Pendiente' || value === 'Reclamado' || value === 'Liquidado parcialmente' || value === 'Liquidado' || value === 'Cancelado') return value;
+  if (value === 'Reclamado') return 'Pendiente';
+  if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado') return value;
   return '';
 }
 
@@ -313,7 +314,7 @@ function matchesResponsibleScope(row: AbonoComputed, responsible: string): boole
 
 export function myOpenQueue(rows: AbonoComputed[], responsible = 'Cristóbal'): AbonoComputed[] {
   return [...rows]
-    .filter((row) => matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado')
+    .filter((row) => matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado')
     .sort((a, b) => {
       if ((a.overdueDays ?? -1) !== (b.overdueDays ?? -1)) return (b.overdueDays ?? -1) - (a.overdueDays ?? -1);
       if (a.dueDate && !b.dueDate) return -1;
@@ -323,7 +324,7 @@ export function myOpenQueue(rows: AbonoComputed[], responsible = 'Cristóbal'): 
     });
 }
 
-export type WeeklyTaskKind = 'reclamar' | 'seguir' | 'cobro' | 'fecha';
+export type WeeklyTaskKind = 'confirmar' | 'reclamar' | 'seguir' | 'cobro' | 'fecha';
 
 export interface WeeklyTask {
   id: string;
@@ -335,35 +336,41 @@ export interface WeeklyTask {
 }
 
 function stillOpen(row: AbonoComputed, responsible: string): boolean {
-  return matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado' && row.status !== 'Cancelado' && row.pending > 0.009;
+  return matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado' && row.pending > 0.009;
 }
 
-export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsible = 'Cristóbal'): WeeklyTask[] {
+export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsible = 'Cristóbal', claims: AbonoClaim[] = []): WeeklyTask[] {
   const tasks: WeeklyTask[] = [];
   myOpenQueue(rows, responsible).forEach((row) => {
     if (!stillOpen(row, responsible)) return;
     const reviewDue = !!row.nextReview && row.nextReview <= today;
     const noReview = !row.nextReview;
+    const priorClaim = claimsForCase(claims, row.id).some((claim) => claim.kind === 'reclamar' || claim.kind === 'seguir');
 
-    if (row.dueDate && row.dueDate < today && row.status !== 'Reclamado') {
+    if (row.status === 'Pago comunicado' && (reviewDue || noReview)) {
+      const mismatch = row.communicatedAmount !== null && Math.abs(row.communicatedAmount - row.pending) > 0.009;
       tasks.push({
-        id: `reclamar-${row.id}`,
-        kind: 'reclamar',
-        title: 'Reclamar',
-        reason: `Previsto ${formatIsoDate(row.dueDate)}${row.overdueDays ? ` · ${row.overdueDays} días` : ''}.`,
-        actionLabel: 'He reclamado',
+        id: `confirmar-${row.id}`,
+        kind: 'confirmar',
+        title: 'Confirmar pago con Finanzas',
+        reason: mismatch
+          ? `La marca comunica ${formatMoney(row.communicatedAmount)} y quedan ${formatMoney(row.pending)} pendientes.`
+          : 'La marca ha comunicado el pago. Falta la confirmación de Finanzas.',
+        actionLabel: 'Abrir ficha',
         row,
       });
       return;
     }
 
-    if (row.status === 'Reclamado' && (reviewDue || noReview)) {
+    if (row.dueDate && row.dueDate < today && (reviewDue || noReview)) {
       tasks.push({
-        id: `seguir-${row.id}`,
-        kind: 'seguir',
-        title: 'Seguir reclamando',
-        reason: reviewDue ? `Toca revisar (próxima revisión ${formatIsoDate(row.nextReview)}).` : 'Está reclamado y no tiene próxima revisión.',
-        actionLabel: 'Sigo en ello',
+        id: `${priorClaim ? 'seguir' : 'reclamar'}-${row.id}`,
+        kind: priorClaim ? 'seguir' : 'reclamar',
+        title: priorClaim ? 'Seguir reclamando' : 'Reclamar',
+        reason: reviewDue
+          ? `Toca revisar (próxima revisión ${formatIsoDate(row.nextReview)}).`
+          : `Previsto ${formatIsoDate(row.dueDate)}${row.overdueDays ? ` · ${row.overdueDays} días` : ''}.`,
+        actionLabel: priorClaim ? 'Sigo en ello' : 'He reclamado',
         row,
       });
       return;
@@ -393,7 +400,7 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
     }
   });
 
-  const order: WeeklyTaskKind[] = ['reclamar', 'seguir', 'cobro', 'fecha'];
+  const order: WeeklyTaskKind[] = ['confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
   return tasks.sort((a, b) => {
     const kindDiff = order.indexOf(a.kind) - order.indexOf(b.kind);
     if (kindDiff !== 0) return kindDiff;
@@ -401,9 +408,10 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
   });
 }
 
-export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['reclamar', 'seguir', 'cobro', 'fecha'];
+export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
 
 export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: string; bulkLabel: string | null }> = {
+  confirmar: { title: 'Confirmar con Finanzas', hint: 'La marca ha comunicado el pago y falta validar el ingreso.', bulkLabel: null },
   reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: null },
   seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: null },
   cobro: { title: 'Comprobar cobro', hint: 'Entró una parte. Mira si ha llegado el resto.', bulkLabel: null },
@@ -498,7 +506,6 @@ export function upcomingCash(rows: AbonoComputed[], today = todayIso()): Upcomin
   const horizon = weeks[weeks.length - 1].end;
   const open = rows.filter((row) => (
     row.pending > 0.009
-    && row.status !== 'Cancelado'
     && row.status !== 'Liquidado'
     && !!row.dueDate
     && row.dueDate >= weekStart
@@ -530,7 +537,7 @@ export function upcomingCash(rows: AbonoComputed[], today = todayIso()): Upcomin
 }
 
 export function abonosHubKpis(rows: AbonoComputed[], today = todayIso()) {
-  const open = rows.filter((row) => row.status !== 'Liquidado' && row.status !== 'Cancelado' && row.pending > 0.009);
+  const open = rows.filter((row) => row.status !== 'Liquidado' && row.pending > 0.009);
   const overdue = open.filter((row) => row.overdueDays !== null);
   const claim = weeklyTasks(rows, today).filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
   return {
