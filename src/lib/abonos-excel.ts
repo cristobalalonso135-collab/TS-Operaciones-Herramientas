@@ -79,6 +79,10 @@ function cellText(value: unknown): string {
   return String(value ?? '').replace(/\u00a0/g, ' ').trim();
 }
 
+function isPablo(value: string): boolean {
+  return value.trim().toLocaleLowerCase('es').startsWith('pablo');
+}
+
 export function detectAbonosHeaderRow(rows: unknown[][]): number {
   const index = rows.findIndex((row) => {
     const joined = (row || []).map(normalizeHeader).join(' | ');
@@ -194,7 +198,9 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       tradeTermId: null,
       informedBy: '',
       expectedAmount: row.expectedAmount,
-      status: importedTotal > 0 ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal) : (importedStatus || 'Pendiente'),
+      status: importedTotal > 0
+        ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal)
+        : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
       nextReview: row.nextReview,
       comment: row.comment,
     });
@@ -247,7 +253,7 @@ export function abonosExportRows(cases: Array<{
     'Empresa',
     'Tipo',
     'Área',
-    'Equipo/Motivo',
+    'Equipo',
     'Origen',
     'Trade Term',
     'Informado por',
@@ -330,6 +336,7 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Responsable de seguimiento', 'Cristóbal o Pablo. Si falta, se usa Añadido por.'],
   ['Estado', 'Pendiente / Reclamado / Liquidado parcialmente / Liquidado / Cancelado.'],
   ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel.'],
+  ['Filas de Pablo', 'Puedes dejar campos sin información vacíos. La aplicación los mostrará con un guion.'],
   ['Pagos', 'Los pagos parciales se registran después desde la ficha en la aplicación.'],
 ];
 

@@ -40,6 +40,10 @@ function remapLegacyArea(area: string): string {
   return area.trim().toLocaleLowerCase('es') === 'broadcast' ? 'Pro Clubs' : area;
 }
 
+function isPablo(value: string): boolean {
+  return value.trim().toLocaleLowerCase('es').startsWith('pablo');
+}
+
 function isAbonosPayload(value: unknown): value is AbonosState {
   if (!value || typeof value !== 'object') return false;
   const row = value as Partial<AbonosState>;
@@ -47,13 +51,17 @@ function isAbonosPayload(value: unknown): value is AbonosState {
 }
 
 function seedState(state: AbonosState): AbonosState {
-  const cases = state.cases.map((row) => ({
-    ...row,
-    area: remapLegacyArea(row.area),
-    origin: asOrigin(row.origin),
-    status: asStatus(row.status) || 'Pendiente',
-    responsible: String(row.responsible || row.addedBy || '').trim(),
-  }));
+  const cases = state.cases.map((row) => {
+    const responsible = String(row.responsible || row.addedBy || '').trim();
+    const status: AbonosState['cases'][number]['status'] = asStatus(row.status) || (isPablo(responsible) ? '' : 'Pendiente');
+    return {
+      ...row,
+      area: remapLegacyArea(row.area),
+      origin: asOrigin(row.origin),
+      status,
+      responsible,
+    };
+  });
   const catalogs: AbonosCatalogs = {
     brands: mergeCatalog(EMPTY_CATALOGS.brands, [...state.catalogs.brands, ...cases.map((row) => row.brand), ...state.tradeTerms.map((row) => row.brand)]),
     types: mergeCatalog(EMPTY_CATALOGS.types, [...state.catalogs.types, ...cases.map((row) => row.type)]),

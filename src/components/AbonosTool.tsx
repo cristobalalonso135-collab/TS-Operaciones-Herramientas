@@ -80,7 +80,7 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'brand', label: 'Empresa', width: 108 },
   { key: 'type', label: 'Tipo', width: 120 },
   { key: 'area', label: 'Área', width: 108 },
-  { key: 'teamMotivo', label: 'Equipo / Motivo', width: 150 },
+  { key: 'teamMotivo', label: 'Equipo', width: 150 },
   { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
   { key: 'receivedTotal', label: 'Importe liquidado', width: 118 },
   { key: 'pending', label: 'Importe pendiente', width: 118 },
@@ -1012,7 +1012,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.brand} options={filterOptions.brands.options} includeBlank={filterOptions.brands.hasBlank} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
             <FilterSelect value={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
             <FilterSelect value={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
-            <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo / Motivo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
+            <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
             <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
@@ -1268,7 +1268,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <th className="px-2 py-2">Reg.</th>
                       <th className="px-2 py-2">Empresa</th>
                       <th className="px-2 py-2">Tipo</th>
-                      <th className="px-2 py-2">Equipo/Motivo</th>
+                      <th className="px-2 py-2">Equipo</th>
                       <th className="px-2 py-2">Área</th>
                       <th className="px-2 py-2">Responsable</th>
                       <th className="px-2 py-2">Añadido por</th>
@@ -1281,8 +1281,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <tr key={row.key} className="border-t border-[var(--border)]">
                         <td className="px-2 py-1">{row.registro ?? '—'}</td>
                         <td className="px-2 py-1">{row.brand}</td>
-                        <td className="px-2 py-1">{row.type}</td>
-                        <td className="px-2 py-1">{row.teamMotivo}</td>
+                        <td className="px-2 py-1">{displayDash(row.type)}</td>
+                        <td className="px-2 py-1">{displayDash(row.teamMotivo)}</td>
                         <td className="px-2 py-1">
                           <select
                             value={row.area}
@@ -1385,7 +1385,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 <div className="grid gap-3 md:grid-cols-2">
                   <CatalogField label="Marca" value={form.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setForm({ ...form, brand, tradeTermId: null })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
                   <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
-                  <CatalogField label="Equipo / Motivo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
+                  <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
                     <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Acuerdo' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
