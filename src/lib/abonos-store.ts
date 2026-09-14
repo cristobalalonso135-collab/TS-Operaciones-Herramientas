@@ -9,7 +9,9 @@ import {
   asSource,
   asStatus,
   abonosNeedRewrite,
+  excessAmount,
   normalizeAttachments,
+  receivedTotalFor,
   shortPersonName,
   type AbonosCatalogs,
   type AbonosState,
@@ -55,9 +57,12 @@ function isAbonosPayload(value: unknown): value is AbonosState {
 }
 
 function seedState(state: AbonosState): AbonosState {
+  const receipts = Array.isArray(state.receipts) ? state.receipts : [];
   const cases = state.cases.map((row) => {
     const responsible = shortPersonName(row.responsible || row.addedBy);
-    const status: AbonosState['cases'][number]['status'] = asStatus(row.status) || (isPablo(responsible) ? '' : 'Pendiente');
+    let status: AbonosState['cases'][number]['status'] = asStatus(row.status) || (isPablo(responsible) ? '' : 'Pendiente');
+    const received = receivedTotalFor(row.id, receipts);
+    if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) status = 'Exceso';
     return {
       ...row,
       addedBy: shortPersonName(row.addedBy),

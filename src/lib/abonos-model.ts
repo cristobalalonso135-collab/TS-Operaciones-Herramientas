@@ -3,7 +3,7 @@ export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
 
 export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
 export const ABONO_SOURCES = ['Correo', 'Teams', 'Conversación', 'Excel', 'Otro'] as const;
-export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado'] as const;
+export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado', 'Exceso'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
 export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Off Invoice', 'Material gratuito', 'Otro'];
@@ -103,6 +103,7 @@ export interface AbonosState {
 export interface AbonoComputed extends AbonoCase {
   receivedTotal: number;
   pending: number;
+  excessAmount: number;
   overdueDays: number | null;
   reviewOverdue: boolean;
   tradeTermName: string | null;
@@ -271,11 +272,21 @@ export function pendingAmount(expectedAmount: number | null, receivedTotal: numb
   return Math.max(0, (expectedAmount ?? 0) - receivedTotal);
 }
 
+export function excessAmount(expectedAmount: number | null, receivedTotal: number): number {
+  if (expectedAmount === null) return 0;
+  return Math.max(0, receivedTotal - expectedAmount);
+}
+
+export function isClosedStatus(status: string): boolean {
+  return status === 'Liquidado' || status === 'Exceso';
+}
+
 export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number): AbonoStatus | '' {
   if (expectedAmount === null) {
     if (receivedTotal > 0) return 'Liquidado parcialmente';
     return current === 'Pago comunicado' ? current : 'Pendiente';
   }
+  if (receivedTotal > 0 && excessAmount(expectedAmount, receivedTotal) > 0.009) return 'Exceso';
   const pending = pendingAmount(expectedAmount, receivedTotal);
   if (receivedTotal > 0 && pending <= 0.009) return 'Liquidado';
   if (receivedTotal > 0 && pending > 0) return 'Liquidado parcialmente';
@@ -288,7 +299,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     ? Math.max(recordedTotal, row.expectedAmount)
     : recordedTotal;
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
-  const closed = row.status === 'Liquidado';
+  const closed = isClosedStatus(row.status);
   const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
   const reviewOverdue = !closed && pending > 0 && !!row.nextReview && row.nextReview <= today;
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
@@ -297,6 +308,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     ...row,
     receivedTotal,
     pending,
+    excessAmount: excessAmount(row.expectedAmount, recordedTotal),
     overdueDays: overdue && row.dueDate ? daysBetween(row.dueDate, today) : null,
     reviewOverdue,
     tradeTermName: term?.name ?? null,
@@ -336,7 +348,7 @@ export function normalizeAttachments(value: unknown): AbonoAttachment[] {
     if (!item || typeof item !== 'object') return [];
     const row = item as Partial<AbonoAttachment>;
     const dataUrl = String(row.dataUrl || '');
-    if (!dataUrl.startsWith('data:image/')) return [];
+    if (!dataUrl.startsWith('data:')) return [];
     return [{
       id: String(row.id || crypto.randomUUID()),
       name: String(row.name || 'captura').trim() || 'captura',
@@ -358,7 +370,7 @@ export function asStatus(value: string): AbonoStatus | '' {
   if (value === 'Recibido') return 'Liquidado';
   if (value === 'Recibido parcialmente') return 'Liquidado parcialmente';
   if (value === 'Reclamado') return 'Pendiente';
-  if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado') return value;
+  if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado' || value === 'Exceso') return value;
   return '';
 }
 
@@ -413,7 +425,7 @@ function matchesResponsibleScope(row: AbonoComputed, responsible: string): boole
 
 export function myOpenQueue(rows: AbonoComputed[], responsible = 'Cristóbal'): AbonoComputed[] {
   return [...rows]
-    .filter((row) => matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado')
+    .filter((row) => matchesResponsibleScope(row, responsible) && !isClosedStatus(row.status))
     .sort((a, b) => {
       if ((a.overdueDays ?? -1) !== (b.overdueDays ?? -1)) return (b.overdueDays ?? -1) - (a.overdueDays ?? -1);
       if (a.dueDate && !b.dueDate) return -1;
@@ -435,7 +447,7 @@ export interface WeeklyTask {
 }
 
 function stillOpen(row: AbonoComputed, responsible: string): boolean {
-  return matchesResponsibleScope(row, responsible) && row.status !== 'Liquidado' && row.pending > 0.009;
+  return matchesResponsibleScope(row, responsible) && !isClosedStatus(row.status) && row.pending > 0.009;
 }
 
 export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsible = 'Cristóbal', claims: AbonoClaim[] = []): WeeklyTask[] {
@@ -605,7 +617,7 @@ export function upcomingCash(rows: AbonoComputed[], today = todayIso()): Upcomin
   const horizon = weeks[weeks.length - 1].end;
   const open = rows.filter((row) => (
     row.pending > 0.009
-    && row.status !== 'Liquidado'
+    && !isClosedStatus(row.status)
     && !!row.dueDate
     && row.dueDate >= weekStart
     && row.dueDate <= horizon
@@ -636,7 +648,7 @@ export function upcomingCash(rows: AbonoComputed[], today = todayIso()): Upcomin
 }
 
 export function abonosHubKpis(rows: AbonoComputed[], today = todayIso()) {
-  const open = rows.filter((row) => row.status !== 'Liquidado' && row.pending > 0.009);
+  const open = rows.filter((row) => !isClosedStatus(row.status) && row.pending > 0.009);
   const overdue = open.filter((row) => row.overdueDays !== null);
   const claim = weeklyTasks(rows, today).filter((task) => task.kind === 'reclamar' || task.kind === 'seguir');
   return {
@@ -658,7 +670,10 @@ export function linkedCases(rows: AbonoComputed[], termId: string): AbonoCompute
 export function termRollup(rows: AbonoComputed[]): { count: number; pending: number; status: string } {
   if (rows.length === 0) return { count: 0, pending: 0, status: 'Sin vincular' };
   const pending = rows.reduce((sum, row) => sum + row.pending, 0);
-  if (rows.every((row) => row.status === 'Liquidado')) return { count: rows.length, pending, status: 'Liquidado' };
+  if (rows.every((row) => isClosedStatus(row.status))) {
+    if (rows.some((row) => row.status === 'Exceso')) return { count: rows.length, pending, status: 'Exceso' };
+    return { count: rows.length, pending, status: 'Liquidado' };
+  }
   if (rows.some((row) => row.overdueDays !== null)) return { count: rows.length, pending, status: 'Vencido' };
   if (rows.some((row) => row.status === 'Pago comunicado')) return { count: rows.length, pending, status: 'Pago comunicado' };
   if (rows.some((row) => row.status === 'Liquidado parcialmente')) return { count: rows.length, pending, status: 'Liquidado parcialmente' };
@@ -673,12 +688,16 @@ export function namesNeedShortening(state: Pick<AbonosState, 'cases'>): boolean 
   ));
 }
 
-export function abonosNeedRewrite(state: Pick<AbonosState, 'cases'>): boolean {
+export function abonosNeedRewrite(state: Pick<AbonosState, 'cases' | 'receipts'>): boolean {
   if (namesNeedShortening(state)) return true;
-  return state.cases.some((row) => {
+  if (state.cases.some((row) => {
     const raw = String(row.source || '');
-    if (!raw) return false;
-    return asSource(raw) !== raw;
+    return Boolean(raw) && asSource(raw) !== raw;
+  })) return true;
+  const receipts = state.receipts || [];
+  return state.cases.some((row) => {
+    if (asStatus(row.status) !== 'Liquidado') return false;
+    return excessAmount(row.expectedAmount, receivedTotalFor(row.id, receipts)) > 0.009;
   });
 }
 

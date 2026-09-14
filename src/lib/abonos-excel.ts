@@ -382,7 +382,7 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Fecha prevista', 'Obligatoria. dd/mm/aaaa.'],
   ['Añadido por', 'Obligatorio. Cristóbal o Pablo.'],
   ['Responsable de seguimiento', 'Obligatorio. Cristóbal o Pablo. Si falta, se usa Añadido por.'],
-  ['Estado', 'Obligatorio. Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado.'],
+  ['Estado', 'Obligatorio. Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado / Exceso.'],
   ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel. Opcional.'],
   ['Comentario', 'Notas: nombre del correo, día de la conversación, nº de pedido SAP…'],
   ['Capturas', 'Las fotos o pantallazos de confirmación se adjuntan en la ficha, no en el Excel.'],

@@ -59,7 +59,7 @@ import {
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Check, ChevronRight, Download, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -101,7 +101,8 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
 
 const COL_STORAGE = 'ts-abonos-cols-v7';
 const BLANK = '__blank__';
-const MAX_EVIDENCE = 4;
+const MAX_EVIDENCE = 10;
+const MAX_DOC_BYTES = 1_200_000;
 const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
 const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
 const COLUMN_BY_KEY = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col])) as Record<SortKey, (typeof COLUMN_DEFS)[number]>;
@@ -239,6 +240,46 @@ async function compressEvidenceImage(file: Blob, name: string): Promise<AbonoAtt
     id: crypto.randomUUID(),
     name: name.replace(/\.[^.]+$/, '') || 'captura',
     mime: 'image/jpeg',
+    dataUrl,
+    addedAt: new Date().toISOString(),
+  };
+}
+
+function isImageFile(blob: Blob, name: string): boolean {
+  return blob.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(name);
+}
+
+function isAllowedEvidence(blob: Blob, name: string): boolean {
+  if (isImageFile(blob, name)) return true;
+  if (blob.type === 'application/pdf' || blob.type === 'text/csv') return true;
+  if (blob.type.includes('spreadsheet') || blob.type.includes('excel') || blob.type.includes('word') || blob.type === 'application/msword') return true;
+  return /\.(pdf|xlsx?|csv|docx?)$/i.test(name);
+}
+
+function isImageAttachment(item: { mime?: string; dataUrl?: string }): boolean {
+  return String(item.mime || '').startsWith('image/') || String(item.dataUrl || '').startsWith('data:image/');
+}
+
+function readAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('No he podido leer el archivo.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fileToAttachment(file: Blob, name: string): Promise<AbonoAttachment> {
+  const fileName = name.trim() || 'documento';
+  if (isImageFile(file, fileName)) return compressEvidenceImage(file, fileName);
+  if (file.size > MAX_DOC_BYTES) {
+    throw new Error(`"${fileName}" pesa más de 1,2 MB. Súbelo más ligero.`);
+  }
+  const dataUrl = await readAsDataUrl(file);
+  return {
+    id: crypto.randomUUID(),
+    name: fileName,
+    mime: file.type || 'application/octet-stream',
     dataUrl,
     addedAt: new Date().toISOString(),
   };
@@ -681,31 +722,31 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const current = form.attachments || [];
     const remaining = MAX_EVIDENCE - current.length;
     if (remaining <= 0) {
-      setError(`Máximo ${MAX_EVIDENCE} capturas por abono.`);
+      setError(`Máximo ${MAX_EVIDENCE} documentos por abono.`);
       return;
     }
-    const images = files.filter((file) => file.blob.type.startsWith('image/') || file.name.match(/\.(png|jpe?g|webp|gif)$/i));
-    if (images.length === 0) {
-      setError('Elige una imagen (png, jpg o captura de pantalla).');
+    const allowed = files.filter((file) => isAllowedEvidence(file.blob, file.name));
+    if (allowed.length === 0) {
+      setError('Elige una imagen, PDF, Excel u otro documento.');
       return;
     }
     setError(null);
     try {
       const added: AbonoAttachment[] = [];
-      for (const file of images.slice(0, remaining)) {
-        added.push(await compressEvidenceImage(file.blob, file.name));
+      for (const file of allowed.slice(0, remaining)) {
+        added.push(await fileToAttachment(file.blob, file.name));
       }
       const attachments = [...current, ...added];
       setForm((currentForm) => ({ ...currentForm, attachments }));
-      setPanelNote(added.length === 1 ? 'Captura añadida. Pulsa Guardar si es un abono nuevo.' : `${added.length} capturas añadidas.`);
+      setPanelNote(added.length === 1 ? 'Documento añadido. Pulsa Guardar si es un abono nuevo.' : `${added.length} documentos añadidos.`);
       if (editing && state) {
         const cases = state.cases.map((row) => (row.id === editing.id ? { ...row, attachments } : row));
         await persist({ ...state, cases }, backend);
         setEditing((row) => (row ? { ...row, attachments } : row));
-        setPanelNote(added.length === 1 ? 'Captura guardada.' : `${added.length} capturas guardadas.`);
+        setPanelNote(added.length === 1 ? 'Documento guardado.' : `${added.length} documentos guardados.`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No he podido añadir la captura.');
+      setError(err instanceof Error ? err.message : 'No he podido añadir el documento.');
     }
   };
   addEvidenceRef.current = addEvidenceBlobs;
@@ -1754,23 +1795,31 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     />
                   </label>
                   <div className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Captura</span>
-                    <p className="text-[11px] text-[var(--text-secondary)]">Pantallazo del pedido SAP, correo o chat. Pega con Ctrl+V o súbela.</p>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
+                    <p className="text-[11px] text-[var(--text-secondary)]">Imagen, PDF o Excel. Hasta {MAX_EVIDENCE}. Pega una captura con Ctrl+V.</p>
                     <div className="mt-1 flex flex-wrap gap-2">
                       {(form.attachments || []).map((item) => (
                         <div key={item.id} className="relative">
                           <button
                             type="button"
-                            onClick={() => setViewerImage(item.dataUrl)}
-                            className="block h-20 w-28 overflow-hidden rounded-md border border-[var(--border)] bg-white"
+                            onClick={() => openAttachment(item, setViewerImage)}
+                            className="flex h-20 w-28 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
+                            title={item.name}
                           >
-                            <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                            {isImageAttachment(item) ? (
+                              <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <>
+                                <FileText className="h-5 w-5 text-[var(--text-muted)]" />
+                                <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
+                              </>
+                            )}
                           </button>
                           <button
                             type="button"
                             onClick={() => removeEvidence(item.id)}
                             className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
-                            aria-label="Quitar captura"
+                            aria-label="Quitar documento"
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
@@ -1790,7 +1839,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     <input
                       ref={evidenceInputRef}
                       type="file"
-                      accept="image/*"
+                      accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
                       multiple
                       className="hidden"
                       onChange={(event) => {
@@ -1885,6 +1934,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   {currentComputed?.reviewOverdue && (
                     <p className="mt-1 text-sm font-medium text-[var(--warning)]">Revisar hoy</p>
                   )}
+                  {currentComputed && currentComputed.excessAmount > 0.009 && (
+                    <p className="mt-2 text-sm font-medium text-[var(--excess)]">Han pagado {formatMoney(currentComputed.excessAmount)} de más.</p>
+                  )}
                 </div>
 
                 <div className="rounded-lg border border-[var(--border)] bg-white p-4">
@@ -1933,10 +1985,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         <button
                           key={item.id}
                           type="button"
-                          onClick={() => setViewerImage(item.dataUrl)}
-                          className="h-14 w-20 overflow-hidden rounded-md border border-[var(--border)]"
+                          onClick={() => openAttachment(item, setViewerImage)}
+                          className="flex h-14 w-20 items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white"
+                          title={item.name}
                         >
-                          <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                          {isImageAttachment(item) ? (
+                            <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <FileText className="h-4 w-4 text-[var(--text-muted)]" />
+                          )}
                         </button>
                       ))}
                     </div>
@@ -2037,6 +2094,21 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone?: 'dan
   );
 }
 
+function openAttachment(item: AbonoAttachment, onImage: (url: string) => void) {
+  if (isImageAttachment(item)) {
+    onImage(item.dataUrl);
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = item.dataUrl;
+  link.download = item.name || 'documento';
+  link.target = '_blank';
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function FilterSelect({
   value,
   options,
@@ -2081,6 +2153,16 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   }
   if (row.reviewOverdue) {
     return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Revisar · {row.status}</span>;
+  }
+  if (row.status === 'Exceso') {
+    return (
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
+        <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>Exceso</span>
+        {row.excessAmount > 0.009 && (
+          <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>+{formatMoney(row.excessAmount)}</span>
+        )}
+      </span>
+    );
   }
   if (row.status === 'Liquidado') {
     return <span className={`${pill} bg-[var(--success-soft)] text-[var(--success)]`}>{row.status}</span>;
