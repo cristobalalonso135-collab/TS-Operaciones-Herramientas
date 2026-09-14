@@ -2,7 +2,9 @@ import {
   asOrigin,
   asSource,
   asStatus,
+  abonoRequiredGaps,
   cellToIso,
+  formatRequiredGaps,
   parseMoney,
   shortPersonName,
   statusAfterReceipts,
@@ -78,8 +80,8 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   nextReview: ['próxima revisión', 'proxima revisión', 'próxima revision', 'proxima revision'],
   comment: ['comentario', 'comentarios'],
   origin: ['origen'],
-  source: ['llegó por', 'llego por', 'canal'],
-  informedBy: ['nombre del correo', 'informado por'],
+  source: ['canal', 'vino por', 'llegó por', 'llego por', 'conversación', 'conversacion'],
+  informedBy: ['persona', 'nombre del correo', 'informado por'],
 };
 
 function normalizeHeader(value: unknown): string {
@@ -92,6 +94,11 @@ function cellText(value: unknown): string {
 
 function isPablo(value: string): boolean {
   return value.trim().toLocaleLowerCase('es').startsWith('pablo');
+}
+
+export function importPreviewError(row: Pick<ImportPreviewRow, 'brand' | 'area' | 'teamMotivo' | 'type' | 'expectedAmount' | 'dueDate' | 'addedBy' | 'responsible' | 'source' | 'informedBy' | 'status'>): string | null {
+  if (row.expectedAmount !== null && row.expectedAmount < 0) return 'El importe previsto no puede ser negativo.';
+  return formatRequiredGaps(abonoRequiredGaps(row));
 }
 
 export function detectAbonosHeaderRow(rows: unknown[][]): number {
@@ -156,13 +163,22 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
       const responsible = cellText(pick(row, map.responsible)) || addedBy;
       const expectedAmount = parseMoney(pick(row, map.expectedAmount));
       if (empty) return null;
-      const error = !brand
-        ? 'Falta empresa.'
-        : !areaRaw
-          ? 'Falta área.'
-          : expectedAmount !== null && expectedAmount < 0
-            ? 'El importe previsto no puede ser negativo.'
-            : null;
+      const source = cellText(pick(row, map.source));
+      const informedBy = cellText(pick(row, map.informedBy));
+      const status = cellText(pick(row, map.status));
+      const error = importPreviewError({
+        brand,
+        area: areaRaw,
+        teamMotivo,
+        type,
+        expectedAmount,
+        dueDate,
+        addedBy: shortPersonName(addedBy),
+        responsible: shortPersonName(responsible),
+        source,
+        informedBy,
+        status,
+      });
       return {
         key: `import-${index}`,
         registro: Number.isFinite(registro) ? Number(registro) : null,
@@ -179,12 +195,12 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         pay1Amount: parseMoney(pick(row, map.pay1Amount)),
         pay2Date: cellToIso(pick(row, map.pay2Date)),
         pay2Amount: parseMoney(pick(row, map.pay2Amount)),
-        status: cellText(pick(row, map.status)),
+        status,
         nextReview: cellToIso(pick(row, map.nextReview)),
         comment: cellText(pick(row, map.comment)),
         origin: cellText(pick(row, map.origin)),
-        source: cellText(pick(row, map.source)),
-        informedBy: cellText(pick(row, map.informedBy)),
+        source,
+        informedBy,
         error,
       } satisfies ImportPreviewRow;
     })
@@ -222,6 +238,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
         : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
       nextReview: row.nextReview,
       comment: row.comment,
+      attachments: [],
     });
     const payments = [
       { date: row.pay1Date, amount: row.pay1Amount },
@@ -276,8 +293,8 @@ export function abonosExportRows(cases: Array<{
     'Área',
     'Equipo',
     'Origen',
-    'Llegó por',
-    'Nombre del correo',
+    'Canal',
+    'Persona',
     'Trade Term',
     'Importe previsto',
     'Importe comunicado',
@@ -336,8 +353,8 @@ export const ABONOS_TEMPLATE_HEADERS = [
   'Área',
   'Equipo',
   'Origen',
-  'Llegó por',
-  'Nombre del correo',
+  'Canal',
+  'Persona',
   'Importe previsto',
   'Importe comunicado',
   'Fecha prevista',
@@ -354,20 +371,22 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Rellena la hoja Abonos y súbela en Importar. El registro es opcional; si falta, lo asigna la herramienta.'],
   [''],
   ['Empresa', 'Obligatoria. Adidas, Nike, Puma…'],
-  ['Tipo', 'Credit Notes, VIK Cash, Fee Pro Clubs, Dto FRA, Off Invoice…'],
-  ['Área', 'Solo B2B, Grassroots, Pro Clubs o Teamsports.'],
-  ['Equipo', 'Levante, Mallorca, GAP Plan, Kings League…'],
-  ['Origen', 'Puntual o Acuerdo.'],
-  ['Llegó por', 'Correo, Teams, Reunión, Teléfono, WhatsApp, Excel u Otro. Opcional; sobre todo para las altas tuyas.'],
-  ['Nombre del correo', 'Si llegó por correo: persona o asunto. En otro canal, quién te lo dijo.'],
-  ['Importe previsto', 'Número. 15000 o 15.000,00'],
+  ['Tipo', 'Obligatorio. Credit Notes, VIK Cash, Fee Pro Clubs, Dto FRA, Off Invoice…'],
+  ['Área', 'Obligatoria. Solo B2B, Grassroots, Pro Clubs o Teamsports.'],
+  ['Equipo', 'Obligatorio. Levante, Mallorca, GAP Plan, Kings League…'],
+  ['Origen', 'Puntual o Acuerdo. Opcional.'],
+  ['Canal', 'Obligatorio. Correo, Teams, Conversación, Excel u Otro.'],
+  ['Persona', 'Obligatoria. Quién te lo dijo o de la marca. El detalle (asunto, día, pedido) va en Comentario.'],
+  ['Importe previsto', 'Obligatorio. Número. 15000 o 15.000,00'],
   ['Importe comunicado', 'Opcional. Importe que la marca dice haber pagado; Finanzas aún debe confirmarlo.'],
-  ['Fecha prevista', 'dd/mm/aaaa. Si no sabes cuándo, déjala vacía.'],
-  ['Añadido por', 'Cristóbal o Pablo. Si falta, entra vacío.'],
-  ['Responsable de seguimiento', 'Cristóbal o Pablo. Si falta, se usa Añadido por.'],
-  ['Estado', 'Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado.'],
-  ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel.'],
-  ['Filas de Pablo', 'Puedes dejar campos sin información vacíos. La aplicación los mostrará con un guion.'],
+  ['Fecha prevista', 'Obligatoria. dd/mm/aaaa.'],
+  ['Añadido por', 'Obligatorio. Cristóbal o Pablo.'],
+  ['Responsable de seguimiento', 'Obligatorio. Cristóbal o Pablo. Si falta, se usa Añadido por.'],
+  ['Estado', 'Obligatorio. Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado.'],
+  ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel. Opcional.'],
+  ['Comentario', 'Notas: nombre del correo, día de la conversación, nº de pedido SAP…'],
+  ['Capturas', 'Las fotos o pantallazos de confirmación se adjuntan en la ficha, no en el Excel.'],
+  ['Filas incompletas', 'Si falta un campo obligatorio, esa fila no se importa.'],
   ['Pagos', 'Los pagos parciales se registran después desde la ficha en la aplicación.'],
 ];
 

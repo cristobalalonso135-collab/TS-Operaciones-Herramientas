@@ -2,7 +2,7 @@ export const ABONOS_PEOPLE = ['Cristóbal', 'Pablo'] as const;
 export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
 
 export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
-export const ABONO_SOURCES = ['Correo', 'Teams', 'Reunión', 'Teléfono', 'WhatsApp', 'Excel', 'Otro'] as const;
+export const ABONO_SOURCES = ['Correo', 'Teams', 'Conversación', 'Excel', 'Otro'] as const;
 export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
@@ -46,6 +46,15 @@ export interface AbonoCase {
   status: AbonoStatus | '';
   nextReview: string | null;
   comment: string;
+  attachments: AbonoAttachment[];
+}
+
+export interface AbonoAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  dataUrl: string;
+  addedAt: string;
 }
 
 export interface AbonoReceipt {
@@ -315,12 +324,27 @@ export function asSource(value: string): AbonoSource | '' {
   const key = text.toLocaleLowerCase('es');
   if (key.includes('correo') || key.includes('mail') || key.includes('email')) return 'Correo';
   if (key.includes('teams')) return 'Teams';
-  if (key.includes('reun')) return 'Reunión';
-  if (key.includes('tel') || key.includes('llam')) return 'Teléfono';
-  if (key.includes('whats')) return 'WhatsApp';
   if (key.includes('excel')) return 'Excel';
-  if (key === 'otro') return 'Otro';
+  if (key.includes('convers') || key.includes('reun') || key.includes('tel') || key.includes('llam') || key.includes('whats')) return 'Conversación';
+  if (key.includes('sap') || key === 'otro') return 'Otro';
   return '';
+}
+
+export function normalizeAttachments(value: unknown): AbonoAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Partial<AbonoAttachment>;
+    const dataUrl = String(row.dataUrl || '');
+    if (!dataUrl.startsWith('data:image/')) return [];
+    return [{
+      id: String(row.id || crypto.randomUUID()),
+      name: String(row.name || 'captura').trim() || 'captura',
+      mime: String(row.mime || 'image/jpeg'),
+      dataUrl,
+      addedAt: String(row.addedAt || ''),
+    }];
+  });
 }
 
 export function formatSourceLabel(row: { source?: string | null; informedBy?: string | null }): string {
@@ -336,6 +360,40 @@ export function asStatus(value: string): AbonoStatus | '' {
   if (value === 'Reclamado') return 'Pendiente';
   if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado') return value;
   return '';
+}
+
+export function abonoRequiredGaps(row: {
+  brand?: string | null;
+  area?: string | null;
+  teamMotivo?: string | null;
+  type?: string | null;
+  expectedAmount?: number | null;
+  dueDate?: string | null;
+  addedBy?: string | null;
+  responsible?: string | null;
+  source?: string | null;
+  informedBy?: string | null;
+  status?: string | null;
+}): string[] {
+  const gaps: string[] = [];
+  if (!String(row.brand || '').trim()) gaps.push('Empresa');
+  if (!String(row.area || '').trim()) gaps.push('Área');
+  if (!String(row.teamMotivo || '').trim()) gaps.push('Equipo');
+  if (!String(row.type || '').trim()) gaps.push('Tipo');
+  if (row.expectedAmount === null || row.expectedAmount === undefined || !Number.isFinite(row.expectedAmount)) gaps.push('Importe previsto');
+  if (!String(row.dueDate || '').trim()) gaps.push('Fecha prevista');
+  if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
+  if (!String(row.responsible || '').trim()) gaps.push('Responsable');
+  if (!asSource(String(row.source || ''))) gaps.push('Canal');
+  if (!String(row.informedBy || '').trim()) gaps.push('Persona');
+  if (!asStatus(String(row.status || ''))) gaps.push('Estado');
+  return gaps;
+}
+
+export function formatRequiredGaps(gaps: string[]): string | null {
+  if (gaps.length === 0) return null;
+  if (gaps.length === 1) return `Falta ${gaps[0]}.`;
+  return `Faltan: ${gaps.join(', ')}.`;
 }
 
 export function attentionRows(rows: AbonoComputed[]): AbonoComputed[] {
@@ -613,6 +671,15 @@ export function namesNeedShortening(state: Pick<AbonosState, 'cases'>): boolean 
     shortPersonName(row.addedBy) !== String(row.addedBy || '').trim()
     || shortPersonName(row.responsible) !== String(row.responsible || '').trim()
   ));
+}
+
+export function abonosNeedRewrite(state: Pick<AbonosState, 'cases'>): boolean {
+  if (namesNeedShortening(state)) return true;
+  return state.cases.some((row) => {
+    const raw = String(row.source || '');
+    if (!raw) return false;
+    return asSource(raw) !== raw;
+  });
 }
 
 export const ADIDAS_SEED_TERMS: Omit<TradeTerm, 'id'>[] = [

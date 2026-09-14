@@ -8,7 +8,8 @@ import {
   asOrigin,
   asSource,
   asStatus,
-  namesNeedShortening,
+  abonosNeedRewrite,
+  normalizeAttachments,
   shortPersonName,
   type AbonosCatalogs,
   type AbonosState,
@@ -65,6 +66,7 @@ function seedState(state: AbonosState): AbonosState {
       origin: asOrigin(row.origin),
       source: asSource(String(row.source || '')),
       informedBy: String(row.informedBy || '').trim(),
+      attachments: normalizeAttachments(row.attachments),
       status,
       communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,
     };
@@ -159,7 +161,7 @@ export async function loadAbonosState(): Promise<{ state: AbonosState; backend: 
     const dedicated = await readDedicated();
     if (dedicated.kind === 'ok' && dedicated.payload) {
       const state = seedState(dedicated.payload);
-      if (namesNeedShortening(dedicated.payload)) await writeDedicated(state);
+      if (abonosNeedRewrite(dedicated.payload)) await writeDedicated(state);
       return { state, backend: 'supabase' };
     }
 

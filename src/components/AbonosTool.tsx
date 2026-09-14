@@ -9,6 +9,7 @@ import {
   ABONO_STATUSES,
   ABONOS_PEOPLE,
   addDaysIso,
+  abonoRequiredGaps,
   caseLabel,
   claimKindLabel,
   claimsForCase,
@@ -17,7 +18,7 @@ import {
   displayDash,
   formatIsoDate,
   formatMoney,
-  formatSourceLabel,
+  formatRequiredGaps,
   groupWeeklyTasks,
   linkedCases,
   makeClaim,
@@ -32,6 +33,7 @@ import {
   todayIso,
   upcomingCash,
   weeklyTasks,
+  type AbonoAttachment,
   type AbonoCase,
   type AbonoComputed,
   type AbonoOrigin,
@@ -50,13 +52,14 @@ import {
   buildImportPreview,
   detectAbonosHeaderRow,
   guessColumnMap,
+  importPreviewError,
   previewToRecords,
   receiptsExportRows,
   type ImportColumnMap,
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, ChevronRight, Download, GripVertical, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, Download, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -69,7 +72,6 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 type SortKey =
   | 'responsible'
-  | 'source'
   | 'dueDate'
   | 'brand'
   | 'type'
@@ -95,11 +97,11 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'status', label: 'Estado', width: 140 },
   { key: 'comment', label: 'Comentario', width: 180 },
   { key: 'responsible', label: 'Responsable', width: 108 },
-  { key: 'source', label: 'Llegó por', width: 150 },
 ];
 
 const COL_STORAGE = 'ts-abonos-cols-v7';
 const BLANK = '__blank__';
+const MAX_EVIDENCE = 4;
 const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
 const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
 const COLUMN_BY_KEY = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col])) as Record<SortKey, (typeof COLUMN_DEFS)[number]>;
@@ -110,7 +112,9 @@ function loadColLayout(): { order: SortKey[]; widths: Record<SortKey, number> } 
     const raw = window.localStorage.getItem(COL_STORAGE);
     if (!raw) return { order: DEFAULT_ORDER, widths: { ...DEFAULT_WIDTHS } };
     const parsed = JSON.parse(raw) as { order?: SortKey[]; widths?: Partial<Record<SortKey, number>> };
-    const order = DEFAULT_ORDER.filter((key) => parsed.order?.includes(key)).concat(DEFAULT_ORDER.filter((key) => !parsed.order?.includes(key)));
+    const saved = (parsed.order || []).filter((key): key is SortKey => DEFAULT_ORDER.includes(key as SortKey));
+    const missing = DEFAULT_ORDER.filter((key) => !saved.includes(key));
+    const order = saved.length > 0 ? [...saved, ...missing] : [...DEFAULT_ORDER];
     const widths = { ...DEFAULT_WIDTHS };
     DEFAULT_ORDER.forEach((key) => {
       const width = parsed.widths?.[key];
@@ -146,8 +150,6 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
   switch (key) {
     case 'responsible':
       return displayDash(row.responsible);
-    case 'source':
-      return formatSourceLabel(row);
     case 'dueDate':
       return formatIsoDate(row.dueDate);
     case 'brand':
@@ -210,7 +212,37 @@ const emptyForm = (): Partial<AbonoCase> => ({
   status: 'Pendiente',
   nextReview: '',
   comment: '',
+  attachments: [],
 });
+
+async function compressEvidenceImage(file: Blob, name: string): Promise<AbonoAttachment> {
+  const bitmap = await createImageBitmap(file);
+  const maxWidth = 1400;
+  const scale = Math.min(1, maxWidth / Math.max(1, bitmap.width));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    bitmap.close();
+    throw new Error('No he podido leer la imagen.');
+  }
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+  if (dataUrl.length > 900_000) {
+    throw new Error('La captura pesa demasiado. Recórtala o baja un poco la resolución.');
+  }
+  return {
+    id: crypto.randomUUID(),
+    name: name.replace(/\.[^.]+$/, '') || 'captura',
+    mime: 'image/jpeg',
+    dataUrl,
+    addedAt: new Date().toISOString(),
+  };
+}
 
 function CatalogField({
   label,
@@ -306,8 +338,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [colsReady, setColsReady] = useState(false);
   const dragCol = useRef<SortKey | null>(null);
   const resizeRef = useRef<{ key: SortKey; startX: number; startW: number } | null>(null);
+  const evidenceInputRef = useRef<HTMLInputElement | null>(null);
+  const viewerRef = useRef<string | null>(null);
+  const addEvidenceRef = useRef<(files: Array<{ blob: Blob; name: string }>) => Promise<void>>(async () => {});
   const [editing, setEditing] = useState<AbonoCase | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [panelNote, setPanelNote] = useState<string | null>(null);
+  const [viewerImage, setViewerImage] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<AbonoCase>>(emptyForm());
   const [receiptDraft, setReceiptDraft] = useState({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
   const [importHeaders, setImportHeaders] = useState<unknown[]>([]);
@@ -333,6 +370,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       setError(err instanceof Error ? err.message : 'No he podido guardar en el servidor. Queda en este navegador.');
     }
   }, []);
+
+  viewerRef.current = viewerImage;
 
   useEffect(() => {
     const layout = loadColLayout();
@@ -382,18 +421,43 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     if (!panelOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (viewerRef.current) {
+        setViewerImage(null);
+        return;
+      }
       setEditing(null);
       setForm(emptyForm());
+      setPanelNote(null);
       setPanelOpen(false);
     };
     window.addEventListener('keydown', onKey);
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      const items = Array.from(event.clipboardData?.items || []);
+      const images = items
+        .filter((item) => item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file));
+      if (images.length === 0) return;
+      event.preventDefault();
+      void addEvidenceRef.current(images.map((file) => ({ blob: file, name: file.name || 'captura.png' })));
+    };
+    window.addEventListener('paste', onPaste);
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('paste', onPaste);
       document.body.style.overflow = previous;
     };
   }, [panelOpen]);
+
+  useEffect(() => {
+    if (!panelNote) return;
+    const timer = window.setTimeout(() => setPanelNote(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [panelNote]);
 
   const computed = useMemo(() => (state ? computeAll(state) : []), [state]);
   const filtered = useMemo(() => {
@@ -500,6 +564,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const openNew = (preset?: Partial<AbonoCase>) => {
     setEditing(null);
     setForm({ ...emptyForm(), ...preset });
+    setPanelNote(null);
+    setViewerImage(null);
     setPanelOpen(true);
     setTab('seguimiento');
   };
@@ -507,13 +573,17 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const closePanel = () => {
     setEditing(null);
     setForm(emptyForm());
+    setPanelNote(null);
+    setViewerImage(null);
     setPanelOpen(false);
   };
 
   const openEdit = (row: AbonoCase) => {
     setEditing(row);
-    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '' });
+    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '', attachments: row.attachments || [] });
     setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
+    setPanelNote(null);
+    setViewerImage(null);
     setPanelOpen(true);
   };
 
@@ -551,8 +621,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const saveForm = async () => {
-    if (!form.brand || !form.area) {
-      setError('Marca y área son obligatorios.');
+    const gaps = abonoRequiredGaps({
+      brand: form.brand,
+      area: form.area,
+      teamMotivo: form.teamMotivo,
+      type: form.type,
+      expectedAmount: form.expectedAmount ?? null,
+      dueDate: form.dueDate || null,
+      addedBy: form.addedBy,
+      responsible: form.responsible,
+      source: form.source,
+      informedBy: form.informedBy,
+      status: form.status,
+    });
+    if (gaps.length > 0) {
+      setError(formatRequiredGaps(gaps));
       return;
     }
     setError(null);
@@ -576,6 +659,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       status: (form.status || '') as AbonoStatus | '',
       nextReview: form.nextReview || null,
       comment: form.comment || '',
+      attachments: form.attachments || [],
     };
     const cases = editing
       ? state.cases.map((item) => item.id === row.id ? row : item)
@@ -590,6 +674,50 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm(row);
     setPanelOpen(true);
     setNote('Guardado.');
+    setPanelNote('Guardado. Ya está en la lista.');
+  };
+
+  const addEvidenceBlobs = async (files: Array<{ blob: Blob; name: string }>) => {
+    const current = form.attachments || [];
+    const remaining = MAX_EVIDENCE - current.length;
+    if (remaining <= 0) {
+      setError(`Máximo ${MAX_EVIDENCE} capturas por abono.`);
+      return;
+    }
+    const images = files.filter((file) => file.blob.type.startsWith('image/') || file.name.match(/\.(png|jpe?g|webp|gif)$/i));
+    if (images.length === 0) {
+      setError('Elige una imagen (png, jpg o captura de pantalla).');
+      return;
+    }
+    setError(null);
+    try {
+      const added: AbonoAttachment[] = [];
+      for (const file of images.slice(0, remaining)) {
+        added.push(await compressEvidenceImage(file.blob, file.name));
+      }
+      const attachments = [...current, ...added];
+      setForm((currentForm) => ({ ...currentForm, attachments }));
+      setPanelNote(added.length === 1 ? 'Captura añadida. Pulsa Guardar si es un abono nuevo.' : `${added.length} capturas añadidas.`);
+      if (editing && state) {
+        const cases = state.cases.map((row) => (row.id === editing.id ? { ...row, attachments } : row));
+        await persist({ ...state, cases }, backend);
+        setEditing((row) => (row ? { ...row, attachments } : row));
+        setPanelNote(added.length === 1 ? 'Captura guardada.' : `${added.length} capturas guardadas.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No he podido añadir la captura.');
+    }
+  };
+  addEvidenceRef.current = addEvidenceBlobs;
+
+  const removeEvidence = async (id: string) => {
+    const attachments = (form.attachments || []).filter((item) => item.id !== id);
+    setForm((currentForm) => ({ ...currentForm, attachments }));
+    if (editing && state) {
+      const cases = state.cases.map((row) => (row.id === editing.id ? { ...row, attachments } : row));
+      await persist({ ...state, cases }, backend);
+      setEditing((row) => (row ? { ...row, attachments } : row));
+    }
   };
 
   const deleteCase = async (id: string) => {
@@ -627,6 +755,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm((current) => ({ ...current, status: nextStatus }));
     setReceiptDraft({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
     setNote('Recepción añadida.');
+    setPanelNote('Pago registrado.');
   };
 
   const addClaimFromModal = async () => {
@@ -641,6 +770,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm((current) => ({ ...current, nextReview }));
     setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setNote(`Gestión guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.`);
+    setPanelNote(`Gestión guardada. Vuelve a salir el ${formatIsoDate(nextReview)}.`);
   };
 
   const addResponseFromModal = async () => {
@@ -659,6 +789,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setError(null);
     setNote(nextReview ? `Respuesta guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.` : 'Respuesta guardada.');
+    setPanelNote(nextReview ? `Respuesta guardada. Vuelve a salir el ${formatIsoDate(nextReview)}.` : 'Respuesta guardada.');
   };
 
   const deleteReceipt = async (id: string) => {
@@ -1081,7 +1212,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
             <FilterSelect value={filters.addedBy} options={filterOptions.addedBy.options} includeBlank={filterOptions.addedBy.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
             <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
-            <FilterSelect value={filters.source} options={filterOptions.sources.options} includeBlank={filterOptions.sources.hasBlank} placeholder="Llegó por" onChange={(source) => setFilters({ ...filters, source })} />
+            <FilterSelect value={filters.source} options={filterOptions.sources.options} includeBlank={filterOptions.sources.hasBlank} placeholder="Canal" onChange={(source) => setFilters({ ...filters, source })} />
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
@@ -1371,7 +1502,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FileUpload
               inputId="abonos-import"
               label="Importar Excel de abonos"
-              hint="Una sola carga. Área: B2B, Grassroots, Pro Clubs o Teamsports. Los huecos (tipo, fecha, estado) entran igual."
+              hint="Una sola carga. Área: B2B, Grassroots, Pro Clubs o Teamsports. Las filas incompletas no se importan."
               onFileLoaded={handleImportFile}
               keepDropzone
             />
@@ -1420,7 +1551,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 </select>
                 <button
                   type="button"
-                  onClick={() => setPreview(preview.map((row) => row.area ? row : { ...row, area: bulkArea, error: row.brand ? null : row.error }))}
+                  onClick={() => setPreview(preview.map((row) => {
+                    const next = row.area ? row : { ...row, area: bulkArea };
+                    return { ...next, error: importPreviewError(next) };
+                  }))}
                   className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-medium"
                 >
                   Rellenar vacías
@@ -1457,7 +1591,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                             value={row.area}
                             onChange={(event) => {
                               const next = [...preview];
-                              next[index] = { ...row, area: event.target.value, error: event.target.value && row.brand ? null : row.error };
+                              const updated = { ...row, area: event.target.value };
+                              next[index] = { ...updated, error: importPreviewError(updated) };
                               setPreview(next);
                             }}
                             className="h-8 rounded border border-[var(--border)] px-1 text-xs"
@@ -1471,7 +1606,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                             value={row.responsible}
                             onChange={(event) => {
                               const next = [...preview];
-                              next[index] = { ...row, responsible: event.target.value };
+                              const updated = { ...row, responsible: event.target.value };
+                              next[index] = { ...updated, error: importPreviewError(updated) };
                               setPreview(next);
                             }}
                             list="abonos-import-people"
@@ -1483,7 +1619,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                             value={row.addedBy}
                             onChange={(event) => {
                               const next = [...preview];
-                              next[index] = { ...row, addedBy: event.target.value };
+                              const updated = { ...row, addedBy: event.target.value };
+                              next[index] = { ...updated, error: importPreviewError(updated) };
                               setPreview(next);
                             }}
                             list="abonos-import-people"
@@ -1554,7 +1691,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 <div className="grid gap-3 md:grid-cols-2">
                   <CatalogField label="Marca" value={form.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setForm({ ...form, brand, tradeTermId: null })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
                   <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
-                  <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
+                  <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree required onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
                     <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Acuerdo' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
@@ -1564,11 +1701,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </label>
                   <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto *</span>
                     <input value={form.expectedAmount ?? ''} onChange={(event) => setForm({ ...form, expectedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
                     <input
                       type="date"
                       value={form.dueDate || ''}
@@ -1586,37 +1723,85 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     </label>
                   )}
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por *</span>
                     <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
                     </select>
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable de seguimiento</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable de seguimiento *</span>
                     <select value={form.responsible || ''} onChange={(event) => setForm({ ...form, responsible: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
                     </select>
                   </label>
+                  <p className="md:col-span-2 pt-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Confirmación de la marca</p>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Llegó por</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Canal *</span>
                     <select value={form.source || ''} onChange={(event) => setForm({ ...form, source: event.target.value as AbonoSource | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {ABONO_SOURCES.map((source) => <option key={source} value={source}>{source}</option>)}
                     </select>
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">{form.source === 'Correo' ? 'Nombre del correo' : 'Quién / detalle'}</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Persona *</span>
                     <input
                       value={form.informedBy || ''}
                       onChange={(event) => setForm({ ...form, informedBy: event.target.value })}
-                      placeholder={form.source === 'Correo' ? 'Persona o asunto del correo' : 'Persona, chat, fichero…'}
+                      placeholder="Quién te lo dijo o de la marca"
                       className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                     />
                   </label>
+                  <div className="space-y-1 md:col-span-2">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Captura</span>
+                    <p className="text-[11px] text-[var(--text-secondary)]">Pantallazo del pedido SAP, correo o chat. Pega con Ctrl+V o súbela.</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {(form.attachments || []).map((item) => (
+                        <div key={item.id} className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setViewerImage(item.dataUrl)}
+                            className="block h-20 w-28 overflow-hidden rounded-md border border-[var(--border)] bg-white"
+                          >
+                            <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeEvidence(item.id)}
+                            className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
+                            aria-label="Quitar captura"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {(form.attachments || []).length < MAX_EVIDENCE && (
+                        <button
+                          type="button"
+                          onClick={() => evidenceInputRef.current?.click()}
+                          className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
+                        >
+                          <ImagePlus className="h-4 w-4" />
+                          <span className="text-[11px] font-medium">Añadir</span>
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      ref={evidenceInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files || []);
+                        event.target.value = '';
+                        void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
+                      }}
+                    />
+                  </div>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
                     <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as AbonoStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
@@ -1638,11 +1823,29 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </label>
                   <label className="space-y-1 md:col-span-2">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
-                    <textarea value={form.comment || ''} onChange={(event) => setForm({ ...form, comment: event.target.value })} rows={3} className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm" />
+                    <textarea
+                      value={form.comment || ''}
+                      onChange={(event) => setForm({ ...form, comment: event.target.value })}
+                      rows={3}
+                      placeholder="Nombre del correo, día de la conversación, nº de pedido…"
+                      className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                    />
                   </label>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button type="button" onClick={saveForm} className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white">Guardar</button>
+                {panelNote && (
+                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-green-200 bg-[var(--success-soft)] px-3 py-2.5 text-sm font-medium text-[var(--success)]" role="status">
+                    <Check className="h-4 w-4 shrink-0" />
+                    {panelNote}
+                  </div>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={saveForm}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-semibold text-white ${panelNote?.startsWith('Guardado') ? 'bg-[var(--success)]' : 'bg-[var(--text-primary)]'}`}
+                  >
+                    {panelNote?.startsWith('Guardado') ? <><Check className="h-4 w-4" /> Guardado</> : 'Guardar'}
+                  </button>
                   {editing && (
                     <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
                   )}
@@ -1716,10 +1919,28 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       <dd>{displayDash(currentComputed?.tradeTermName)}</dd>
                     </div>
                     <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Llegó por</dt>
-                      <dd>{formatSourceLabel({ source: form.source, informedBy: form.informedBy })}</dd>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Canal</dt>
+                      <dd>{displayDash(form.source)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Persona</dt>
+                      <dd>{displayDash(form.informedBy)}</dd>
                     </div>
                   </dl>
+                  {(form.attachments || []).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(form.attachments || []).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setViewerImage(item.dataUrl)}
+                          className="h-14 w-20 overflow-hidden rounded-md border border-[var(--border)]"
+                        >
+                          <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-lg border border-[var(--border)] bg-white p-4">
@@ -1786,6 +2007,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {viewerImage && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setViewerImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Captura"
+        >
+          <button type="button" className="absolute right-4 top-4 rounded-md p-1 text-white" onClick={() => setViewerImage(null)} aria-label="Cerrar captura">
+            <X className="h-6 w-6" />
+          </button>
+          <img src={viewerImage} alt="Captura de confirmación" className="max-h-[90vh] max-w-[90vw] rounded-md object-contain" onClick={(event) => event.stopPropagation()} />
         </div>
       )}
     </div>
