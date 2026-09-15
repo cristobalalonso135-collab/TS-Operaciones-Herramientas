@@ -44,19 +44,18 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-type SortKey = 'registro' | 'title' | 'need' | 'module' | 'requester' | 'requestedAt' | 'status';
+type SortKey = 'registro' | 'title' | 'module' | 'requester' | 'requestedAt' | 'status';
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'registro', label: '#', width: 56 },
-  { key: 'title', label: 'Título', width: 180 },
-  { key: 'need', label: 'Necesidad', width: 280 },
+  { key: 'title', label: 'Título', width: 280 },
   { key: 'module', label: 'Módulo', width: 88 },
-  { key: 'requester', label: 'Solicitante', width: 120 },
+  { key: 'requester', label: 'Solicitante', width: 130 },
   { key: 'requestedAt', label: 'Fecha de solicitud', width: 130 },
   { key: 'status', label: 'Estado', width: 110 },
 ];
 
-const COL_STORAGE = 'ts-mejoras-cols-v1';
+const COL_STORAGE = 'ts-mejoras-cols-v2';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
 const BLANK = '__blank__';
@@ -90,8 +89,6 @@ function renderMejoraCell(row: MejoraCase, key: SortKey) {
       return row.registro;
     case 'title':
       return displayDash(row.title);
-    case 'need':
-      return displayDash(row.need);
     case 'module':
       return displayDash(row.module);
     case 'requester':
@@ -796,7 +793,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                   <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer">
                     {columnOrder.map((key) => (
                       <td key={key} className="border-b border-[var(--border)] px-1.5 py-1.5">
-                        <div className="abonos-cell" title={key === 'need' ? row.need || undefined : undefined}>{renderMejoraCell(row, key)}</div>
+                        <div className="abonos-cell" title={key === 'title' ? row.title || undefined : undefined}>{renderMejoraCell(row, key)}</div>
                       </td>
                     ))}
                   </tr>
