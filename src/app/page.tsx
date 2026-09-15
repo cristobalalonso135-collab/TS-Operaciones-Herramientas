@@ -669,48 +669,48 @@ export default function Home() {
         number: '01',
         title: 'Cuadro de mando',
         description: 'Plan vs LY, facturación, GM, margen, frees, generados y deuda. Pincha un recuadro y saltas a Budget o Seguimiento.',
-        detail: 'Budget vs LY · facturación · GM · margen · frees · generados · deuda',
         tone: 'bg-[var(--text-primary)] text-[var(--bg-card)]',
+        link: 'text-[var(--text-primary)]',
       },
       {
         id: 'budget' as const,
         number: '02',
         title: 'Budget',
         description: 'Generar el diario, cuadrarlo, validarlo y mirar la curva. Todo en pestañas.',
-        detail: 'Diario · Comparador · Validador · Cuadre · Suavidad',
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
+        link: 'text-[var(--accent)]',
       },
       {
         id: 'tracking' as const,
         number: '03',
         title: 'Seguimiento',
         description: 'Facturación vs budget, margen, frees, generados y deuda.',
-        detail: 'YTD · Meses · Frees · Generados · Deuda',
         tone: 'bg-[var(--success-soft)] text-[var(--success)]',
+        link: 'text-[var(--success)]',
       },
       {
         id: 'stock' as const,
         number: '04',
         title: 'Stock',
         description: 'Dinero inmovilizado en Equipaciones. Lo que no se vende y fotos semanales.',
-        detail: 'Resumen · Riesgo · Tendencia',
         tone: 'bg-[var(--kpi-debt-soft)] text-[var(--kpi-debt)]',
+        link: 'text-[var(--kpi-debt)]',
       },
       {
         id: 'abonos' as const,
         number: '05',
         title: 'Abonos',
         description: 'Lo que Adidas, Nike y el resto nos deben: trade terms, credit notes y seguimiento hasta que entra.',
-        detail: 'Revisión · Abonos · Trade Terms · Importar',
         tone: 'bg-[#f6edd0] text-[#8a6d12]',
+        link: 'text-[#8a6d12]',
       },
       {
         id: 'mejoras' as const,
         number: '06',
         title: 'Mejoras IT',
         description: 'Lo que hay que implementar en ERP o Web. Canal, contexto y capturas para cuando toque desarrollarlo.',
-        detail: 'Lista · Importar',
-        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
+        tone: 'bg-[#e7f1f0] text-[#1d5f5a]',
+        link: 'text-[#1d5f5a]',
       },
     ];
 
@@ -748,15 +748,10 @@ export default function Home() {
                 <span className="font-display text-base font-semibold leading-none">{hub.number}</span>
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="font-display text-lg font-semibold tracking-tight">{hub.title}</h4>
-                  <span className="rounded-md bg-[var(--bg-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
-                    {hub.detail}
-                  </span>
-                </div>
+                <h4 className="font-display text-lg font-semibold tracking-tight">{hub.title}</h4>
                 <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{hub.description}</p>
               </div>
-              <span className="mt-1 hidden shrink-0 text-sm font-medium text-[var(--accent)] transition group-hover:translate-x-0.5 sm:inline">
+              <span className={`mt-1 hidden shrink-0 text-sm font-medium transition group-hover:translate-x-0.5 sm:inline ${hub.link}`}>
                 Abrir →
               </span>
             </button>
