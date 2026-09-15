@@ -2,6 +2,7 @@ import {
   asOrigin,
   asSource,
   asStatus,
+  asEstimated,
   abonoRequiredGaps,
   cellToIso,
   formatRequiredGaps,
@@ -23,6 +24,7 @@ export interface ImportColumnMap {
   addedBy: number | null;
   responsible: number | null;
   expectedAmount: number | null;
+  estimated: number | null;
   communicatedAmount: number | null;
   pay1Date: number | null;
   pay1Amount: number | null;
@@ -47,6 +49,7 @@ export interface ImportPreviewRow {
   addedBy: string;
   responsible: string;
   expectedAmount: number | null;
+  estimated: boolean | null;
   communicatedAmount: number | null;
   pay1Date: string | null;
   pay1Amount: number | null;
@@ -71,6 +74,7 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   addedBy: ['añadido por', 'anadido por', 'creado por'],
   responsible: ['responsable de seguimiento', 'responsable'],
   expectedAmount: ['importe previsto', 'previsto'],
+  estimated: ['real o estimado', 'importe real o estimado', 'tipo de importe'],
   communicatedAmount: ['importe comunicado', 'importe comunicado por la marca'],
   pay1Date: ['fecha 1er pago', 'fecha 1er', 'fecha primer pago'],
   pay1Amount: ['importe 1er pago', 'importe 1er', 'importe primer pago'],
@@ -96,7 +100,7 @@ function isPablo(value: string): boolean {
   return value.trim().toLocaleLowerCase('es').startsWith('pablo');
 }
 
-export function importPreviewError(row: Pick<ImportPreviewRow, 'brand' | 'area' | 'teamMotivo' | 'type' | 'expectedAmount' | 'dueDate' | 'addedBy' | 'responsible' | 'source' | 'informedBy' | 'status'>): string | null {
+export function importPreviewError(row: Pick<ImportPreviewRow, 'brand' | 'area' | 'teamMotivo' | 'type' | 'expectedAmount' | 'estimated' | 'dueDate' | 'addedBy' | 'responsible' | 'source' | 'informedBy' | 'status'>): string | null {
   if (row.expectedAmount !== null && row.expectedAmount < 0) return 'El importe previsto no puede ser negativo.';
   return formatRequiredGaps(abonoRequiredGaps(row));
 }
@@ -127,6 +131,7 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     addedBy: find(HEADER_ALIASES.addedBy),
     responsible: find(HEADER_ALIASES.responsible),
     expectedAmount: find(HEADER_ALIASES.expectedAmount),
+    estimated: find(HEADER_ALIASES.estimated),
     communicatedAmount: find(HEADER_ALIASES.communicatedAmount),
     pay1Date: find(HEADER_ALIASES.pay1Date),
     pay1Amount: find(HEADER_ALIASES.pay1Amount),
@@ -166,12 +171,14 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
       const source = cellText(pick(row, map.source));
       const informedBy = cellText(pick(row, map.informedBy));
       const status = cellText(pick(row, map.status));
+      const estimated = asEstimated(pick(row, map.estimated)) ?? (asStatus(status) === 'A cuenta' ? true : null);
       const error = importPreviewError({
         brand,
         area: areaRaw,
         teamMotivo,
         type,
         expectedAmount,
+        estimated,
         dueDate,
         addedBy: shortPersonName(addedBy),
         responsible: shortPersonName(responsible),
@@ -190,6 +197,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         addedBy: shortPersonName(addedBy),
         responsible: shortPersonName(responsible),
         expectedAmount,
+        estimated,
         communicatedAmount: parseMoney(pick(row, map.communicatedAmount)),
         pay1Date: cellToIso(pick(row, map.pay1Date)),
         pay1Amount: parseMoney(pick(row, map.pay1Amount)),
@@ -216,6 +224,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
     const id = crypto.randomUUID();
     const importedTotal = (row.pay1Amount || 0) + (row.pay2Amount || 0);
     const importedStatus = asStatus(row.status);
+    const estimated = row.estimated === true;
     cases.push({
       id,
       registro: row.registro ?? index + 1,
@@ -234,10 +243,11 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       expectedAmount: row.expectedAmount,
       communicatedAmount: row.communicatedAmount,
       status: importedTotal > 0
-        ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal)
+        ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
         : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
       nextReview: row.nextReview,
       comment: row.comment,
+      estimated,
       attachments: [],
     });
     const payments = [
@@ -275,6 +285,7 @@ export function abonosExportRows(cases: Array<{
   tradeTermName: string | null;
   informedBy: string;
   expectedAmount: number | null;
+  estimated?: boolean | null;
   communicatedAmount: number | null;
   receivedTotal: number;
   pending: number;
@@ -297,6 +308,7 @@ export function abonosExportRows(cases: Array<{
     'Persona',
     'Trade Term',
     'Importe previsto',
+    'Real o estimado',
     'Importe comunicado',
     'Total liquidado',
     'Pendiente',
@@ -319,6 +331,7 @@ export function abonosExportRows(cases: Array<{
     row.informedBy,
     row.tradeTermName || '',
     row.expectedAmount ?? '',
+    row.estimated === true ? 'Estimado' : 'Real',
     row.communicatedAmount ?? '',
     row.receivedTotal,
     row.pending,
@@ -356,6 +369,7 @@ export const ABONOS_TEMPLATE_HEADERS = [
   'Canal',
   'Persona',
   'Importe previsto',
+  'Real o estimado',
   'Importe comunicado',
   'Fecha prevista',
   'Añadido por',
@@ -378,11 +392,12 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Canal', 'Obligatorio. Correo, Teams, Conversación, Excel u Otro.'],
   ['Persona', 'Obligatoria. Quién te lo dijo o de la marca. El detalle (asunto, día, pedido) va en Comentario.'],
   ['Importe previsto', 'Obligatorio. Número. 15000 o 15.000,00'],
+  ['Real o estimado', 'Obligatorio. Real o Estimado.'],
   ['Importe comunicado', 'Opcional. Importe que la marca dice haber pagado; Finanzas aún debe confirmarlo.'],
   ['Fecha prevista', 'Obligatoria. dd/mm/aaaa.'],
   ['Añadido por', 'Obligatorio. Cristóbal o Pablo.'],
   ['Responsable de seguimiento', 'Obligatorio. Cristóbal o Pablo. Si falta, se usa Añadido por.'],
-  ['Estado', 'Obligatorio. Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado / Exceso.'],
+  ['Estado', 'Obligatorio. Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado / Exceso / A cuenta. A cuenta = el importe depende del escalado de compra.'],
   ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel. Opcional.'],
   ['Comentario', 'Notas: nombre del correo, día de la conversación, nº de pedido SAP…'],
   ['Capturas', 'Las fotos o pantallazos de confirmación se adjuntan en la ficha, no en el Excel.'],

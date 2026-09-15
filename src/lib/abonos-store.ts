@@ -62,7 +62,9 @@ function seedState(state: AbonosState): AbonosState {
     const responsible = shortPersonName(row.responsible || row.addedBy);
     let status: AbonosState['cases'][number]['status'] = asStatus(row.status) || (isPablo(responsible) ? '' : 'Pendiente');
     const received = receivedTotalFor(row.id, receipts);
-    if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) status = 'Exceso';
+    const estimated = typeof row.estimated === 'boolean' ? row.estimated : status === 'A cuenta';
+    if (estimated && received > 0.009) status = 'A cuenta';
+    else if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) status = 'Exceso';
     return {
       ...row,
       addedBy: shortPersonName(row.addedBy),
@@ -72,6 +74,7 @@ function seedState(state: AbonosState): AbonosState {
       source: asSource(String(row.source || '')),
       informedBy: String(row.informedBy || '').trim(),
       attachments: normalizeAttachments(row.attachments),
+      estimated,
       status,
       communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,
     };

@@ -1,15 +1,17 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   ABONO_ORIGINS,
   ABONO_SOURCES,
   ABONO_STATUSES,
+  ABONO_AMOUNT_KINDS,
   ABONOS_PEOPLE,
   addDaysIso,
   abonoRequiredGaps,
+  amountKindLabel,
   caseLabel,
   claimKindLabel,
   claimsForCase,
@@ -213,6 +215,7 @@ const emptyForm = (): Partial<AbonoCase> => ({
   status: 'Pendiente',
   nextReview: '',
   comment: '',
+  estimated: null,
   attachments: [],
 });
 
@@ -399,9 +402,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [claimNote, setClaimNote] = useState('');
   const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
   const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
-  const [linkingTermId, setLinkingTermId] = useState<string | null>(null);
-  const [linkSearch, setLinkSearch] = useState('');
-  const [linkPicked, setLinkPicked] = useState<string[]>([]);
 
   const persist = useCallback(async (next: AbonosState, currentBackend: AbonosBackend) => {
     setState(next);
@@ -602,13 +602,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     );
   }
 
-  const openNew = (preset?: Partial<AbonoCase>) => {
+  const openNew = (preset?: Partial<AbonoCase>, keepTab = false) => {
     setEditing(null);
     setForm({ ...emptyForm(), ...preset });
     setPanelNote(null);
     setViewerImage(null);
     setPanelOpen(true);
-    setTab('seguimiento');
+    if (!keepTab) setTab('seguimiento');
+  };
+
+  const openNewFromTerm = (term: TradeTerm) => {
+    openNew({
+      brand: term.brand,
+      origin: 'Acuerdo',
+      tradeTermId: term.id,
+    }, true);
   };
 
   const closePanel = () => {
@@ -621,7 +629,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const openEdit = (row: AbonoCase) => {
     setEditing(row);
-    setForm({ ...row, dueDate: row.dueDate || '', nextReview: row.nextReview || '', attachments: row.attachments || [] });
+    setForm({
+      ...row,
+      dueDate: row.dueDate || '',
+      nextReview: row.nextReview || '',
+      attachments: row.attachments || [],
+      estimated: typeof row.estimated === 'boolean' ? row.estimated : null,
+    });
     setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setPanelNote(null);
     setViewerImage(null);
@@ -674,12 +688,25 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       source: form.source,
       informedBy: form.informedBy,
       status: form.status,
+      estimated: typeof form.estimated === 'boolean' ? form.estimated : null,
+      origin: form.origin || '',
+      tradeTermId: form.tradeTermId || null,
     });
     if (gaps.length > 0) {
       setError(formatRequiredGaps(gaps));
       return;
     }
     setError(null);
+    const estimated = form.estimated === true;
+    const received = editing
+      ? receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0)
+      : 0;
+    const status = statusAfterReceipts(
+      (form.status || '') as AbonoStatus | '',
+      form.expectedAmount ?? null,
+      received,
+      estimated,
+    );
     const row: AbonoCase = {
       id: editing?.id || crypto.randomUUID(),
       registro: editing?.registro || nextRegistro(state.cases),
@@ -697,9 +724,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       informedBy: form.informedBy || '',
       expectedAmount: form.expectedAmount ?? null,
       communicatedAmount: form.communicatedAmount ?? null,
-      status: (form.status || '') as AbonoStatus | '',
+      status,
       nextReview: form.nextReview || null,
       comment: form.comment || '',
+      estimated,
       attachments: form.attachments || [],
     };
     const cases = editing
@@ -789,11 +817,12 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     };
     const receipts = [...state.receipts, receipt];
     const received = receipts.filter((item) => item.caseId === editing.id).reduce((sum, item) => sum + item.amount, 0);
-    const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received);
-    const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus } : row);
+    const estimated = form.estimated === true;
+    const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received, estimated);
+    const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus, estimated } : row);
     await persist({ ...state, receipts, cases }, backend);
-    setEditing({ ...editing, status: nextStatus });
-    setForm((current) => ({ ...current, status: nextStatus }));
+    setEditing({ ...editing, status: nextStatus, estimated });
+    setForm((current) => ({ ...current, status: nextStatus, estimated }));
     setReceiptDraft({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
     setNote('Recepción añadida.');
     setPanelNote('Pago registrado.');
@@ -837,8 +866,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     if (!editing) return;
     const receipts = state.receipts.filter((row) => row.id !== id);
     const received = receipts.filter((item) => item.caseId === editing.id).reduce((sum, item) => sum + item.amount, 0);
-    const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received);
-    const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus } : row);
+    const estimated = form.estimated === true;
+    const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received, estimated);
+    const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus, estimated } : row);
     await persist({ ...state, receipts, cases }, backend);
   };
 
@@ -879,32 +909,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       tradeTerms: state.tradeTerms.filter((term) => term.id !== id),
       cases: state.cases.map((row) => row.tradeTermId === id ? { ...row, tradeTermId: null } : row),
     }, backend);
-    if (linkingTermId === id) {
-      setLinkingTermId(null);
-      setLinkPicked([]);
-    }
-  };
-
-  const startLinking = (termId: string) => {
-    setLinkingTermId((current) => current === termId ? null : termId);
-    setLinkSearch('');
-    setLinkPicked([]);
-  };
-
-  const linkPickedToTerm = async () => {
-    if (!linkingTermId || linkPicked.length === 0) return;
-    const ids = new Set(linkPicked);
-    await persist({
-      ...state,
-      cases: state.cases.map((row) => (
-        ids.has(row.id)
-          ? { ...row, tradeTermId: linkingTermId, origin: row.origin || 'Acuerdo' }
-          : row
-      )),
-    }, backend);
-    setNote(linkPicked.length === 1 ? 'Abono vinculado al trade term.' : `${linkPicked.length} abonos vinculados al trade term.`);
-    setLinkPicked([]);
-    setLinkingTermId(null);
   };
 
   const unlinkCaseFromTerm = async (caseId: string) => {
@@ -990,7 +994,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
   const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
   const caseClaims = editing ? claimsForCase(state.claims, editing.id) : [];
-  const brandTerms = state.tradeTerms.filter((term) => term.brand === form.brand && term.active !== false);
+  const brandTerms = state.tradeTerms.filter((term) => term.brand === form.brand && (term.active !== false || term.id === form.tradeTermId));
+  const formTerm = state.tradeTerms.find((term) => term.id === form.tradeTermId) || null;
   const tableWidth = columnOrder.reduce((sum, key) => sum + columnWidths[key], 0);
 
   const toggleSort = (key: SortKey) => {
@@ -1129,7 +1134,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
                       <p className="text-sm font-medium">{taskName(task.row)}</p>
                       <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                        {[task.row.brand, task.row.area].filter(Boolean).join(' · ')} · {task.reason} · {formatMoney(task.row.pending)}
+                        {[task.row.brand, task.row.area].filter(Boolean).join(' · ')} · {task.reason}
+                        {task.kind === 'cuadrar' && task.row.pending <= 0.009
+                          ? ` · cobrado ${formatMoney(task.row.receivedTotal)}`
+                          : ` · ${formatMoney(task.row.pending)}`}
                       </p>
                     </button>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1358,6 +1366,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         <section className="space-y-4">
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold">Nuevo trade term</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              Aquí viven los acuerdos. Desde cada uno generas el abono ya vinculado. Completa en la ficha el importe, si es real o estimado y el resto de campos.
+            </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               <CatalogField label="Marca" value={termForm.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setTermForm({ ...termForm, brand })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
               <label className="space-y-1">
@@ -1393,7 +1404,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <th className="px-3 py-2">Trigger</th>
                   <th className="px-3 py-2">Fecha</th>
                   <th className="px-3 py-2">Activo</th>
-                  <th className="px-3 py-2">Seguimiento</th>
+                  <th className="px-3 py-2">Abonos</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -1401,120 +1412,57 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 {state.tradeTerms.map((term) => {
                   const linked = linkedCases(computed, term.id);
                   const rollup = termRollup(linked);
-                  const query = linkSearch.trim().toLocaleLowerCase('es');
-                  const candidates = computed.filter((row) => {
-                    if (row.tradeTermId === term.id) return false;
-                    if (term.brand && row.brand && row.brand !== term.brand) return false;
-                    if (!query) return true;
-                    const blob = [row.brand, row.area, row.teamMotivo, row.type, row.comment, row.responsible, String(row.registro)].join(' ').toLocaleLowerCase('es');
-                    return blob.includes(query);
-                  });
                   return (
-                    <Fragment key={term.id}>
-                      <tr className="border-t border-[var(--border)] align-top">
-                        <td className="px-3 py-2">{term.brand}</td>
-                        <td className="px-3 py-2 font-medium">{term.name}</td>
-                        <td className="px-3 py-2">{term.compensation}</td>
-                        <td className="px-3 py-2 text-[var(--text-secondary)]">{term.triggerText || '—'}</td>
-                        <td className="px-3 py-2">{term.period || '—'}</td>
-                        <td className="px-3 py-2">
-                          <button type="button" onClick={() => toggleTerm(term.id)} className="text-xs font-semibold">{term.active ? 'Sí' : 'No'}</button>
-                        </td>
-                        <td className="px-3 py-2">
-                          {linked.length === 0 ? (
-                            <p className="text-xs text-[var(--text-muted)]">Sin vincular</p>
-                          ) : (
-                            <div className="space-y-1.5">
-                              <p className="text-xs font-medium">
-                                {rollup.status} · {linked.length} · {formatMoney(rollup.pending)}
-                              </p>
-                              {linked.map((row) => (
-                                <div key={row.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-2 py-1.5">
-                                  <button type="button" onClick={() => openEdit(row)} className="min-w-0 text-left">
-                                    <span className="block text-xs font-medium">{taskName(row)}</span>
-                                    <span className="mt-0.5 flex items-center gap-1">
-                                      <StatusPill row={row} />
-                                      <span className="font-mono text-[11px] text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
-                                    </span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => unlinkCaseFromTerm(row.id)}
-                                    className="shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                                    aria-label="Quitar vínculo"
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <button type="button" onClick={() => startLinking(term.id)} className="mr-3 text-xs font-semibold text-[var(--accent)]">
-                            {linkingTermId === term.id ? 'Cerrar' : 'Vincular'}
-                          </button>
-                          <button type="button" onClick={() => openNew({ brand: term.brand, origin: 'Acuerdo', tradeTermId: term.id, type: 'Credit Notes' })} className="mr-3 text-xs font-semibold text-[var(--accent)]">Crear seguimiento</button>
-                          <button type="button" onClick={() => deleteTerm(term.id)} className="text-xs text-[var(--danger)]">Eliminar</button>
-                        </td>
-                      </tr>
-                      {linkingTermId === term.id && (
-                        <tr className="border-t border-[var(--border)] bg-[var(--bg-soft)]">
-                          <td colSpan={8} className="px-3 py-3">
-                            <p className="text-xs font-semibold">Vincular abonos a {term.name}</p>
-                            <p className="mt-0.5 text-xs text-[var(--text-secondary)]">Elige tareas que ya tienes. El trade term copiará su estado.</p>
-                            <input
-                              value={linkSearch}
-                              onChange={(event) => setLinkSearch(event.target.value)}
-                              placeholder="Buscar por equipo, área, comentario…"
-                              className="mt-2 h-9 w-full max-w-md rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                            />
-                            <div className="mt-2 max-h-56 space-y-1 overflow-auto">
-                              {candidates.length === 0 ? (
-                                <p className="text-xs text-[var(--text-secondary)]">No hay abonos de {term.brand} para vincular.</p>
-                              ) : candidates.map((row) => {
-                                const checked = linkPicked.includes(row.id);
-                                const other = row.tradeTermId ? state.tradeTerms.find((item) => item.id === row.tradeTermId) : null;
-                                return (
-                                  <label key={row.id} className="flex cursor-pointer items-start gap-2 rounded-md bg-white px-2 py-1.5 text-xs">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => setLinkPicked((current) => (
-                                        checked ? current.filter((id) => id !== row.id) : [...current, row.id]
-                                      ))}
-                                      className="mt-0.5"
-                                    />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="font-medium">{taskName(row)}</span>
-                                      <span className="mt-0.5 flex flex-wrap items-center gap-1">
-                                        <span className="text-[var(--text-secondary)]">{[row.brand, row.area, row.teamMotivo].filter(Boolean).join(' · ')}</span>
-                                        <StatusPill row={row} />
-                                        <span className="font-mono text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
-                                        {other && <span className="text-[var(--text-muted)]">Ahora: {other.name}</span>}
-                                      </span>
-                                    </span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={linkPickedToTerm}
-                                disabled={linkPicked.length === 0}
-                                className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white disabled:opacity-40"
-                              >
-                                Vincular {linkPicked.length || ''}
-                              </button>
-                              <button type="button" onClick={() => { setLinkingTermId(null); setLinkPicked([]); }} className="h-9 rounded-md px-3 text-xs font-semibold">
-                                Cancelar
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
+                    <tr key={term.id} className="border-t border-[var(--border)] align-top">
+                      <td className="px-3 py-2">{term.brand}</td>
+                      <td className="px-3 py-2 font-medium">{term.name}</td>
+                      <td className="px-3 py-2">{term.compensation}</td>
+                      <td className="px-3 py-2 text-[var(--text-secondary)]">{term.triggerText || '—'}</td>
+                      <td className="px-3 py-2">{term.period || '—'}</td>
+                      <td className="px-3 py-2">
+                        <button type="button" onClick={() => toggleTerm(term.id)} className="text-xs font-semibold">{term.active ? 'Sí' : 'No'}</button>
+                      </td>
+                      <td className="px-3 py-2">
+                        {linked.length === 0 ? (
+                          <p className="text-xs text-[var(--text-muted)]">Sin abono</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <p className="text-xs font-medium">
+                              {rollup.status} · {linked.length} · {formatMoney(rollup.pending)}
+                            </p>
+                            {linked.map((row) => (
+                              <div key={row.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-2 py-1.5">
+                                <button type="button" onClick={() => openEdit(row)} className="min-w-0 text-left">
+                                  <span className="block text-xs font-medium">{taskName(row)}</span>
+                                  <span className="mt-0.5 flex items-center gap-1">
+                                    <StatusPill row={row} />
+                                    <span className="font-mono text-[11px] text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => unlinkCaseFromTerm(row.id)}
+                                  className="shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                                  aria-label="Quitar del acuerdo"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openNewFromTerm(term)}
+                          className="mr-3 inline-flex h-8 items-center rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                        >
+                          Crear abono
+                        </button>
+                        <button type="button" onClick={() => deleteTerm(term.id)} className="text-xs text-[var(--danger)]">Eliminar</button>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -1717,6 +1665,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   {editing ? caseLabel({ brand: form.brand || editing.brand, area: form.area || editing.area, teamMotivo: form.teamMotivo || editing.teamMotivo }) : 'Nuevo abono'}
                 </p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  {formTerm ? `${formTerm.brand} · ${formTerm.name}${formTerm.compensation ? ` · ${formTerm.compensation}` : ''}` : null}
+                  {formTerm ? ' · ' : ''}
                   {formatIsoDate(form.dueDate || null)} · {formatMoney(form.expectedAmount ?? null)}
                   {editing ? ` · #${editing.registro}` : ''}
                 </p>
@@ -1728,9 +1678,23 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
             <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
               <div>
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Editar</p>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{editing ? 'Editar' : 'Datos del abono'}</p>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <CatalogField label="Marca" value={form.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setForm({ ...form, brand, tradeTermId: null })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
+                  <CatalogField
+                    label="Marca"
+                    value={form.brand || ''}
+                    options={state.catalogs.brands}
+                    required
+                    onChange={(brand) => {
+                      const linked = state.tradeTerms.find((term) => term.id === form.tradeTermId);
+                      setForm({
+                        ...form,
+                        brand,
+                        tradeTermId: linked && linked.brand === brand ? form.tradeTermId : null,
+                      });
+                    }}
+                    onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)}
+                  />
                   <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
                   <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree required onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
                   <label className="space-y-1">
@@ -1746,6 +1710,27 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     <input value={form.expectedAmount ?? ''} onChange={(event) => setForm({ ...form, expectedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
                   </label>
                   <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Real o estimado *</span>
+                    <select
+                      value={form.estimated === true ? 'Estimado' : form.estimated === false ? 'Real' : ''}
+                      onChange={(event) => {
+                        const estimated = event.target.value === 'Estimado' ? true : event.target.value === 'Real' ? false : null;
+                        const received = currentComputed?.receivedTotal ?? 0;
+                        setForm({
+                          ...form,
+                          estimated,
+                          status: estimated === null
+                            ? form.status
+                            : statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated),
+                        });
+                      }}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    >
+                      <option value="">—</option>
+                      {ABONO_AMOUNT_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
                     <input
                       type="date"
@@ -1756,7 +1741,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </label>
                   {form.origin === 'Acuerdo' && (
                     <label className="space-y-1 md:col-span-2">
-                      <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term</span>
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term *</span>
                       <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                         <option value="">Selecciona</option>
                         {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
@@ -1851,7 +1836,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </div>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
-                    <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as AbonoStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <select
+                      value={form.status || ''}
+                      onChange={(event) => {
+                        const status = event.target.value as AbonoStatus | '';
+                        setForm({ ...form, status, estimated: status === 'A cuenta' ? true : form.estimated });
+                      }}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    >
                       <option value="">—</option>
                       {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
@@ -1906,7 +1898,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Resumen</p>
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     <div>
-                      <p className="text-[11px] text-[var(--text-secondary)]">Previsto</p>
+                      <p className="text-[11px] text-[var(--text-secondary)]">{form.estimated === true ? 'Previsto (estimado)' : 'Previsto'}</p>
                       <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
                     </div>
                     <div>
@@ -1920,7 +1912,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </div>
                   {currentComputed && (
                     <div className="mt-3">
-                      <StatusPill row={currentComputed} />
+                      <StatusPill row={{
+                        ...currentComputed,
+                        estimated: form.estimated === true,
+                        status: (form.status || currentComputed.status) as AbonoComputed['status'],
+                      }} />
                     </div>
                   )}
                   <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -1928,13 +1924,23 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       ? 'Sin pagos registrados.'
                       : `${caseReceipts.length} pago${caseReceipts.length === 1 ? '' : 's'} · último ${formatIsoDate(caseReceipts[caseReceipts.length - 1]?.receivedAt || null)}`}
                   </p>
-                  {currentComputed?.overdueDays !== null && currentComputed?.overdueDays !== undefined && (
+                  {form.estimated === true && currentComputed && currentComputed.pending > 0.009 && (
+                    <p className="mt-2 text-sm font-medium text-[var(--warning)]">
+                      Quedan {formatMoney(currentComputed.pending)}. Reclama el resto o baja el previsto cuando sepas el importe real.
+                    </p>
+                  )}
+                  {form.estimated === true && currentComputed && currentComputed.pending <= 0.009 && currentComputed.receivedTotal > 0.009 && (
+                    <p className="mt-2 text-sm font-medium text-[var(--account)]">
+                      Han pagado el estimado. Cuando sepas el importe real, ajústalo y márcalo como Real.
+                    </p>
+                  )}
+                  {form.estimated !== true && currentComputed?.overdueDays !== null && currentComputed?.overdueDays !== undefined && (
                     <p className="mt-2 text-sm font-medium text-[var(--danger)]">Vencido hace {currentComputed.overdueDays} días</p>
                   )}
                   {currentComputed?.reviewOverdue && (
                     <p className="mt-1 text-sm font-medium text-[var(--warning)]">Revisar hoy</p>
                   )}
-                  {currentComputed && currentComputed.excessAmount > 0.009 && (
+                  {form.estimated !== true && currentComputed && currentComputed.excessAmount > 0.009 && (
                     <p className="mt-2 text-sm font-medium text-[var(--excess)]">Han pagado {formatMoney(currentComputed.excessAmount)} de más.</p>
                   )}
                 </div>
@@ -1961,6 +1967,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Próx. revisión</dt>
                       <dd>{formatIsoDate(form.nextReview || null)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Real o estimado</dt>
+                      <dd>{displayDash(amountKindLabel(form.estimated ?? null))}</dd>
                     </div>
                     <div>
                       <dt className="text-[11px] text-[var(--text-secondary)]">Origen</dt>
@@ -2135,6 +2145,20 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   const pill = 'inline-block max-w-full rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-tight';
   if (!row.status) {
     return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-muted)]`}>—</span>;
+  }
+  if (row.estimated === true || row.status === 'A cuenta') {
+    return (
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
+        <span className={`${pill} bg-[var(--account-soft)] text-[var(--account)]`}>
+          {row.status === 'A cuenta' || row.receivedTotal > 0.009 ? 'A cuenta' : 'Estimado'}
+        </span>
+        {row.pending > 0.009 && (
+          <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>
+            {row.overdueDays !== null ? 'Vencido · ' : ''}Quedan {formatMoney(row.pending)}
+          </span>
+        )}
+      </span>
+    );
   }
   if (row.status === 'Liquidado parcialmente') {
     return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>{row.overdueDays !== null ? 'Vencido · ' : ''}{row.status}</span>;

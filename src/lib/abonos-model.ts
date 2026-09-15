@@ -3,7 +3,8 @@ export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
 
 export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
 export const ABONO_SOURCES = ['Correo', 'Teams', 'Conversación', 'Excel', 'Otro'] as const;
-export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado', 'Exceso'] as const;
+export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado', 'Exceso', 'A cuenta'] as const;
+export const ABONO_AMOUNT_KINDS = ['Real', 'Estimado'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
 export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Off Invoice', 'Material gratuito', 'Otro'];
@@ -24,6 +25,7 @@ export const DEFAULT_TEAMS = [
 export type AbonoOrigin = (typeof ABONO_ORIGINS)[number];
 export type AbonoSource = (typeof ABONO_SOURCES)[number];
 export type AbonoStatus = (typeof ABONO_STATUSES)[number];
+export type AbonoAmountKind = (typeof ABONO_AMOUNT_KINDS)[number];
 export type CatalogKind = 'brand' | 'type' | 'area' | 'team';
 
 export interface AbonoCase {
@@ -46,6 +48,7 @@ export interface AbonoCase {
   status: AbonoStatus | '';
   nextReview: string | null;
   comment: string;
+  estimated: boolean | null;
   attachments: AbonoAttachment[];
 }
 
@@ -281,7 +284,11 @@ export function isClosedStatus(status: string): boolean {
   return status === 'Liquidado' || status === 'Exceso';
 }
 
-export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number): AbonoStatus | '' {
+export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number, estimated = false): AbonoStatus | '' {
+  if (estimated) {
+    if (receivedTotal > 0.009) return 'A cuenta';
+    return current === 'Pago comunicado' ? current : 'Pendiente';
+  }
   if (expectedAmount === null) {
     if (receivedTotal > 0) return 'Liquidado parcialmente';
     return current === 'Pago comunicado' ? current : 'Pendiente';
@@ -301,7 +308,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
   const closed = isClosedStatus(row.status);
   const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
-  const reviewOverdue = !closed && pending > 0 && !!row.nextReview && row.nextReview <= today;
+  const reviewOverdue = !closed && !!row.nextReview && row.nextReview <= today && (pending > 0 || row.estimated === true);
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
   const payments = paymentSlots(receipts, row.id);
   return {
@@ -370,7 +377,21 @@ export function asStatus(value: string): AbonoStatus | '' {
   if (value === 'Recibido') return 'Liquidado';
   if (value === 'Recibido parcialmente') return 'Liquidado parcialmente';
   if (value === 'Reclamado') return 'Pendiente';
-  if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado' || value === 'Exceso') return value;
+  if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado' || value === 'Exceso' || value === 'A cuenta') return value;
+  return '';
+}
+
+export function asEstimated(value: unknown): boolean | null {
+  const text = String(value ?? '').trim().toLocaleLowerCase('es');
+  if (!text) return null;
+  if (text === 'real' || text === 'cerrado' || text === 'definitivo' || text === 'no' || text === 'false' || text === '0') return false;
+  if (text === 'estimado' || text === 'estimada' || text === 'a cuenta' || text === 'sí' || text === 'si' || text === 'true' || text === '1' || text === 'yes') return true;
+  return null;
+}
+
+export function amountKindLabel(estimated: boolean | null | undefined): string {
+  if (estimated === true) return 'Estimado';
+  if (estimated === false) return 'Real';
   return '';
 }
 
@@ -386,6 +407,9 @@ export function abonoRequiredGaps(row: {
   source?: string | null;
   informedBy?: string | null;
   status?: string | null;
+  estimated?: boolean | null;
+  origin?: string | null;
+  tradeTermId?: string | null;
 }): string[] {
   const gaps: string[] = [];
   if (!String(row.brand || '').trim()) gaps.push('Empresa');
@@ -393,12 +417,14 @@ export function abonoRequiredGaps(row: {
   if (!String(row.teamMotivo || '').trim()) gaps.push('Equipo');
   if (!String(row.type || '').trim()) gaps.push('Tipo');
   if (row.expectedAmount === null || row.expectedAmount === undefined || !Number.isFinite(row.expectedAmount)) gaps.push('Importe previsto');
+  if (row.estimated !== true && row.estimated !== false) gaps.push('Real o estimado');
   if (!String(row.dueDate || '').trim()) gaps.push('Fecha prevista');
   if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
   if (!String(row.responsible || '').trim()) gaps.push('Responsable');
   if (!asSource(String(row.source || ''))) gaps.push('Canal');
   if (!String(row.informedBy || '').trim()) gaps.push('Persona');
   if (!asStatus(String(row.status || ''))) gaps.push('Estado');
+  if (row.origin === 'Acuerdo' && !String(row.tradeTermId || '').trim()) gaps.push('Trade Term');
   return gaps;
 }
 
@@ -435,7 +461,7 @@ export function myOpenQueue(rows: AbonoComputed[], responsible = 'Cristóbal'): 
     });
 }
 
-export type WeeklyTaskKind = 'confirmar' | 'reclamar' | 'seguir' | 'cobro' | 'fecha';
+export type WeeklyTaskKind = 'cuadrar' | 'confirmar' | 'reclamar' | 'seguir' | 'cobro' | 'fecha';
 
 export interface WeeklyTask {
   id: string;
@@ -447,7 +473,9 @@ export interface WeeklyTask {
 }
 
 function stillOpen(row: AbonoComputed, responsible: string): boolean {
-  return matchesResponsibleScope(row, responsible) && !isClosedStatus(row.status) && row.pending > 0.009;
+  if (!matchesResponsibleScope(row, responsible) || isClosedStatus(row.status)) return false;
+  if (row.estimated === true) return true;
+  return row.pending > 0.009;
 }
 
 export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsible = 'Cristóbal', claims: AbonoClaim[] = []): WeeklyTask[] {
@@ -457,6 +485,24 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
     const reviewDue = !!row.nextReview && row.nextReview <= today;
     const noReview = !row.nextReview;
     const priorClaim = claimsForCase(claims, row.id).some((claim) => claim.kind === 'reclamar' || claim.kind === 'seguir');
+
+    if (row.estimated === true && (reviewDue || noReview)) {
+      const pending = row.pending;
+      const received = row.receivedTotal;
+      tasks.push({
+        id: `cuadrar-${row.id}`,
+        kind: 'cuadrar',
+        title: pending > 0.009 ? 'Reclamar o recalcular' : 'Recalcular previsto',
+        reason: pending > 0.009
+          ? `Cobrados ${formatMoney(received)} de ${formatMoney(row.expectedAmount)}. Quedan ${formatMoney(pending)}.`
+          : received > 0.009
+            ? `Han pagado ${formatMoney(received)}. Ajusta el previsto cuando sepas el importe real.`
+            : 'El importe es estimado. Recalcúlalo cuando lo tengas cerrado.',
+        actionLabel: 'Abrir ficha',
+        row,
+      });
+      return;
+    }
 
     if (row.status === 'Pago comunicado' && (reviewDue || noReview)) {
       const mismatch = row.communicatedAmount !== null && Math.abs(row.communicatedAmount - row.pending) > 0.009;
@@ -511,7 +557,7 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
     }
   });
 
-  const order: WeeklyTaskKind[] = ['confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
+  const order: WeeklyTaskKind[] = ['cuadrar', 'confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
   return tasks.sort((a, b) => {
     const kindDiff = order.indexOf(a.kind) - order.indexOf(b.kind);
     if (kindDiff !== 0) return kindDiff;
@@ -519,9 +565,10 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
   });
 }
 
-export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
+export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['cuadrar', 'confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
 
 export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: string; bulkLabel: string | null }> = {
+  cuadrar: { title: 'Reclamar o recalcular', hint: 'El importe es estimado. O reclamas el resto o bajas el previsto cuando lo sepas.', bulkLabel: null },
   confirmar: { title: 'Confirmar con Finanzas', hint: 'La marca ha comunicado el pago y falta validar el ingreso.', bulkLabel: null },
   reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: null },
   seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: null },
@@ -548,7 +595,10 @@ export function groupWeeklyTasks(tasks: WeeklyTask[]): WeeklyTaskGroup[] {
         hint: WEEKLY_TASK_META[kind].hint,
         bulkLabel: WEEKLY_TASK_META[kind].bulkLabel,
         tasks: list,
-        pending: list.reduce((sum, task) => sum + task.row.pending, 0),
+        pending: list.reduce((sum, task) => {
+          if (kind !== 'cuadrar') return sum + task.row.pending;
+          return sum + (task.row.pending > 0.009 ? task.row.pending : task.row.receivedTotal);
+        }, 0),
       };
     })
     .filter((group) => group.tasks.length > 0);
@@ -675,6 +725,7 @@ export function termRollup(rows: AbonoComputed[]): { count: number; pending: num
     return { count: rows.length, pending, status: 'Liquidado' };
   }
   if (rows.some((row) => row.overdueDays !== null)) return { count: rows.length, pending, status: 'Vencido' };
+  if (rows.some((row) => row.status === 'A cuenta' || row.estimated === true)) return { count: rows.length, pending, status: 'A cuenta' };
   if (rows.some((row) => row.status === 'Pago comunicado')) return { count: rows.length, pending, status: 'Pago comunicado' };
   if (rows.some((row) => row.status === 'Liquidado parcialmente')) return { count: rows.length, pending, status: 'Liquidado parcialmente' };
   if (rows.some((row) => row.status === 'Pendiente' || !row.status)) return { count: rows.length, pending, status: 'Pendiente' };
@@ -696,8 +747,11 @@ export function abonosNeedRewrite(state: Pick<AbonosState, 'cases' | 'receipts'>
   })) return true;
   const receipts = state.receipts || [];
   return state.cases.some((row) => {
+    const received = receivedTotalFor(row.id, receipts);
+    if (typeof row.estimated !== 'boolean') return true;
+    if (row.estimated === true && received > 0.009 && asStatus(row.status) !== 'A cuenta') return true;
     if (asStatus(row.status) !== 'Liquidado') return false;
-    return excessAmount(row.expectedAmount, receivedTotalFor(row.id, receipts)) > 0.009;
+    return excessAmount(row.expectedAmount, received) > 0.009;
   });
 }
 
