@@ -2,7 +2,9 @@ import {
   asChannel,
   asModule,
   asStatus,
+  cellToIso,
   formatRequiredGaps,
+  isUnknownValue,
   mejoraRequiredGaps,
   type MejoraCase,
 } from '@/lib/mejoras-model';
@@ -19,6 +21,7 @@ export interface ImportColumnMap {
   channelNote: number | null;
   status: number | null;
   comment: number | null;
+  addedBy: number | null;
 }
 
 export interface ImportPreviewRow {
@@ -34,6 +37,7 @@ export interface ImportPreviewRow {
   channelNote: string;
   status: string;
   comment: string;
+  addedBy: string;
   error: string | null;
 }
 
@@ -49,6 +53,7 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   channelNote: ['detalle del canal', 'cómo me lo pasaron', 'como me lo pasaron'],
   status: ['estado'],
   comment: ['comentario', 'comentarios'],
+  addedBy: ['añadido por', 'anadido por', 'creado por'],
 };
 
 function normalizeHeader(value: unknown): string {
@@ -95,6 +100,7 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     channelNote: find(HEADER_ALIASES.channelNote),
     status: find(HEADER_ALIASES.status),
     comment: find(HEADER_ALIASES.comment),
+    addedBy: find(HEADER_ALIASES.addedBy),
   };
 }
 
@@ -105,9 +111,6 @@ export function importPreviewError(row: Pick<ImportPreviewRow, 'title' | 'area' 
     module: row.module,
     need: row.need,
     requester: row.requester,
-    addedBy: 'Cristóbal',
-    requestedAt: 'ok',
-    status: 'Pendiente',
   }));
 }
 
@@ -117,9 +120,11 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
       const area = cellText(pick(row, map.area));
       const module = cellText(pick(row, map.module));
       const need = cellText(pick(row, map.need));
-      const requester = cellText(pick(row, map.requester));
-      const title = cellText(pick(row, map.title)) || shortTitleFromNeed(need);
-      if (!area && !module && !need && !requester) return null;
+      const requesterRaw = cellText(pick(row, map.requester));
+      const requester = isUnknownValue(requesterRaw) ? 'Sin asignar' : requesterRaw;
+      const titleRaw = cellText(pick(row, map.title));
+      const title = titleRaw || shortTitleFromNeed(need);
+      if (isUnknownValue(area) && isUnknownValue(module) && isUnknownValue(need) && isUnknownValue(requesterRaw) && isUnknownValue(titleRaw)) return null;
       const preview: ImportPreviewRow = {
         key: `import-${index}`,
         area,
@@ -127,12 +132,13 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         title,
         need,
         requester,
-        requestedAt: cellText(pick(row, map.requestedAt)) || null,
+        requestedAt: cellToIso(pick(row, map.requestedAt)),
         channel: cellText(pick(row, map.channel)),
-        informedBy: cellText(pick(row, map.informedBy)),
-        channelNote: cellText(pick(row, map.channelNote)),
+        informedBy: isUnknownValue(pick(row, map.informedBy)) ? '' : cellText(pick(row, map.informedBy)),
+        channelNote: isUnknownValue(pick(row, map.channelNote)) ? '' : cellText(pick(row, map.channelNote)),
         status: cellText(pick(row, map.status)),
-        comment: cellText(pick(row, map.comment)),
+        comment: isUnknownValue(pick(row, map.comment)) ? '' : cellText(pick(row, map.comment)),
+        addedBy: isUnknownValue(pick(row, map.addedBy)) ? 'Cristóbal' : cellText(pick(row, map.addedBy)),
         error: null,
       };
       preview.error = importPreviewError(preview);
@@ -153,7 +159,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): MejoraCase[] {
     title: row.title,
     need: row.need,
     requester: row.requester,
-    addedBy: 'Cristóbal',
+    addedBy: row.addedBy || 'Cristóbal',
     channel: asChannel(row.channel),
     informedBy: row.informedBy,
     channelNote: row.channelNote,
@@ -174,6 +180,7 @@ export const MEJORAS_TEMPLATE_HEADERS = [
   'Persona',
   'Detalle del canal',
   'Estado',
+  'Añadido por',
   'Comentario',
 ];
 

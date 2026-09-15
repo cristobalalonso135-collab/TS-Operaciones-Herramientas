@@ -507,7 +507,8 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       addedBy: form.addedBy,
       requestedAt: form.requestedAt || null,
       status: form.status,
-    });
+      channel: form.channel,
+    }, { forNew: !editing });
     if (gaps.length > 0) {
       setError(formatRequiredGaps(gaps));
       return;
@@ -597,6 +598,13 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       cases: state.cases.filter((row) => row.id !== id),
     }, backend);
     closePanel();
+  };
+
+  const clearAll = async () => {
+    if (!window.confirm('¿Borrar todas las mejoras? Luego puedes importar el Excel.')) return;
+    await persist({ ...state, cases: [] }, backend);
+    setNote('Lista vacía. Ya puedes importar.');
+    setTab('importar');
   };
 
   const handleImportFile = async (data: unknown[][]) => {
@@ -806,17 +814,25 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">Plantilla Excel</p>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">Sirve el Excel actual (Área, Módulo, Necesidad, Solicitante) o la plantilla nueva.</p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  Para entrar hace falta Área, Módulo (ERP o Web), Necesidad y Solicitante. Título si no viene se saca de la necesidad.
+                  Fecha, canal y el resto puedes dejarlos vacíos o con un guión; en las altas nuevas sí serán obligatorios.
+                </p>
               </div>
               <button type="button" onClick={downloadTemplate} className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-semibold hover:bg-[var(--bg-soft)]">
                 <Download className="h-4 w-4" />
                 Descargar plantilla
               </button>
+              {state.cases.length > 0 && (
+                <button type="button" onClick={clearAll} className="inline-flex h-10 items-center rounded-md px-3 text-sm font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]">
+                  Vaciar lista
+                </button>
+              )}
             </div>
             <FileUpload
               inputId="mejoras-import"
               label="Importar Excel de mejoras"
-              hint="Módulo: ERP o Web. Las filas incompletas no entran."
+              hint="Vacío o — vale en fecha y canal. Las filas sin Área, Módulo, Necesidad o Solicitante no entran."
               onFileLoaded={handleImportFile}
               keepDropzone
             />
@@ -899,18 +915,18 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                   </label>
                   <CatalogField label="Solicitante" value={form.requester || ''} options={requesters} required allowFree onChange={(requester) => setForm({ ...form, requester })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'requester', value) }, backend)} />
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha de solicitud *</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha de solicitud{editing ? '' : ' *'}</span>
                     <input type="date" value={form.requestedAt || ''} onChange={(event) => setForm({ ...form, requestedAt: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por *</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por{editing ? '' : ' *'}</span>
                     <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {MEJORAS_AUTHORS.map((person) => <option key={person} value={person}>{person}</option>)}
                     </select>
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado{editing ? '' : ' *'}</span>
                     <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as MejoraStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {MEJORA_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
@@ -928,7 +944,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                   </label>
                   <p className="md:col-span-2 pt-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Cómo te lo pasaron</p>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Canal</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Canal{editing ? '' : ' *'}</span>
                     <select value={form.channel || ''} onChange={(event) => setForm({ ...form, channel: event.target.value as MejoraChannel | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {MEJORA_CHANNELS.map((channel) => <option key={channel} value={channel}>{channel}</option>)}

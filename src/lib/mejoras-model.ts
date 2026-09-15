@@ -92,6 +92,36 @@ export function displayDash(value: string | null | undefined): string {
   return text || '—';
 }
 
+export function isUnknownValue(value: unknown): boolean {
+  const text = String(value ?? '').replace(/\u00a0/g, ' ').trim().toLocaleLowerCase('es');
+  return !text
+    || text === '-'
+    || text === '—'
+    || text === '–'
+    || text === 'n/a'
+    || text === 'na'
+    || text === 's/n'
+    || text === 'sin dato'
+    || text === 'desconocido';
+}
+
+export function cellToIso(value: unknown): string | null {
+  if (typeof value !== 'number' && isUnknownValue(value)) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return toIsoDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
+  }
+  if (typeof value === 'number' && value > 20000) {
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.round(value) * 86400000);
+    return toIsoDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+  }
+  const text = String(value ?? '').trim();
+  const spanish = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (spanish) return toIsoDate(Number(spanish[3]), Number(spanish[2]), Number(spanish[1]));
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return toIsoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+  return null;
+}
+
 export function mergeCatalog(list: string[], extra: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -107,6 +137,7 @@ export function mergeCatalog(list: string[], extra: string[]): string[] {
 }
 
 export function asModule(value: unknown): MejoraModule | '' {
+  if (isUnknownValue(value)) return '';
   const text = String(value ?? '').trim().toLocaleLowerCase('es');
   if (text === 'erp' || text === 'gestión' || text === 'gestion') return 'ERP';
   if (text === 'web') return 'Web';
@@ -114,6 +145,7 @@ export function asModule(value: unknown): MejoraModule | '' {
 }
 
 export function asChannel(value: unknown): MejoraChannel | '' {
+  if (isUnknownValue(value)) return '';
   const text = String(value ?? '').trim();
   if ((MEJORA_CHANNELS as readonly string[]).includes(text)) return text as MejoraChannel;
   const key = text.toLocaleLowerCase('es');
@@ -126,6 +158,7 @@ export function asChannel(value: unknown): MejoraChannel | '' {
 }
 
 export function asStatus(value: unknown): MejoraStatus | '' {
+  if (isUnknownValue(value)) return '';
   const text = String(value ?? '').trim();
   if ((MEJORA_STATUSES as readonly string[]).includes(text)) return text as MejoraStatus;
   return '';
@@ -161,16 +194,20 @@ export function mejoraRequiredGaps(row: {
   addedBy?: string | null;
   requestedAt?: string | null;
   status?: string | null;
-}): string[] {
+  channel?: string | null;
+}, options?: { forNew?: boolean }): string[] {
   const gaps: string[] = [];
-  if (!String(row.title || '').trim()) gaps.push('Título');
-  if (!String(row.area || '').trim()) gaps.push('Área');
+  if (isUnknownValue(row.title)) gaps.push('Título');
+  if (isUnknownValue(row.area)) gaps.push('Área');
   if (!asModule(row.module)) gaps.push('Módulo');
-  if (!String(row.need || '').trim()) gaps.push('Necesidad');
-  if (!String(row.requester || '').trim()) gaps.push('Solicitante');
-  if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
-  if (!String(row.requestedAt || '').trim()) gaps.push('Fecha de solicitud');
-  if (!asStatus(row.status)) gaps.push('Estado');
+  if (isUnknownValue(row.need)) gaps.push('Necesidad');
+  if (isUnknownValue(row.requester)) gaps.push('Solicitante');
+  if (options?.forNew) {
+    if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
+    if (!String(row.requestedAt || '').trim()) gaps.push('Fecha de solicitud');
+    if (!asStatus(row.status)) gaps.push('Estado');
+    if (!asChannel(row.channel)) gaps.push('Canal');
+  }
   return gaps;
 }
 
