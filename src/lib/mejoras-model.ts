@@ -203,7 +203,6 @@ export function mejoraRequiredGaps(row: {
   if (isUnknownValue(row.need)) gaps.push('Necesidad');
   if (isUnknownValue(row.requester)) gaps.push('Solicitante');
   if (options?.forNew) {
-    if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
     if (!String(row.requestedAt || '').trim()) gaps.push('Fecha de solicitud');
     if (!asStatus(row.status)) gaps.push('Estado');
     if (!asChannel(row.channel)) gaps.push('Canal');

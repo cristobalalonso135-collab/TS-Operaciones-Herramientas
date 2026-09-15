@@ -5,7 +5,6 @@ import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   DEFAULT_NEW_AUTHOR,
-  MEJORAS_AUTHORS,
   MEJORA_CHANNELS,
   MEJORA_MODULES,
   MEJORA_STATUSES,
@@ -44,18 +43,19 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-type SortKey = 'registro' | 'title' | 'module' | 'requester' | 'requestedAt' | 'status';
+type SortKey = 'registro' | 'title' | 'module' | 'requester' | 'requestedAt' | 'channel' | 'status';
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'registro', label: '#', width: 56 },
-  { key: 'title', label: 'Título', width: 280 },
+  { key: 'title', label: 'Título', width: 240 },
   { key: 'module', label: 'Módulo', width: 88 },
   { key: 'requester', label: 'Solicitante', width: 130 },
   { key: 'requestedAt', label: 'Fecha de solicitud', width: 130 },
+  { key: 'channel', label: 'Canal', width: 110 },
   { key: 'status', label: 'Estado', width: 110 },
 ];
 
-const COL_STORAGE = 'ts-mejoras-cols-v2';
+const COL_STORAGE = 'ts-mejoras-cols-v3';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
 const BLANK = '__blank__';
@@ -95,6 +95,8 @@ function renderMejoraCell(row: MejoraCase, key: SortKey) {
       return displayDash(row.requester);
     case 'requestedAt':
       return formatIsoDate(row.requestedAt);
+    case 'channel':
+      return displayDash(row.channel);
     case 'status':
       return <StatusPill status={row.status} />;
     default:
@@ -501,7 +503,6 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       module: form.module,
       need: form.need,
       requester: form.requester,
-      addedBy: form.addedBy,
       requestedAt: form.requestedAt || null,
       status: form.status,
       channel: form.channel,
@@ -522,12 +523,12 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       title: (form.title || '').trim(),
       need: (form.need || '').trim(),
       requester: (form.requester || '').trim(),
-      addedBy: form.addedBy || DEFAULT_NEW_AUTHOR,
+      addedBy: editing?.addedBy || DEFAULT_NEW_AUTHOR,
       channel: (form.channel || '') as MejoraChannel | '',
-      informedBy: (form.informedBy || '').trim(),
+      informedBy: editing?.informedBy || '',
       channelNote: (form.channelNote || '').trim(),
       status: (form.status || '') as MejoraStatus | '',
-      comment: form.comment || '',
+      comment: editing?.comment || '',
       attachments: form.attachments || [],
     };
     const cases = editing
@@ -878,7 +879,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
 
       {panelOpen && (
         <div className="abonos-modal-backdrop" onClick={closePanel}>
-          <div className="abonos-modal" role="dialog" aria-modal="true" aria-labelledby="mejoras-modal-title" onClick={(event) => event.stopPropagation()}>
+          <div className="abonos-modal" style={{ width: 'min(760px, 100%)' }} role="dialog" aria-modal="true" aria-labelledby="mejoras-modal-title" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
               <div className="min-w-0">
                 <p id="mejoras-modal-title" className="font-display text-lg font-semibold tracking-tight">
@@ -894,8 +895,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
               </button>
             </div>
 
-            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
-              <div>
+            <div className="p-5">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{editing ? 'Editar' : 'Datos de la mejora'}</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="space-y-1 md:col-span-2">
@@ -916,17 +916,17 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                     <input type="date" value={form.requestedAt || ''} onChange={(event) => setForm({ ...form, requestedAt: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
                   </label>
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por{editing ? '' : ' *'}</span>
-                    <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {MEJORAS_AUTHORS.map((person) => <option key={person} value={person}>{person}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Estado{editing ? '' : ' *'}</span>
                     <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as MejoraStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
                       <option value="">—</option>
                       {MEJORA_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Canal{editing ? '' : ' *'}</span>
+                    <select value={form.channel || ''} onChange={(event) => setForm({ ...form, channel: event.target.value as MejoraChannel | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">—</option>
+                      {MEJORA_CHANNELS.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
                     </select>
                   </label>
                   <label className="space-y-1 md:col-span-2">
@@ -939,30 +939,13 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                       className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
                     />
                   </label>
-                  <p className="md:col-span-2 pt-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Cómo te lo pasaron</p>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Canal{editing ? '' : ' *'}</span>
-                    <select value={form.channel || ''} onChange={(event) => setForm({ ...form, channel: event.target.value as MejoraChannel | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {MEJORA_CHANNELS.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Persona</span>
-                    <input
-                      value={form.informedBy || ''}
-                      onChange={(event) => setForm({ ...form, informedBy: event.target.value })}
-                      placeholder="Samu, Santi…"
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                    />
-                  </label>
                   <label className="space-y-1 md:col-span-2">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Detalle del canal</span>
                     <textarea
                       value={form.channelNote || ''}
                       onChange={(event) => setForm({ ...form, channelNote: event.target.value })}
                       rows={3}
-                      placeholder="Me lo pasó Samu por Teams el 12/04. El correo está en la carpeta IT 2027…"
+                      placeholder="Me lo pasó por Teams el 12/04. El correo está en la carpeta IT 2027…"
                       className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
                     />
                   </label>
@@ -1021,15 +1004,6 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                       }}
                     />
                   </div>
-                  <label className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
-                    <textarea
-                      value={form.comment || ''}
-                      onChange={(event) => setForm({ ...form, comment: event.target.value })}
-                      rows={2}
-                      className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                    />
-                  </label>
                 </div>
                 {panelNote && (
                   <div className="mt-4 flex items-center gap-2 rounded-lg border border-green-200 bg-[var(--success-soft)] px-3 py-2.5 text-sm font-medium text-[var(--success)]" role="status">
@@ -1049,48 +1023,6 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                     <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
                   )}
                 </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">De qué va</p>
-                  <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
-                    {form.need || 'Describe la necesidad con el detalle que haría falta para desarrollarla sin preguntar otra vez.'}
-                  </p>
-                  {form.channelNote && (
-                    <p className="mt-3 text-xs text-[var(--text-secondary)]">{form.channelNote}</p>
-                  )}
-                </div>
-                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Resumen</p>
-                  <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Fecha de solicitud</dt>
-                      <dd>{formatIsoDate(form.requestedAt || null)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Estado</dt>
-                      <dd><StatusPill status={form.status || ''} /></dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Canal</dt>
-                      <dd>{displayDash(form.channel)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Persona</dt>
-                      <dd>{displayDash(form.informedBy)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Adjuntos</dt>
-                      <dd>{(form.attachments || []).length || '—'}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Añadido por</dt>
-                      <dd>{displayDash(form.addedBy)}</dd>
-                    </div>
-                  </dl>
-                </div>
-              </div>
             </div>
           </div>
         </div>
