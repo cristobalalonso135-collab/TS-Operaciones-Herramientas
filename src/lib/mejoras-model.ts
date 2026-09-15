@@ -1,0 +1,197 @@
+export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
+export const MEJORAS_AUTHORS = ['Cristóbal', 'Pablo'] as const;
+
+export const MEJORA_MODULES = ['Gestión', 'Web'] as const;
+export const MEJORA_CHANNELS = ['Correo', 'Teams', 'Conversación', 'Excel', 'Otro'] as const;
+export const MEJORA_STATUSES = ['Pendiente', 'En estudio', 'Aprobada', 'Descartada', 'Hecha'] as const;
+
+export const DEFAULT_AREAS = ['Teamsports', 'B2B', 'Grassroots', 'Pro Clubs'];
+export const DEFAULT_REQUESTERS = [
+  'Cristóbal',
+  'Santi Navarro',
+  'Samu',
+  'Juanjo',
+  'Arturo',
+  'Laguna',
+  'Alberto Antequera',
+  'Salinero',
+  'Blanca',
+  'Mario Ansini',
+];
+
+export type MejoraModule = (typeof MEJORA_MODULES)[number];
+export type MejoraChannel = (typeof MEJORA_CHANNELS)[number];
+export type MejoraStatus = (typeof MEJORA_STATUSES)[number];
+
+export interface MejoraAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  dataUrl: string;
+  addedAt: string;
+}
+
+export interface MejoraCase {
+  id: string;
+  registro: number;
+  createdAt: string;
+  requestedAt: string | null;
+  year: number;
+  area: string;
+  module: MejoraModule | '';
+  title: string;
+  need: string;
+  requester: string;
+  addedBy: string;
+  channel: MejoraChannel | '';
+  informedBy: string;
+  channelNote: string;
+  status: MejoraStatus | '';
+  comment: string;
+  attachments: MejoraAttachment[];
+}
+
+export interface MejorasCatalogs {
+  areas: string[];
+  requesters: string[];
+}
+
+export interface MejorasState {
+  cases: MejoraCase[];
+  catalogs: MejorasCatalogs;
+}
+
+export const EMPTY_CATALOGS: MejorasCatalogs = {
+  areas: [...DEFAULT_AREAS],
+  requesters: [...DEFAULT_REQUESTERS],
+};
+
+export const EMPTY_MEJORAS_STATE: MejorasState = {
+  cases: [],
+  catalogs: EMPTY_CATALOGS,
+};
+
+export function todayIso(): string {
+  const date = new Date();
+  return toIsoDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
+}
+
+export function toIsoDate(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+export function formatIsoDate(value: string | null): string {
+  if (!value) return '—';
+  const [year, month, day] = value.split('-');
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
+}
+
+export function displayDash(value: string | null | undefined): string {
+  const text = String(value ?? '').trim();
+  return text || '—';
+}
+
+export function mergeCatalog(list: string[], extra: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  [...list, ...extra].forEach((item) => {
+    const value = String(item || '').trim();
+    if (!value) return;
+    const key = value.toLocaleLowerCase('es');
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(value);
+  });
+  return result;
+}
+
+export function asModule(value: unknown): MejoraModule | '' {
+  const text = String(value ?? '').trim().toLocaleLowerCase('es');
+  if (text === 'gestión' || text === 'gestion' || text === 'erp') return 'Gestión';
+  if (text === 'web') return 'Web';
+  return '';
+}
+
+export function asChannel(value: unknown): MejoraChannel | '' {
+  const text = String(value ?? '').trim();
+  if ((MEJORA_CHANNELS as readonly string[]).includes(text)) return text as MejoraChannel;
+  const key = text.toLocaleLowerCase('es');
+  if (key === 'teams' || key === 'microsoft teams') return 'Teams';
+  if (key === 'correo' || key === 'email' || key === 'mail') return 'Correo';
+  if (key === 'conversación' || key === 'conversacion' || key === 'reunión' || key === 'reunion') return 'Conversación';
+  if (key === 'excel') return 'Excel';
+  if (key) return 'Otro';
+  return '';
+}
+
+export function asStatus(value: unknown): MejoraStatus | '' {
+  const text = String(value ?? '').trim();
+  if ((MEJORA_STATUSES as readonly string[]).includes(text)) return text as MejoraStatus;
+  return '';
+}
+
+export function nextRegistro(cases: MejoraCase[]): number {
+  return cases.reduce((max, row) => Math.max(max, row.registro || 0), 0) + 1;
+}
+
+export function normalizeAttachments(value: unknown): MejoraAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Partial<MejoraAttachment>;
+    const dataUrl = String(row.dataUrl || '');
+    if (!dataUrl.startsWith('data:')) return [];
+    return [{
+      id: String(row.id || crypto.randomUUID()),
+      name: String(row.name || 'captura').trim() || 'captura',
+      mime: String(row.mime || 'image/jpeg'),
+      dataUrl,
+      addedAt: String(row.addedAt || ''),
+    }];
+  });
+}
+
+export function mejoraRequiredGaps(row: {
+  title?: string | null;
+  area?: string | null;
+  module?: string | null;
+  need?: string | null;
+  requester?: string | null;
+  addedBy?: string | null;
+  requestedAt?: string | null;
+  status?: string | null;
+}): string[] {
+  const gaps: string[] = [];
+  if (!String(row.title || '').trim()) gaps.push('Título');
+  if (!String(row.area || '').trim()) gaps.push('Área');
+  if (!asModule(row.module)) gaps.push('Módulo');
+  if (!String(row.need || '').trim()) gaps.push('Necesidad');
+  if (!String(row.requester || '').trim()) gaps.push('Solicitante');
+  if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
+  if (!String(row.requestedAt || '').trim()) gaps.push('Fecha de solicitud');
+  if (!asStatus(row.status)) gaps.push('Estado');
+  return gaps;
+}
+
+export function formatRequiredGaps(gaps: string[]): string | null {
+  if (gaps.length === 0) return null;
+  if (gaps.length === 1) return `Falta ${gaps[0]}.`;
+  return `Faltan: ${gaps.join(', ')}.`;
+}
+
+export function isOpenMejora(status: string): boolean {
+  return status !== 'Descartada' && status !== 'Hecha';
+}
+
+export function mejorasKpis(rows: MejoraCase[]) {
+  const open = rows.filter((row) => isOpenMejora(row.status));
+  return {
+    total: rows.length,
+    gestion: rows.filter((row) => row.module === 'Gestión').length,
+    web: rows.filter((row) => row.module === 'Web').length,
+    open: open.length,
+    withoutDate: open.filter((row) => !row.requestedAt).length,
+    withoutEvidence: open.filter((row) => row.attachments.length === 0).length,
+  };
+}
