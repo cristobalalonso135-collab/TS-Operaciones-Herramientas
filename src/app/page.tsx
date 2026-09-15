@@ -708,8 +708,8 @@ export default function Home() {
         id: 'mejoras' as const,
         number: '06',
         title: 'Mejoras IT',
-        description: 'Lo que hay que implementar en Gestión o Web. Canal, contexto y capturas para cuando toque desarrollarlo.',
-        detail: 'Lista · Por módulo · Importar',
+        description: 'Lo que hay que implementar en ERP o Web. Canal, contexto y capturas para cuando toque desarrollarlo.',
+        detail: 'Lista · Importar',
         tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
       },
     ];

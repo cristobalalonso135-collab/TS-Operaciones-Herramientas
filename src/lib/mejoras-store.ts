@@ -6,6 +6,7 @@ import {
   asModule,
   asStatus,
   mergeCatalog,
+  mejorasNeedRewrite,
   normalizeAttachments,
   type MejorasCatalogs,
   type MejorasState,
@@ -141,7 +142,9 @@ export async function loadMejorasState(): Promise<{ state: MejorasState; backend
       const state = dedicated.payload.cases.length > 0
         ? normalizeState(dedicated.payload)
         : initialState();
-      if (dedicated.payload.cases.length === 0) await writeDedicated(state);
+      if (dedicated.payload.cases.length === 0 || mejorasNeedRewrite(dedicated.payload)) {
+        await writeDedicated(state);
+      }
       return { state, backend: 'supabase' };
     }
 
@@ -149,6 +152,7 @@ export async function loadMejorasState(): Promise<{ state: MejorasState; backend
     if (shared.kind === 'ok' && shared.payload) {
       const state = shared.payload.cases.length > 0 ? normalizeState(shared.payload) : initialState();
       if (dedicated.kind === 'ok') await writeDedicated(state);
+      else if (shared.payload.cases.length === 0 || mejorasNeedRewrite(shared.payload)) await writeSharedSnapshot(state);
       return { state, backend: 'supabase' };
     }
 
@@ -170,19 +174,16 @@ export async function loadMejorasState(): Promise<{ state: MejorasState; backend
 
 export async function saveMejorasState(state: MejorasState, backend: MejorasBackend): Promise<void> {
   const next = normalizeState(state);
-  if (backend === 'local') {
-    writeLocal(next);
-    return;
-  }
+  writeLocal(next);
+  if (backend !== 'supabase') return;
   try {
     await writeDedicated(next);
+    return;
   } catch (err) {
-    if (err instanceof Error && isMissingTableError(err.message)) {
-      await writeSharedSnapshot(next);
-      return;
-    }
-    throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    if (!isMissingTableError(message)) throw err;
   }
+  await writeSharedSnapshot(next);
 }
 
 export function addCatalogValue(catalogs: MejorasCatalogs, kind: 'area' | 'requester', value: string): MejorasCatalogs {

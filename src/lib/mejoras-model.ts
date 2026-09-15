@@ -1,7 +1,7 @@
 export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
 export const MEJORAS_AUTHORS = ['Cristóbal', 'Pablo'] as const;
 
-export const MEJORA_MODULES = ['Gestión', 'Web'] as const;
+export const MEJORA_MODULES = ['ERP', 'Web'] as const;
 export const MEJORA_CHANNELS = ['Correo', 'Teams', 'Conversación', 'Excel', 'Otro'] as const;
 export const MEJORA_STATUSES = ['Pendiente', 'En estudio', 'Aprobada', 'Descartada', 'Hecha'] as const;
 
@@ -108,7 +108,7 @@ export function mergeCatalog(list: string[], extra: string[]): string[] {
 
 export function asModule(value: unknown): MejoraModule | '' {
   const text = String(value ?? '').trim().toLocaleLowerCase('es');
-  if (text === 'gestión' || text === 'gestion' || text === 'erp') return 'Gestión';
+  if (text === 'erp' || text === 'gestión' || text === 'gestion') return 'ERP';
   if (text === 'web') return 'Web';
   return '';
 }
@@ -184,14 +184,21 @@ export function isOpenMejora(status: string): boolean {
   return status !== 'Descartada' && status !== 'Hecha';
 }
 
+export function mejorasNeedRewrite(state: Pick<MejorasState, 'cases'>): boolean {
+  return state.cases.some((row) => {
+    const raw = String(row.module || '');
+    if (!raw) return false;
+    const mapped = asModule(raw);
+    return Boolean(mapped) && mapped !== raw;
+  });
+}
+
 export function mejorasKpis(rows: MejoraCase[]) {
   const open = rows.filter((row) => isOpenMejora(row.status));
   return {
     total: rows.length,
-    gestion: rows.filter((row) => row.module === 'Gestión').length,
+    erp: rows.filter((row) => row.module === 'ERP').length,
     web: rows.filter((row) => row.module === 'Web').length,
     open: open.length,
-    withoutDate: open.filter((row) => !row.requestedAt).length,
-    withoutEvidence: open.filter((row) => row.attachments.length === 0).length,
   };
 }

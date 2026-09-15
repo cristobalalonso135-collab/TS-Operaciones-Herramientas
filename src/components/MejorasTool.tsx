@@ -12,7 +12,6 @@ import {
   displayDash,
   formatIsoDate,
   formatRequiredGaps,
-  isOpenMejora,
   mejoraRequiredGaps,
   mejorasKpis,
   mergeCatalog,
@@ -36,19 +35,75 @@ import {
   type ImportPreviewRow,
 } from '@/lib/mejoras-excel';
 import { addCatalogValue, loadMejorasState, saveMejorasState, type MejorasBackend } from '@/lib/mejoras-store';
-import { Check, Download, FileText, ImagePlus, Plus, Search, X } from 'lucide-react';
+import { Check, Download, FileText, GripVertical, ImagePlus, Plus, Search, X } from 'lucide-react';
 
 const TABS = [
   { id: 'lista', label: 'Lista' },
-  { id: 'modulo', label: 'Por módulo' },
   { id: 'importar', label: 'Importar' },
   { id: 'exportar', label: 'Exportar' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
+type SortKey = 'registro' | 'title' | 'need' | 'module' | 'requester' | 'requestedAt' | 'status';
+
+const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
+  { key: 'registro', label: '#', width: 56 },
+  { key: 'title', label: 'Título', width: 180 },
+  { key: 'need', label: 'Necesidad', width: 280 },
+  { key: 'module', label: 'Módulo', width: 88 },
+  { key: 'requester', label: 'Solicitante', width: 120 },
+  { key: 'requestedAt', label: 'Fecha de solicitud', width: 130 },
+  { key: 'status', label: 'Estado', width: 110 },
+];
+
+const COL_STORAGE = 'ts-mejoras-cols-v1';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
 const BLANK = '__blank__';
+const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
+const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<SortKey, number>;
+const COLUMN_BY_KEY = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col])) as Record<SortKey, (typeof COLUMN_DEFS)[number]>;
+
+function loadColLayout(): { order: SortKey[]; widths: Record<SortKey, number> } {
+  if (typeof window === 'undefined') return { order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS };
+  try {
+    const raw = window.localStorage.getItem(COL_STORAGE);
+    if (!raw) return { order: DEFAULT_ORDER, widths: { ...DEFAULT_WIDTHS } };
+    const parsed = JSON.parse(raw) as { order?: SortKey[]; widths?: Partial<Record<SortKey, number>> };
+    const saved = (parsed.order || []).filter((key): key is SortKey => DEFAULT_ORDER.includes(key as SortKey));
+    const missing = DEFAULT_ORDER.filter((key) => !saved.includes(key));
+    const order = saved.length > 0 ? [...saved, ...missing] : [...DEFAULT_ORDER];
+    const widths = { ...DEFAULT_WIDTHS };
+    DEFAULT_ORDER.forEach((key) => {
+      const width = parsed.widths?.[key];
+      if (typeof width === 'number' && width >= 48) widths[key] = width;
+    });
+    return { order, widths };
+  } catch {
+    return { order: DEFAULT_ORDER, widths: { ...DEFAULT_WIDTHS } };
+  }
+}
+
+function renderMejoraCell(row: MejoraCase, key: SortKey) {
+  switch (key) {
+    case 'registro':
+      return row.registro;
+    case 'title':
+      return displayDash(row.title);
+    case 'need':
+      return displayDash(row.need);
+    case 'module':
+      return displayDash(row.module);
+    case 'requester':
+      return displayDash(row.requester);
+    case 'requestedAt':
+      return formatIsoDate(row.requestedAt);
+    case 'status':
+      return <StatusPill status={row.status} />;
+    default:
+      return null;
+  }
+}
 
 const emptyForm = (): Partial<MejoraCase> => ({
   requestedAt: todayIso(),
@@ -257,6 +312,12 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   const [filterModule, setFilterModule] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterRequester, setFilterRequester] = useState('');
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'registro', dir: 'asc' });
+  const [columnOrder, setColumnOrder] = useState<SortKey[]>(DEFAULT_ORDER);
+  const [columnWidths, setColumnWidths] = useState<Record<SortKey, number>>(DEFAULT_WIDTHS);
+  const [colsReady, setColsReady] = useState(false);
+  const dragCol = useRef<SortKey | null>(null);
+  const resizeRef = useRef<{ key: SortKey; startX: number; startW: number } | null>(null);
   const [editing, setEditing] = useState<MejoraCase | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelNote, setPanelNote] = useState<string | null>(null);
@@ -281,6 +342,36 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   }, []);
 
   viewerRef.current = viewerImage;
+
+  useEffect(() => {
+    const layout = loadColLayout();
+    setColumnOrder(layout.order);
+    setColumnWidths(layout.widths);
+    setColsReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!colsReady || typeof window === 'undefined') return;
+    window.localStorage.setItem(COL_STORAGE, JSON.stringify({ order: columnOrder, widths: columnWidths }));
+  }, [colsReady, columnOrder, columnWidths]);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      const session = resizeRef.current;
+      if (!session) return;
+      const next = Math.max(48, session.startW + (event.clientX - session.startX));
+      setColumnWidths((widths) => ({ ...widths, [session.key]: next }));
+    };
+    const onUp = () => {
+      resizeRef.current = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -354,13 +445,25 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   }, [state, search, filterModule, filterStatus, filterRequester]);
 
   const kpis = useMemo(() => mejorasKpis(state?.cases || []), [state]);
-  const november = useMemo(() => {
-    const open = (state?.cases || []).filter((row) => isOpenMejora(row.status));
-    return {
-      gestion: open.filter((row) => row.module === 'Gestión'),
-      web: open.filter((row) => row.module === 'Web'),
-    };
-  }, [state]);
+  const sorted = useMemo(() => {
+    const copy = [...filtered];
+    copy.sort((a, b) => {
+      if (sort.key === 'requestedAt') {
+        const leftUnknown = !a.requestedAt;
+        const rightUnknown = !b.requestedAt;
+        if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
+      }
+      if (sort.key === 'registro') {
+        const result = (a.registro || 0) - (b.registro || 0);
+        return sort.dir === 'asc' ? result : -result;
+      }
+      const left = a[sort.key];
+      const right = b[sort.key];
+      const result = String(left ?? '').localeCompare(String(right ?? ''), 'es', { numeric: true });
+      return sort.dir === 'asc' ? result : -result;
+    });
+    return copy;
+  }, [filtered, sort]);
 
   if (!state) {
     return (
@@ -544,6 +647,24 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   };
 
   const requesters = mergeCatalog(state.catalogs.requesters, state.cases.map((row) => row.requester));
+  const tableWidth = columnOrder.reduce((sum, key) => sum + columnWidths[key], 0);
+
+  const toggleSort = (key: SortKey) => {
+    setSort((current) => current.key === key ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  };
+
+  const moveColumn = (from: SortKey, to: SortKey) => {
+    if (from === to) return;
+    setColumnOrder((order) => {
+      const next = [...order];
+      const fromIdx = next.indexOf(from);
+      const toIdx = next.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0) return order;
+      next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, from);
+      return next;
+    });
+  };
 
   return (
     <div className="abonos-shell space-y-4">
@@ -554,7 +675,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">06 Mejoras IT</p>
           <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Mejoras</h2>
           <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Lo que hay que pedir a IT en Gestión o Web. Cada ficha tiene que decir exactamente de qué va.
+            Lo que hay que pedir a IT en ERP o Web. Cada ficha tiene que decir exactamente de qué va.
           </p>
         </div>
         <button
@@ -576,9 +697,9 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-4">
             <Kpi label="Total" value={String(kpis.total)} />
-            <Kpi label="Gestión" value={String(kpis.gestion)} />
+            <Kpi label="ERP" value={String(kpis.erp)} />
             <Kpi label="Web" value={String(kpis.web)} />
-            <Kpi label="Sin captura" value={String(kpis.withoutEvidence)} tone={kpis.withoutEvidence ? 'warning' : undefined} />
+            <Kpi label="Pendientes" value={String(kpis.open)} />
           </div>
           <div className="flex flex-wrap gap-2">
             <label className="relative min-w-[220px] flex-1">
@@ -604,77 +725,77 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
             </select>
           </div>
           <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="min-w-[980px] w-full text-sm">
-              <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
+            <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: tableWidth }}>
+              <colgroup>
+                {columnOrder.map((key) => (
+                  <col key={key} style={{ width: columnWidths[key] }} />
+                ))}
+              </colgroup>
+              <thead className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                 <tr>
-                  <th className="px-3 py-2">#</th>
-                  <th className="px-3 py-2">Título</th>
-                  <th className="px-3 py-2">Módulo</th>
-                  <th className="px-3 py-2">Solicitante</th>
-                  <th className="px-3 py-2">Solicitada</th>
-                  <th className="px-3 py-2">Canal</th>
-                  <th className="px-3 py-2">Estado</th>
-                  <th className="px-3 py-2">Adjuntos</th>
+                  {columnOrder.map((key) => {
+                    const col = COLUMN_BY_KEY[key];
+                    return (
+                      <th
+                        key={key}
+                        className="abonos-th border-b border-[var(--border)] px-1.5 py-1.5"
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          const from = dragCol.current;
+                          dragCol.current = null;
+                          if (from) moveColumn(from, key);
+                        }}
+                      >
+                        <div className="flex min-w-0 items-start justify-center gap-0.5 pr-1.5">
+                          <span
+                            draggable
+                            onDragStart={(event) => {
+                              dragCol.current = key;
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', key);
+                            }}
+                            onDragEnd={() => {
+                              dragCol.current = null;
+                            }}
+                            className="mt-0.5 inline-flex shrink-0 cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                            aria-label={`Mover columna ${col.label}`}
+                          >
+                            <GripVertical className="h-3 w-3" />
+                          </span>
+                          <button type="button" onClick={() => toggleSort(key)} className="abonos-th-label hover:text-[var(--text-primary)]">
+                            {col.label}
+                          </button>
+                        </div>
+                        <span
+                          className="abonos-col-resizer"
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            resizeRef.current = { key, startX: event.clientX, startW: columnWidths[key] };
+                          }}
+                        />
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
-                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)]">
-                    <td className="px-3 py-2 text-[var(--text-muted)]">{row.registro}</td>
-                    <td className="px-3 py-2 font-medium">{row.title}</td>
-                    <td className="px-3 py-2">{displayDash(row.module)}</td>
-                    <td className="px-3 py-2">{displayDash(row.requester)}</td>
-                    <td className="px-3 py-2">{formatIsoDate(row.requestedAt)}</td>
-                    <td className="px-3 py-2">{displayDash(row.channel)}</td>
-                    <td className="px-3 py-2"><StatusPill status={row.status} /></td>
-                    <td className="px-3 py-2 text-[var(--text-secondary)]">{row.attachments.length || '—'}</td>
+                {sorted.map((row) => (
+                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer">
+                    {columnOrder.map((key) => (
+                      <td key={key} className="border-b border-[var(--border)] px-1.5 py-1.5">
+                        <div className="abonos-cell" title={key === 'need' ? row.need || undefined : undefined}>{renderMejoraCell(row, key)}</div>
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-            {filtered.length === 0 && <p className="p-4 text-sm text-[var(--text-secondary)]">No hay mejoras con estos filtros.</p>}
-          </div>
-        </section>
-      )}
-
-      {tab === 'modulo' && (
-        <section className="space-y-4">
-          <p className="text-sm text-[var(--text-secondary)]">
-            Lo que sigue abierto, separado por Gestión y Web. Abre cada ficha: necesidad, cómo te lo pasaron y las capturas.
-          </p>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {([
-              ['Gestión', november.gestion],
-              ['Web', november.web],
-            ] as const).map(([label, rows]) => (
-              <div key={label} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="text-sm font-semibold">{label}</p>
-                  <p className="text-xs text-[var(--text-secondary)]">{rows.length}</p>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {rows.length === 0 && <p className="text-sm text-[var(--text-secondary)]">Nada abierto.</p>}
-                  {rows.map((row) => (
-                    <button
-                      key={row.id}
-                      type="button"
-                      onClick={() => openEdit(row)}
-                      className="block w-full rounded-md border border-[var(--border)] bg-white px-3 py-2.5 text-left hover:border-[var(--border-strong)]"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-medium">{row.title}</p>
-                        <StatusPill status={row.status} />
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-[var(--text-secondary)]">{row.need}</p>
-                      <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">
-                        {displayDash(row.requester)} · {formatIsoDate(row.requestedAt)}
-                        {row.attachments.length > 0 ? ` · ${row.attachments.length} adjunto${row.attachments.length === 1 ? '' : 's'}` : ' · sin captura'}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
+            {sorted.length === 0 && <p className="p-4 text-sm text-[var(--text-secondary)]">No hay mejoras con estos filtros.</p>}
           </div>
         </section>
       )}
@@ -695,7 +816,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
             <FileUpload
               inputId="mejoras-import"
               label="Importar Excel de mejoras"
-              hint="ERP se lee como Gestión. Las filas incompletas no entran."
+              hint="Módulo: ERP o Web. Las filas incompletas no entran."
               onFileLoaded={handleImportFile}
               keepDropzone
             />
@@ -931,7 +1052,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                   <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Resumen</p>
                   <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
                     <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Solicitada</dt>
+                      <dt className="text-[11px] text-[var(--text-secondary)]">Fecha de solicitud</dt>
                       <dd>{formatIsoDate(form.requestedAt || null)}</dd>
                     </div>
                     <div>
