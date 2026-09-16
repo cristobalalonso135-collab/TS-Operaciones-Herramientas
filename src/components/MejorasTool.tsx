@@ -639,10 +639,51 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   };
 
   const exportWorkbook = async () => {
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(mejorasExportRows(filtered.length ? filtered : state.cases)), 'Mejoras');
-    XLSX.writeFile(workbook, 'Mejoras_IT.xlsx');
+    if (state.cases.length === 0) {
+      setError('No hay mejoras para exportar.');
+      return;
+    }
+    setError(null);
+    try {
+      const XLSX = await import('xlsx');
+      const rows = mejorasExportRows(state.cases);
+      const sheet = XLSX.utils.aoa_to_sheet(rows);
+      sheet['!cols'] = [
+        { wch: 10 },
+        { wch: 36 },
+        { wch: 14 },
+        { wch: 10 },
+        { wch: 70 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 36 },
+        { wch: 14 },
+        { wch: 28 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 16 },
+        { wch: 24 },
+        { wch: 8 },
+        { wch: 14 },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, 'Mejoras');
+      const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'Mejoras_IT.xlsx';
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setNote(`Descargadas ${state.cases.length} mejoras.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No he podido generar el Excel.');
+    }
   };
 
   const downloadTemplate = async () => {
@@ -869,11 +910,24 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'exportar' && (
-        <section className="grid gap-3 md:grid-cols-2">
-          <button type="button" onClick={exportWorkbook} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
-            <p className="text-sm font-semibold">Exportar Excel</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Lista actual, con filtros si hay.</p>
-          </button>
+        <section className="space-y-4">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
+            <p className="text-sm font-semibold">Descargar todo</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+              {state.cases.length === 0
+                ? 'No hay mejoras. Importa el Excel o crea una nueva.'
+                : `${state.cases.length} mejoras, con todos los campos: título, necesidad, módulo, solicitante, fecha, canal, detalle, estado, documentos y el resto.`}
+            </p>
+            <button
+              type="button"
+              onClick={exportWorkbook}
+              disabled={state.cases.length === 0}
+              className="mt-4 inline-flex h-10 items-center gap-2 rounded-md bg-[var(--text-primary)] px-4 text-sm font-semibold text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Descargar Excel
+            </button>
+          </div>
         </section>
       )}
 
