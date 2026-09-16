@@ -216,6 +216,7 @@ function CatalogField({
   options,
   required,
   allowFree,
+  blankLabel = 'Selecciona',
   onChange,
   onAdd,
 }: {
@@ -224,6 +225,7 @@ function CatalogField({
   options: string[];
   required?: boolean;
   allowFree?: boolean;
+  blankLabel?: string;
   onChange: (value: string) => void;
   onAdd: (value: string) => void;
 }) {
@@ -251,7 +253,7 @@ function CatalogField({
             onChange={(event) => onChange(event.target.value)}
             className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm outline-none focus:border-[var(--accent)]"
           >
-            <option value="">Selecciona</option>
+            <option value="">{blankLabel}</option>
             {options.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
           <button
@@ -506,7 +508,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       requestedAt: form.requestedAt || null,
       status: form.status,
       channel: form.channel,
-    }, { forNew: !editing });
+    }, editing ? 'edit' : 'new');
     if (gaps.length > 0) {
       setError(formatRequiredGaps(gaps));
       return;
@@ -950,46 +952,58 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
             </div>
 
             <div className="p-5">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{editing ? 'Editar' : 'Datos de la mejora'}</p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{editing ? 'Editar' : 'Datos de la mejora'}</p>
+                <p className="mb-3 text-sm text-[var(--text-secondary)]">
+                  {editing
+                    ? 'Puedes dejar No necesario en lo que no sepas. Guardar no te obliga a completar huecos.'
+                    : 'Los campos con * hay que rellenarlos. Detalle del canal y documentos son opcionales.'}
+                </p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Título *</span>
-                    <input value={form.title || ''} onChange={(event) => setForm({ ...form, title: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" placeholder="En una línea, para saber de qué va" />
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Título{editing ? '' : ' *'}</span>
+                    <input value={form.title || ''} onChange={(event) => setForm({ ...form, title: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" placeholder={editing ? 'No necesario' : 'En una línea, para saber de qué va'} />
                   </label>
-                  <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
+                  <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required={!editing} blankLabel={editing ? 'No necesario' : 'Selecciona'} onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
                   <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Módulo *</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Módulo{editing ? '' : ' *'}</span>
                     <select value={form.module || ''} onChange={(event) => setForm({ ...form, module: event.target.value as MejoraModule | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
+                      <option value="">{editing ? 'No necesario' : 'Selecciona'}</option>
                       {MEJORA_MODULES.map((module) => <option key={module} value={module}>{module}</option>)}
                     </select>
                   </label>
-                  <CatalogField label="Solicitante" value={form.requester || ''} options={requesters} required allowFree onChange={(requester) => setForm({ ...form, requester })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'requester', value) }, backend)} />
+                  <CatalogField label="Solicitante" value={form.requester || ''} options={requesters} required={!editing} allowFree blankLabel={editing ? 'No necesario' : 'Selecciona'} onChange={(requester) => setForm({ ...form, requester })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'requester', value) }, backend)} />
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha de solicitud{editing ? '' : ' *'}</span>
-                    <input type="date" value={form.requestedAt || ''} onChange={(event) => setForm({ ...form, requestedAt: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                    <div className="flex gap-2">
+                      <input type="date" value={form.requestedAt || ''} onChange={(event) => setForm({ ...form, requestedAt: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                      {editing && form.requestedAt && (
+                        <button type="button" onClick={() => setForm({ ...form, requestedAt: '' })} className="h-10 shrink-0 rounded-md border border-[var(--border)] px-2 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]">
+                          No necesario
+                        </button>
+                      )}
+                    </div>
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Estado{editing ? '' : ' *'}</span>
                     <select value={form.status || ''} onChange={(event) => setForm({ ...form, status: event.target.value as MejoraStatus | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
+                      <option value="">{editing ? 'No necesario' : 'Selecciona'}</option>
                       {MEJORA_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
                     </select>
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Canal{editing ? '' : ' *'}</span>
                     <select value={form.channel || ''} onChange={(event) => setForm({ ...form, channel: event.target.value as MejoraChannel | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
+                      <option value="">{editing ? 'No necesario' : 'Selecciona'}</option>
                       {MEJORA_CHANNELS.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
                     </select>
                   </label>
                   <label className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Necesidad *</span>
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Necesidad{editing ? '' : ' *'}</span>
                     <textarea
                       value={form.need || ''}
                       onChange={(event) => setForm({ ...form, need: event.target.value })}
                       rows={5}
-                      placeholder="Qué hay que hacer y por qué. Lo bastante claro para desarrollarla sin preguntar otra vez."
+                      placeholder={editing ? 'No necesario' : 'Qué hay que hacer y por qué. Lo bastante claro para desarrollarla sin preguntar otra vez.'}
                       className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
                     />
                   </label>

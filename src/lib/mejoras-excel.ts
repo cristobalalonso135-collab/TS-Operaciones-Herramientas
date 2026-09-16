@@ -112,7 +112,7 @@ export function importPreviewError(row: Pick<ImportPreviewRow, 'title' | 'area' 
     module: row.module,
     need: row.need,
     requester: row.requester,
-  }));
+  }, 'import'));
 }
 
 export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, headerIndex: number): ImportPreviewRow[] {

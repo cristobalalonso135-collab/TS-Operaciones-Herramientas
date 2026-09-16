@@ -195,14 +195,15 @@ export function mejoraRequiredGaps(row: {
   requestedAt?: string | null;
   status?: string | null;
   channel?: string | null;
-}, options?: { forNew?: boolean }): string[] {
+}, mode: 'new' | 'edit' | 'import' = 'import'): string[] {
+  if (mode === 'edit') return [];
   const gaps: string[] = [];
   if (isUnknownValue(row.title)) gaps.push('Título');
   if (isUnknownValue(row.area)) gaps.push('Área');
   if (!asModule(row.module)) gaps.push('Módulo');
   if (isUnknownValue(row.need)) gaps.push('Necesidad');
   if (isUnknownValue(row.requester)) gaps.push('Solicitante');
-  if (options?.forNew) {
+  if (mode === 'new') {
     if (!String(row.requestedAt || '').trim()) gaps.push('Fecha de solicitud');
     if (!asStatus(row.status)) gaps.push('Estado');
     if (!asChannel(row.channel)) gaps.push('Canal');
