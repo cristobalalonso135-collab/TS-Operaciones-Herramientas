@@ -87,6 +87,14 @@ export function formatIsoDate(value: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
+export function yearFromDates(requestedAt: string | null, createdAt?: string, fallback?: number): number {
+  const iso = String(requestedAt || createdAt || '').slice(0, 10);
+  const y = Number(iso.slice(0, 4));
+  if (y >= 2000 && y <= 2100) return y;
+  if (fallback && fallback >= 2000 && fallback <= 2100) return fallback;
+  return new Date().getFullYear();
+}
+
 export function displayDash(value: string | null | undefined): string {
   const text = String(value ?? '').trim();
   return text || '—';
@@ -191,7 +199,6 @@ export function mejoraRequiredGaps(row: {
   module?: string | null;
   need?: string | null;
   requester?: string | null;
-  addedBy?: string | null;
   requestedAt?: string | null;
   status?: string | null;
   channel?: string | null;

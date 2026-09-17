@@ -7,6 +7,7 @@ import {
   formatRequiredGaps,
   isUnknownValue,
   mejoraRequiredGaps,
+  yearFromDates,
   type MejoraCase,
 } from '@/lib/mejoras-model';
 
@@ -18,11 +19,8 @@ export interface ImportColumnMap {
   title: number | null;
   requestedAt: number | null;
   channel: number | null;
-  informedBy: number | null;
   channelNote: number | null;
   status: number | null;
-  comment: number | null;
-  addedBy: number | null;
 }
 
 export interface ImportPreviewRow {
@@ -34,11 +32,8 @@ export interface ImportPreviewRow {
   requester: string;
   requestedAt: string | null;
   channel: string;
-  informedBy: string;
   channelNote: string;
   status: string;
-  comment: string;
-  addedBy: string;
   error: string | null;
 }
 
@@ -50,11 +45,8 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   title: ['título', 'titulo'],
   requestedAt: ['fecha de solicitud', 'fecha de introducción', 'fecha de introduccion', 'fecha'],
   channel: ['canal'],
-  informedBy: ['persona'],
   channelNote: ['detalle del canal', 'cómo me lo pasaron', 'como me lo pasaron'],
   status: ['estado'],
-  comment: ['comentario', 'comentarios'],
-  addedBy: ['añadido por', 'anadido por', 'creado por'],
 };
 
 function normalizeHeader(value: unknown): string {
@@ -97,11 +89,8 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     title: find(HEADER_ALIASES.title),
     requestedAt: find(HEADER_ALIASES.requestedAt),
     channel: find(HEADER_ALIASES.channel),
-    informedBy: find(HEADER_ALIASES.informedBy),
     channelNote: find(HEADER_ALIASES.channelNote),
     status: find(HEADER_ALIASES.status),
-    comment: find(HEADER_ALIASES.comment),
-    addedBy: find(HEADER_ALIASES.addedBy),
   };
 }
 
@@ -135,11 +124,8 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         requester,
         requestedAt: cellToIso(pick(row, map.requestedAt)),
         channel: cellText(pick(row, map.channel)),
-        informedBy: isUnknownValue(pick(row, map.informedBy)) ? '' : cellText(pick(row, map.informedBy)),
         channelNote: isUnknownValue(pick(row, map.channelNote)) ? '' : cellText(pick(row, map.channelNote)),
         status: cellText(pick(row, map.status)),
-        comment: isUnknownValue(pick(row, map.comment)) ? '' : cellText(pick(row, map.comment)),
-        addedBy: isUnknownValue(pick(row, map.addedBy)) ? 'Cristóbal' : cellText(pick(row, map.addedBy)),
         error: null,
       };
       preview.error = importPreviewError(preview);
@@ -154,18 +140,18 @@ export function previewToRecords(rows: ImportPreviewRow[]): MejoraCase[] {
     registro: index + 1,
     createdAt: new Date().toISOString(),
     requestedAt: row.requestedAt,
-    year: 2027,
+    year: yearFromDates(row.requestedAt, new Date().toISOString()),
     area: row.area,
     module: asModule(row.module),
     title: row.title,
     need: row.need,
     requester: row.requester,
-    addedBy: row.addedBy || 'Cristóbal',
+    addedBy: 'Cristóbal',
     channel: asChannel(row.channel),
-    informedBy: row.informedBy,
+    informedBy: '',
     channelNote: row.channelNote,
     status: asStatus(row.status) || 'Pendiente',
-    comment: row.comment,
+    comment: '',
     attachments: [],
   }));
 }
@@ -178,11 +164,8 @@ export const MEJORAS_TEMPLATE_HEADERS = [
   'Solicitante',
   'Fecha de solicitud',
   'Canal',
-  'Persona',
   'Detalle del canal',
   'Estado',
-  'Añadido por',
-  'Comentario',
 ];
 
 export function mejorasTemplateRows(): unknown[][] {
@@ -203,11 +186,7 @@ export function mejorasExportRows(cases: MejoraCase[]): unknown[][] {
     'Estado',
     'Documentos',
     'Nº documentos',
-    'Añadido por',
-    'Persona',
-    'Comentario',
-    'Año',
-    'Alta',
+    'Fecha de registro',
   ];
   const sorted = [...cases].sort((a, b) => (a.registro || 0) - (b.registro || 0));
   const body = sorted.map((row) => [
@@ -223,10 +202,6 @@ export function mejorasExportRows(cases: MejoraCase[]): unknown[][] {
     row.status || '',
     row.attachments.map((item) => item.name).filter(Boolean).join(', '),
     row.attachments.length,
-    row.addedBy || '',
-    row.informedBy || '',
-    row.comment || '',
-    row.year || '',
     row.createdAt ? formatIsoDate(row.createdAt.slice(0, 10)) : '',
   ]);
   return [header, ...body];

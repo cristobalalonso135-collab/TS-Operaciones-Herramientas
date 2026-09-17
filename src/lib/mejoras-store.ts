@@ -8,6 +8,7 @@ import {
   mergeCatalog,
   mejorasNeedRewrite,
   normalizeAttachments,
+  yearFromDates,
   type MejorasCatalogs,
   type MejorasState,
   type MejoraCase,
@@ -49,11 +50,13 @@ function normalizeState(state: MejorasState): MejorasState {
     ...row,
     module: asModule(row.module),
     channel: asChannel(row.channel),
-    informedBy: String(row.informedBy || '').trim(),
+    informedBy: '',
     channelNote: String(row.channelNote || '').trim(),
     status: asStatus(row.status),
+    comment: '',
+    addedBy: 'Cristóbal',
     attachments: normalizeAttachments(row.attachments),
-    year: row.year || 2027,
+    year: yearFromDates(row.requestedAt, row.createdAt, row.year),
   }));
   const catalogs: MejorasCatalogs = {
     areas: mergeCatalog(EMPTY_CATALOGS.areas, [...(state.catalogs?.areas || []), ...cases.map((row) => row.area)]),

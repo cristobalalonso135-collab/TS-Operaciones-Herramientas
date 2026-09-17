@@ -303,6 +303,60 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-secondary)]`}>{status}</span>;
 }
 
+function AckDialog({
+  title,
+  message,
+  onAccept,
+}: {
+  title: string;
+  message: string;
+  onAccept: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' || event.key === 'Enter') onAccept();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onAccept]);
+
+  return (
+    <div
+      className="abonos-modal-backdrop"
+      style={{ zIndex: 70, alignItems: 'center' }}
+      onClick={onAccept}
+      role="presentation"
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-xl"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="mejoras-ack-title"
+        aria-describedby="mejoras-ack-message"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--success-soft)] text-[var(--success)]">
+            <Check className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <p id="mejoras-ack-title" className="font-display text-lg font-semibold tracking-tight">{title}</p>
+            <p id="mejoras-ack-message" className="mt-1 text-sm text-[var(--text-secondary)]">{message}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          autoFocus
+          onClick={onAccept}
+          className="mt-5 h-10 w-full rounded-md bg-[var(--text-primary)] text-sm font-semibold text-white hover:bg-black"
+        >
+          Aceptar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function MejorasTool({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<TabId>('lista');
   const [state, setState] = useState<MejorasState | null>(null);
@@ -322,6 +376,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   const [editing, setEditing] = useState<MejoraCase | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelNote, setPanelNote] = useState<string | null>(null);
+  const [ack, setAck] = useState<{ title: string; message: string } | null>(null);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<MejoraCase>>(emptyForm());
   const [importHeaders, setImportHeaders] = useState<unknown[]>([]);
@@ -541,11 +596,12 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       'requester',
       row.requester,
     );
-    await persist({ cases, catalogs }, backend);
-    setEditing(row);
-    setForm(row);
-    setNote('Guardado.');
-    setPanelNote('Guardado. Ya está en la lista.');
+    void persist({ cases, catalogs }, backend);
+    closePanel();
+    setAck({
+      title: 'Guardado',
+      message: 'La mejora ya está en la lista.',
+    });
   };
 
   const addEvidenceBlobs = async (files: Array<{ blob: Blob; name: string }>) => {
@@ -593,7 +649,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
 
   const deleteCase = async (id: string) => {
     if (!window.confirm('¿Eliminar esta mejora?')) return;
-    await persist({
+    void persist({
       ...state,
       cases: state.cases.filter((row) => row.id !== id),
     }, backend);
@@ -682,7 +738,10 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-      setNote(`Descargadas ${state.cases.length} mejoras.`);
+      setAck({
+        title: 'Excel descargado',
+        message: `Se han exportado ${state.cases.length} mejoras.`,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No he podido generar el Excel.');
     }
@@ -1083,9 +1142,9 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                   <button
                     type="button"
                     onClick={saveForm}
-                    className={`inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-semibold text-white ${panelNote?.startsWith('Guardado') ? 'bg-[var(--success)]' : 'bg-[var(--text-primary)]'}`}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
                   >
-                    {panelNote?.startsWith('Guardado') ? <><Check className="h-4 w-4" /> Guardado</> : 'Guardar'}
+                    Guardar
                   </button>
                   {editing && (
                     <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
@@ -1094,6 +1153,14 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
             </div>
           </div>
         </div>
+      )}
+
+      {ack && (
+        <AckDialog
+          title={ack.title}
+          message={ack.message}
+          onAccept={() => setAck(null)}
+        />
       )}
 
       {viewerImage && (
