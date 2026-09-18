@@ -20,6 +20,7 @@ import {
   displayDash,
   formatIsoDate,
   formatMoney,
+  formatMoneyInput,
   formatRequiredGaps,
   groupWeeklyTasks,
   linkedCases,
@@ -390,6 +391,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [panelNote, setPanelNote] = useState<string | null>(null);
   const [viewerImage, setViewerImage] = useState<string | null>(null);
   const [form, setForm] = useState<Partial<AbonoCase>>(emptyForm());
+  const [expectedAmountText, setExpectedAmountText] = useState('');
+  const [communicatedAmountText, setCommunicatedAmountText] = useState('');
   const [receiptDraft, setReceiptDraft] = useState({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
   const [importHeaders, setImportHeaders] = useState<unknown[]>([]);
   const [importRows, setImportRows] = useState<unknown[][]>([]);
@@ -468,6 +471,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       }
       setEditing(null);
       setForm(emptyForm());
+      setExpectedAmountText('');
+      setCommunicatedAmountText('');
       setPanelNote(null);
       setPanelOpen(false);
     };
@@ -603,8 +608,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }
 
   const openNew = (preset?: Partial<AbonoCase>, keepTab = false) => {
+    const next = { ...emptyForm(), ...preset };
     setEditing(null);
-    setForm({ ...emptyForm(), ...preset });
+    setForm(next);
+    setExpectedAmountText(formatMoneyInput(next.expectedAmount ?? null));
+    setCommunicatedAmountText(formatMoneyInput(next.communicatedAmount ?? null));
     setPanelNote(null);
     setViewerImage(null);
     setPanelOpen(true);
@@ -622,6 +630,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const closePanel = () => {
     setEditing(null);
     setForm(emptyForm());
+    setExpectedAmountText('');
+    setCommunicatedAmountText('');
     setPanelNote(null);
     setViewerImage(null);
     setPanelOpen(false);
@@ -636,6 +646,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       attachments: row.attachments || [],
       estimated: typeof row.estimated === 'boolean' ? row.estimated : null,
     });
+    setExpectedAmountText(formatMoneyInput(row.expectedAmount));
+    setCommunicatedAmountText(formatMoneyInput(row.communicatedAmount));
     setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setPanelNote(null);
     setViewerImage(null);
@@ -676,12 +688,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const saveForm = async () => {
+    const expectedAmount = parseMoney(expectedAmountText);
+    const communicatedAmount = parseMoney(communicatedAmountText);
     const gaps = abonoRequiredGaps({
       brand: form.brand,
       area: form.area,
       teamMotivo: form.teamMotivo,
       type: form.type,
-      expectedAmount: form.expectedAmount ?? null,
+      expectedAmount,
       dueDate: form.dueDate || null,
       addedBy: form.addedBy,
       responsible: form.responsible,
@@ -703,7 +717,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       : 0;
     const status = statusAfterReceipts(
       (form.status || '') as AbonoStatus | '',
-      form.expectedAmount ?? null,
+      expectedAmount,
       received,
       estimated,
     );
@@ -722,8 +736,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       source: (form.source || '') as AbonoSource | '',
       tradeTermId: form.origin === 'Acuerdo' ? (form.tradeTermId || null) : null,
       informedBy: form.informedBy || '',
-      expectedAmount: form.expectedAmount ?? null,
-      communicatedAmount: form.communicatedAmount ?? null,
+      expectedAmount,
+      communicatedAmount,
       status,
       nextReview: form.nextReview || null,
       comment: form.comment || '',
@@ -965,6 +979,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     await persist({ ...state, cases: [], receipts: [], claims: [] }, backend);
     setEditing(null);
     setForm(emptyForm());
+    setExpectedAmountText('');
+    setCommunicatedAmountText('');
     setPanelOpen(false);
     setPreview([]);
     setNote(`Borrados ${count} abonos.`);
@@ -1707,7 +1723,17 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto *</span>
-                    <input value={form.expectedAmount ?? ''} onChange={(event) => setForm({ ...form, expectedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
+                    <input
+                      inputMode="decimal"
+                      placeholder="300,44"
+                      value={expectedAmountText}
+                      onChange={(event) => {
+                        const text = event.target.value;
+                        setExpectedAmountText(text);
+                        setForm({ ...form, expectedAmount: parseMoney(text) });
+                      }}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
+                    />
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Real o estimado *</span>
@@ -1851,7 +1877,17 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   {form.status === 'Pago comunicado' && (
                     <label className="space-y-1">
                       <span className="text-xs font-medium text-[var(--text-secondary)]">Importe comunicado por la marca</span>
-                      <input value={form.communicatedAmount ?? ''} onChange={(event) => setForm({ ...form, communicatedAmount: parseMoney(event.target.value) })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
+                      <input
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        value={communicatedAmountText}
+                        onChange={(event) => {
+                          const text = event.target.value;
+                          setCommunicatedAmountText(text);
+                          setForm({ ...form, communicatedAmount: parseMoney(text) });
+                        }}
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
+                      />
                       {form.communicatedAmount !== null && form.communicatedAmount !== undefined
                         && Math.abs(form.communicatedAmount - (currentComputed?.pending ?? Math.max(0, form.expectedAmount ?? 0))) > 0.009 && (
                         <span className="block text-xs font-medium text-[var(--warning)]">No coincide con el importe pendiente.</span>
@@ -2064,7 +2100,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   {editing && (
                     <div className="mt-3 grid gap-2">
                       <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <input value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] px-3 text-right font-mono text-sm" />
+                      <input inputMode="decimal" value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] px-3 text-right font-mono text-sm" />
                       <input value={receiptDraft.reference} onChange={(event) => setReceiptDraft({ ...receiptDraft, reference: event.target.value })} placeholder="Referencia" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
                       <input value={receiptDraft.comment} onChange={(event) => setReceiptDraft({ ...receiptDraft, comment: event.target.value })} placeholder="Comentario" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
                       <button type="button" onClick={addReceipt} className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">Registrar pago</button>

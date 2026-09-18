@@ -7,7 +7,7 @@ export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcia
 export const ABONO_AMOUNT_KINDS = ['Real', 'Estimado'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
-export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Off Invoice', 'Material gratuito', 'Otro'];
+export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Dto pedido', 'Off Invoice', 'Material gratuito', 'Otro'];
 export const DEFAULT_AREAS = ['B2B', 'Grassroots', 'Pro Clubs', 'Teamsports'];
 export const DEFAULT_TEAMS = [
   'General',
@@ -192,16 +192,23 @@ export function formatMoney(value: number | null | undefined): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
+export function formatMoneyInput(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '';
+  return value.toLocaleString('es-ES', { maximumFractionDigits: 2 });
+}
+
 export function parseMoney(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  const text = String(value).replace(/\s/g, '').replace('€', '');
-  if (!text) return null;
+  const text = String(value).replace(/\s/g, '').replace(/€/gi, '').replace(/eur/gi, '');
+  if (!text || text === '-' || text === ',' || text === '.') return null;
   const normalized = text.includes(',') && text.includes('.')
     ? text.replace(/\./g, '').replace(',', '.')
     : text.includes(',')
       ? text.replace(',', '.')
-      : text;
+      : /^\d{1,3}(\.\d{3})+$/.test(text)
+        ? text.replace(/\./g, '')
+        : text;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
