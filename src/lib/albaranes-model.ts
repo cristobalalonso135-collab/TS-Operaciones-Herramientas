@@ -45,6 +45,7 @@ export interface Carga {
   estadoCounts?: Array<{ name: string; count: number; importe: number }>;
   serieCounts?: Array<{ name: string; count: number; importe: number }>;
   buckets?: Array<{ serie: string; estado: string; count: number; importe: number }>;
+  listing?: ListingRow[];
   incidents?: DataIncident[];
   newCount: number;
   sameCount: number;
@@ -75,29 +76,39 @@ export interface Agent {
   activo: boolean;
 }
 
+export interface ListingRow {
+  albaran: string;
+  serie: string;
+  estado: string;
+  fechaAlbaran: string | null;
+  fechaEstado: string | null;
+  agente: string;
+  colectivo: string;
+}
+
 export type DataIncidentReason =
-  | 'Agente vacío'
-  | 'Colectivo vacío'
+  | 'Sin serie'
+  | 'WWW sin colectivo'
   | 'Colectivo desconocido'
   | 'Colectivo inactivo'
   | 'Colectivo sin agente'
   | 'Varios códigos de colectivo';
 
 export const DATA_INCIDENT_REASONS: DataIncidentReason[] = [
+  'Sin serie',
+  'WWW sin colectivo',
   'Colectivo desconocido',
-  'Colectivo vacío',
   'Colectivo inactivo',
   'Colectivo sin agente',
   'Varios códigos de colectivo',
-  'Agente vacío',
 ];
 
 export const DATA_INCIDENT_DETAIL: Record<DataIncidentReason, string> = {
-  'Agente vacío': 'El albarán no es Internet y viene sin agente en el ERP.',
-  'Colectivo vacío': 'Es Internet y no trae código de colectivo.',
+  'Sin serie': 'El albarán no trae serie reconocible (WWW, EQI, EQK, B2B, DVC).',
+  'WWW sin colectivo': 'Es serie WWW y no trae código de colectivo.',
   'Colectivo desconocido': 'El código no está en el maestro de colectivos.',
   'Colectivo inactivo': 'El colectivo existe en el maestro pero está inactivo.',
-  'Colectivo sin agente': 'El colectivo no tiene agente en el maestro.',
+  'Colectivo sin agente': 'El colectivo no tiene agente en el maestro; no se podrá enviar el correo.',
   'Varios códigos de colectivo': 'Hay más de un código en el mismo campo.',
 };
 
@@ -348,10 +359,10 @@ export function cargaBuckets(carga: Carga): Array<{ serie: string; estado: strin
 }
 
 export interface CargaFilters {
-  serie?: string;
-  estado?: string;
-  agente?: string;
-  almacen?: string;
+  series?: string[];
+  estados?: string[];
+  agentes?: string[];
+  almacenes?: string[];
 }
 
 export interface CargaSummary {
@@ -361,6 +372,18 @@ export interface CargaSummary {
   serieCounts: Array<{ name: string; count: number; importe: number }>;
   estadoCount: number;
   serieCount: number;
+}
+
+function asSet(values: string[] | undefined, map: (value: string) => string): Set<string> {
+  return new Set((values || []).map(map).filter(Boolean));
+}
+
+function allows(set: Set<string>, value: string): boolean {
+  return set.size === 0 || set.has(value);
+}
+
+function serieKey(value: string): string {
+  return value.trim().toUpperCase() || '(SIN SERIE)';
 }
 
 export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}): CargaSummary {
@@ -374,19 +397,19 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
   };
   if (!carga) return empty;
 
-  const serieFilter = (filters.serie || '').trim().toUpperCase();
-  const estadoFilter = (filters.estado || '').trim();
-  const agenteFilter = (filters.agente || '').trim();
-  const almacenFilter = (filters.almacen || '').trim();
-  const rowFilters = Boolean(agenteFilter || almacenFilter);
+  const series = asSet(filters.series, serieKey);
+  const estados = asSet(filters.estados, normKey);
+  const agentes = asSet(filters.agentes, normKey);
+  const almacenes = asSet(filters.almacenes, normKey);
+  const rowFilters = agentes.size > 0 || almacenes.size > 0;
 
   const rows = carga.rows || [];
   if (rowFilters && rows.length > 0) {
     const filteredRows = rows.filter((row) => {
-      if (serieFilter && row.serie.toUpperCase() !== serieFilter) return false;
-      if (estadoFilter && normKey(row.estado) !== normKey(estadoFilter)) return false;
-      if (agenteFilter && normKey(row.agente) !== normKey(agenteFilter)) return false;
-      if (almacenFilter && normKey(row.almacenOrigen) !== normKey(almacenFilter)) return false;
+      if (!allows(series, serieKey(row.serie))) return false;
+      if (!allows(estados, normKey(row.estado))) return false;
+      if (!allows(agentes, normKey(row.agente))) return false;
+      if (!allows(almacenes, normKey(row.almacenOrigen))) return false;
       return true;
     });
     const estadoCounts = tally(filteredRows, (row) => row.estado || '(sin estado)');
@@ -402,8 +425,8 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
   }
 
   const buckets = cargaBuckets(carga).filter((item) => {
-    if (serieFilter && item.serie.toUpperCase() !== serieFilter) return false;
-    if (estadoFilter && normKey(item.estado) !== normKey(estadoFilter)) return false;
+    if (!allows(series, serieKey(item.serie))) return false;
+    if (!allows(estados, normKey(item.estado))) return false;
     return true;
   });
 
@@ -422,15 +445,15 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
 
   let estadoCounts = sortCounts(carga.estadoCounts || []);
   let serieCounts = sortCounts(carga.serieCounts || []);
-  if (estadoFilter) estadoCounts = estadoCounts.filter((item) => normKey(item.name) === normKey(estadoFilter));
-  if (serieFilter) serieCounts = serieCounts.filter((item) => item.name.toUpperCase() === serieFilter);
+  if (estados.size) estadoCounts = estadoCounts.filter((item) => allows(estados, normKey(item.name)));
+  if (series.size) serieCounts = serieCounts.filter((item) => allows(series, serieKey(item.name)));
   const fromEstados = estadoCounts.reduce((sum, item) => sum + item.count, 0);
   const fromSeries = serieCounts.reduce((sum, item) => sum + item.count, 0);
   const fromEstadoImporte = estadoCounts.reduce((sum, item) => sum + item.importe, 0);
   const fromSerieImporte = serieCounts.reduce((sum, item) => sum + item.importe, 0);
   return {
-    total: serieFilter && !estadoFilter ? fromSeries : fromEstados || fromSeries,
-    importe: serieFilter && !estadoFilter ? fromSerieImporte : fromEstadoImporte || fromSerieImporte,
+    total: series.size && !estados.size ? fromSeries : fromEstados || fromSeries,
+    importe: series.size && !estados.size ? fromSerieImporte : fromEstadoImporte || fromSerieImporte,
     estadoCounts,
     serieCounts,
     estadoCount: estadoCounts.length,
@@ -527,6 +550,7 @@ export function knownEstados(state: AlbaranesState): string[] {
   push(STATE_PTE_PAGO);
   state.rules.forEach((rule) => push(rule.estado));
   state.cargas.forEach((carga) => (carga.estadoCounts || []).forEach((item) => push(item.name)));
+  latestCarga(state)?.listing?.forEach((row) => push(row.estado));
   latestCarga(state)?.rows.forEach((row) => push(row.estado));
   return out;
 }
@@ -542,6 +566,7 @@ export function knownSeries(state: AlbaranesState): string[] {
   };
   state.rules.forEach((rule) => rule.series.forEach(push));
   state.cargas.forEach((carga) => (carga.serieCounts || []).forEach((item) => push(item.name)));
+  latestCarga(state)?.listing?.forEach((row) => push(row.serie));
   latestCarga(state)?.rows.forEach((row) => push(row.serie));
   return out;
 }
@@ -558,6 +583,60 @@ export function findAgentByErp(agents: Agent[], agenteErp: string): Agent[] {
 export function findColectivos(colectivos: Colectivo[], codigo: string): Colectivo[] {
   const key = normKey(codigo);
   return colectivos.filter((item) => normKey(item.codigo) === key);
+}
+
+export function toListing(row: AlbaranRow): ListingRow {
+  return {
+    albaran: row.albaran,
+    serie: row.serie,
+    estado: row.estado,
+    fechaAlbaran: row.fechaAlbaran,
+    fechaEstado: row.fechaEstado,
+    agente: row.agente,
+    colectivo: row.colectivo,
+  };
+}
+
+export function listingAsRows(listing: ListingRow[]): AlbaranRow[] {
+  return listing.map((row) => ({
+    id: row.albaran,
+    albaran: row.albaran,
+    serie: row.serie,
+    estado: row.estado,
+    fechaAlbaran: row.fechaAlbaran,
+    fechaEstado: row.fechaEstado,
+    agente: row.agente,
+    colectivo: row.colectivo,
+    almacenOrigen: '',
+    idEstado: '',
+  }));
+}
+
+export function lookupAgenteColectivo(codigo: string, colectivos: Colectivo[]): string {
+  return lookupAgenteColectivoFromIndex(codigo, colectivoAgenteIndex(colectivos));
+}
+
+export function colectivoAgenteIndex(colectivos: Colectivo[]): Map<string, string> {
+  const map = new Map<string, string>();
+  colectivos.forEach((item) => {
+    const name = (item.agente || item.idAgente).trim();
+    if (name) map.set(normKey(item.codigo), name);
+  });
+  return map;
+}
+
+export function lookupAgenteColectivoFromIndex(codigo: string, index: Map<string, string>): string {
+  return splitColectivoCodes(codigo)
+    .map((item) => index.get(normKey(item)))
+    .filter((item): item is string => Boolean(item))
+    .join(', ');
+}
+
+export function currentListing(state: AlbaranesState): ListingRow[] {
+  const last = latestCarga(state);
+  if (!last) return [];
+  if (last.listing && last.listing.length > 0) return last.listing;
+  return (last.rows || []).map(toListing);
 }
 
 export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]): DataIncident[] {
@@ -577,33 +656,26 @@ export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]):
   };
 
   rows.forEach((row) => {
-    if (isInternetAgent(row.agente)) {
-      const codes = splitColectivoCodes(row.colectivo);
-      if (codes.length === 0) {
-        push(row, 'Colectivo vacío');
-        return;
-      }
-      if (codes.length > 1) {
-        push(row, 'Varios códigos de colectivo');
-        return;
-      }
-      if (!hasMaster) return;
-      const mapped = findColectivos(colectivos, codes[0]);
-      if (mapped.length === 0) {
-        push(row, 'Colectivo desconocido');
-        return;
-      }
-      const active = mapped.filter((item) => item.activo);
-      if (active.length === 0) {
-        push(row, 'Colectivo inactivo');
-        return;
-      }
-      if (!active.some((item) => (item.agente || item.idAgente).trim())) {
-        push(row, 'Colectivo sin agente');
-      }
+    if (!row.serie.trim()) push(row, 'Sin serie');
+    const codes = splitColectivoCodes(row.colectivo);
+    if (row.serie.trim().toUpperCase() === 'WWW' && codes.length === 0) {
+      push(row, 'WWW sin colectivo');
+    }
+    if (codes.length > 1) push(row, 'Varios códigos de colectivo');
+    if (!hasMaster || codes.length !== 1) return;
+    const mapped = findColectivos(colectivos, codes[0]);
+    if (mapped.length === 0) {
+      push(row, 'Colectivo desconocido');
       return;
     }
-    if (!row.agente.trim()) push(row, 'Agente vacío');
+    const active = mapped.filter((item) => item.activo);
+    if (active.length === 0) {
+      push(row, 'Colectivo inactivo');
+      return;
+    }
+    if (!active.some((item) => (item.agente || item.idAgente).trim())) {
+      push(row, 'Colectivo sin agente');
+    }
   });
   return out;
 }
@@ -614,7 +686,7 @@ export function currentDataIncidents(state: AlbaranesState): DataIncident[] {
 
 export function withLatestIncidents(state: AlbaranesState, colectivos: Colectivo[]): AlbaranesState {
   const last = latestCarga(state);
-  const rows = last?.rows || [];
+  const rows = last?.rows?.length ? last.rows : listingAsRows(last?.listing || []);
   if (!last || rows.length === 0) return { ...state, colectivos };
   const incidents = buildDataIncidents(rows, colectivos);
   return {
@@ -834,6 +906,7 @@ export function ingestCarga(state: AlbaranesState, input: {
     estadoCounts: tally(input.rows, (row) => row.estado || '(sin estado)'),
     serieCounts: tally(input.rows, (row) => row.serie || '(sin serie)'),
     buckets: tallyBuckets(input.rows),
+    listing: input.rows.map(toListing),
     incidents: buildDataIncidents(input.rows, state.colectivos),
     newCount,
     sameCount,
@@ -922,7 +995,10 @@ export function currentIncidents(state: AlbaranesState): Evaluacion[] {
 }
 
 export function currentAlbaranes(state: AlbaranesState): AlbaranRow[] {
-  return latestCarga(state)?.rows || [];
+  const last = latestCarga(state);
+  if (!last) return [];
+  if (last.rows && last.rows.length > 0) return last.rows;
+  return listingAsRows(last.listing || []);
 }
 
 export function albaranTimeline(state: AlbaranesState, albaranId: string): Array<{
@@ -994,8 +1070,16 @@ export function trendByBucket(
   }));
 }
 
-export function photoCarga(carga: Carga): Carga {
-  return { ...carga, rows: [] };
+export function photoCarga(carga: Carga, keepDetail = false): Carga {
+  const listing = keepDetail
+    ? (carga.listing && carga.listing.length > 0 ? carga.listing : (carga.rows || []).map(toListing))
+    : undefined;
+  return {
+    ...carga,
+    rows: [],
+    listing,
+    incidents: keepDetail ? carga.incidents : undefined,
+  };
 }
 
 export function averageAge(rows: AlbaranRow[], loadDate: string): number {
@@ -1011,19 +1095,30 @@ export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
   const summary = summarizeCarga(last, filters);
   const baseline = summarizeCarga(last);
   const matchEval = (item: Evaluacion) => {
-    if (filters.serie && item.serie.toUpperCase() !== filters.serie.trim().toUpperCase()) return false;
-    if (filters.estado && normKey(item.estado) !== normKey(filters.estado)) return false;
-    if (filters.agente && normKey(item.agenteOriginal) !== normKey(filters.agente)) return false;
+    const series = asSet(filters.series, serieKey);
+    const estados = asSet(filters.estados, normKey);
+    const agentes = asSet(filters.agentes, normKey);
+    if (!allows(series, serieKey(item.serie))) return false;
+    if (!allows(estados, normKey(item.estado))) return false;
+    if (!allows(agentes, normKey(item.agenteOriginal))) return false;
     return true;
   };
   const actions = currentActions(state).filter(matchEval);
   const dataIncidents = currentDataIncidents(state).filter((item) => {
-    if (filters.serie && item.serie.toUpperCase() !== filters.serie.trim().toUpperCase()) return false;
-    if (filters.estado && normKey(item.estado) !== normKey(filters.estado)) return false;
-    if (filters.agente && normKey(item.agente) !== normKey(filters.agente)) return false;
+    const series = asSet(filters.series, serieKey);
+    const estados = asSet(filters.estados, normKey);
+    const agentes = asSet(filters.agentes, normKey);
+    if (!allows(series, serieKey(item.serie))) return false;
+    if (!allows(estados, normKey(item.estado))) return false;
+    if (!allows(agentes, normKey(item.agente))) return false;
     return true;
   });
-  const filtered = Boolean(filters.serie || filters.estado || filters.agente || filters.almacen);
+  const filtered = Boolean(
+    (filters.series && filters.series.length)
+    || (filters.estados && filters.estados.length)
+    || (filters.agentes && filters.agentes.length)
+    || (filters.almacenes && filters.almacenes.length),
+  );
   return {
     lastLoadDate: last?.loadDate || null,
     lastLoadedAt: last?.loadedAt || null,

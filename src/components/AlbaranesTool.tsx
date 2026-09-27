@@ -18,6 +18,8 @@ import {
   currentActions,
   currentAlbaranes,
   currentDataIncidents,
+  currentListing,
+  daysBetween,
   DATA_INCIDENT_DETAIL,
   DATA_INCIDENT_REASONS,
   displayDash,
@@ -27,6 +29,8 @@ import {
   formatEuro,
   formatInt,
   formatShare,
+  colectivoAgenteIndex,
+  lookupAgenteColectivoFromIndex,
   ingestCarga,
   knownEstados,
   knownSeries,
@@ -47,17 +51,20 @@ import {
   type Regla,
 } from '@/lib/albaranes-model';
 import { loadAlbaranesState, saveAlbaranesState, type AlbaranesBackend } from '@/lib/albaranes-store';
-import { Download, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, Download, Plus, Search, Trash2 } from 'lucide-react';
 
 const TABS = [
   { id: 'carga', label: 'Carga' },
   { id: 'reglas', label: 'Reglas' },
   { id: 'resumen', label: 'Resumen' },
+  { id: 'listado', label: 'Listado' },
   { id: 'incidencias', label: 'Incidencias' },
   { id: 'historico', label: 'Histórico' },
 ] as const;
 
-type TabId = (typeof TABS)[number]['id'] | 'acciones' | 'incidencias' | 'directorios' | 'comunicaciones';
+type TabId = (typeof TABS)[number]['id'] | 'acciones' | 'directorios' | 'comunicaciones';
+
+const LIST_PAGE = 120;
 
 async function sha256(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -117,12 +124,17 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [filterEnvio, setFilterEnvio] = useState('');
   const [filterNuevo, setFilterNuevo] = useState('');
   const [filterAge, setFilterAge] = useState('');
-  const [incReason, setIncReason] = useState('');
-  const [incSerie, setIncSerie] = useState('');
+  const [incReason, setIncReason] = useState<string[]>([]);
+  const [incSerie, setIncSerie] = useState<string[]>([]);
   const [incQuery, setIncQuery] = useState('');
-  const [vistaSerie, setVistaSerie] = useState('');
-  const [vistaEstado, setVistaEstado] = useState('');
-  const [vistaAgente, setVistaAgente] = useState('');
+  const [listSerie, setListSerie] = useState<string[]>([]);
+  const [listEstado, setListEstado] = useState<string[]>([]);
+  const [listAgente, setListAgente] = useState<string[]>([]);
+  const [listQuery, setListQuery] = useState('');
+  const [listPage, setListPage] = useState(0);
+  const [vistaSerie, setVistaSerie] = useState<string[]>([]);
+  const [vistaEstado, setVistaEstado] = useState<string[]>([]);
+  const [vistaAgente, setVistaAgente] = useState<string[]>([]);
   const [trendEstado, setTrendEstado] = useState(STATE_EN_PROCESO);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
   const [dirTab, setDirTab] = useState<'agentes' | 'colectivos'>('agentes');
@@ -153,7 +165,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   }, []);
 
   const vistaFilters = useMemo(
-    () => ({ serie: vistaSerie, estado: vistaEstado, agente: vistaAgente }),
+    () => ({ series: vistaSerie, estados: vistaEstado, agentes: vistaAgente }),
     [vistaAgente, vistaEstado, vistaSerie],
   );
   const kpis = useMemo(() => (state ? resumenKpis(state, vistaFilters) : null), [state, vistaFilters]);
@@ -167,8 +179,11 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   }, [incidents]);
   const filteredIncidents = useMemo(() => {
     return incidents.filter((row) => {
-      if (incReason && row.reason !== incReason) return false;
-      if (incSerie && row.serie !== incSerie) return false;
+      if (incReason.length && !incReason.includes(row.reason)) return false;
+      if (incSerie.length) {
+        const keys = new Set(incSerie.map((item) => item.toUpperCase()));
+        if (!keys.has((row.serie || '(sin serie)').toUpperCase())) return false;
+      }
       if (incQuery) {
         const hay = `${row.albaran} ${row.agente} ${row.codigoColectivo} ${row.estado}`.toLocaleLowerCase('es');
         if (!hay.includes(incQuery.toLocaleLowerCase('es'))) return false;
@@ -180,6 +195,38 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     () => (state ? state.colectivos.filter((item) => item.activo && !(item.agente || item.idAgente).trim()) : []),
     [state],
   );
+  const listing = useMemo(() => (state ? currentListing(state) : []), [state]);
+  const agenteColectivoMap = useMemo(
+    () => (state ? colectivoAgenteIndex(state.colectivos) : new Map<string, string>()),
+    [state],
+  );
+  const filteredListing = useMemo(() => {
+    return listing.filter((row) => {
+      if (listSerie.length) {
+        const keys = new Set(listSerie.map((item) => item.toUpperCase()));
+        if (!keys.has((row.serie || '(sin serie)').toUpperCase())) return false;
+      }
+      if (listEstado.length) {
+        const keys = new Set(listEstado.map((item) => item.toLocaleLowerCase('es')));
+        if (!keys.has(row.estado.trim().toLocaleLowerCase('es'))) return false;
+      }
+      if (listAgente.length) {
+        const keys = new Set(listAgente.map((item) => item.toLocaleLowerCase('es')));
+        if (!keys.has(row.agente.trim().toLocaleLowerCase('es'))) return false;
+      }
+      if (listQuery) {
+        const hay = `${row.albaran} ${row.agente} ${row.colectivo} ${row.estado}`.toLocaleLowerCase('es');
+        if (!hay.includes(listQuery.toLocaleLowerCase('es'))) return false;
+      }
+      return true;
+    });
+  }, [listAgente, listEstado, listQuery, listSerie, listing]);
+  const listPages = Math.max(1, Math.ceil(filteredListing.length / LIST_PAGE));
+  const listingPage = filteredListing.slice(listPage * LIST_PAGE, listPage * LIST_PAGE + LIST_PAGE);
+
+  useEffect(() => {
+    setListPage(0);
+  }, [listAgente, listEstado, listQuery, listSerie]);
   const actuales = useMemo(() => (state ? currentAlbaranes(state) : []), [state]);
   const series = state ? knownSeries(state) : [...DEFAULT_SERIES];
   const estados = state ? knownEstados(state) : [];
@@ -425,24 +472,24 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">{ALCANCE_ALBARANES}</p>
           <div className="flex flex-wrap items-center gap-2">
-            <Select value={vistaSerie} onChange={setVistaSerie} label="Serie" options={series.map((item) => [item, item])} />
-            <Select value={vistaEstado} onChange={setVistaEstado} label="Estado" options={estados.map((item) => [item, item])} />
+            <MultiSelect label="Serie" values={vistaSerie} onChange={setVistaSerie} options={series.map((item) => [item, item])} />
+            <MultiSelect label="Estado" values={vistaEstado} onChange={setVistaEstado} options={estados.map((item) => [item, item])} />
             {agentesVista.length > 0 && (
-              <Select value={vistaAgente} onChange={setVistaAgente} label="Agente" options={agentesVista.map((item) => [item, item])} />
+              <MultiSelect label="Agente" values={vistaAgente} onChange={setVistaAgente} options={agentesVista.map((item) => [item, item])} />
             )}
-            {(vistaSerie || vistaEstado || vistaAgente) && (
+            {(vistaSerie.length || vistaEstado.length || vistaAgente.length) ? (
               <button
                 type="button"
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
                 onClick={() => {
-                  setVistaSerie('');
-                  setVistaEstado('');
-                  setVistaAgente('');
+                  setVistaSerie([]);
+                  setVistaEstado([]);
+                  setVistaAgente([]);
                 }}
               >
                 Quitar filtros
               </button>
-            )}
+            ) : null}
           </div>
           <div className="grid grid-cols-6 gap-3">
             <Kpi label="Última carga" value={formatIsoDateTime(kpis?.lastLoadedAt || kpis?.lastLoadDate)} hint={kpis?.lastFileName || 'Aún no hay fichero'} />
@@ -474,6 +521,108 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
+      {tab === 'listado' && (
+        <div className="space-y-3">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Última carga para revisar, descargar y preparar el correo. Los días se calculan a hoy.
+          </p>
+          {listing.length === 0 && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Vuelve a subir el CSV de albaranes en Carga para ver el listado completo.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchBox value={listQuery} onChange={setListQuery} />
+            <MultiSelect label="Serie" values={listSerie} onChange={setListSerie} options={series.map((item) => [item, item])} />
+            <MultiSelect label="Estado" values={listEstado} onChange={setListEstado} options={estados.map((item) => [item, item])} />
+            {agentesVista.length > 0 && (
+              <MultiSelect label="Agente" values={listAgente} onChange={setListAgente} options={agentesVista.map((item) => [item, item])} />
+            )}
+            {(listSerie.length || listEstado.length || listAgente.length || listQuery) ? (
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
+                onClick={() => {
+                  setListSerie([]);
+                  setListEstado([]);
+                  setListAgente([]);
+                  setListQuery('');
+                }}
+              >
+                Quitar filtros
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
+              onClick={() => {
+                const hoy = todayIso();
+                const header = ['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente', 'Código colectivo', 'Agente colectivo'];
+                const rows = filteredListing.map((row) => [
+                  row.albaran,
+                  row.serie,
+                  row.estado,
+                  formatIsoDate(row.fechaAlbaran),
+                  formatIsoDate(row.fechaEstado),
+                  row.fechaAlbaran ? daysBetween(row.fechaAlbaran, hoy) : '',
+                  row.fechaEstado ? daysBetween(row.fechaEstado, hoy) : '',
+                  row.agente,
+                  row.colectivo,
+                  lookupAgenteColectivoFromIndex(row.colectivo, agenteColectivoMap),
+                ]);
+                downloadAoa({ Listado: [header, ...rows] }, `albaranes_listado_${last?.loadDate || todayIso()}.xlsx`);
+              }}
+            >
+              <Download className="h-3.5 w-3.5" /> Excel
+            </button>
+          </div>
+          <p className="text-xs text-[var(--text-muted)]">
+            {formatInt(filteredListing.length)} albaranes
+            {filteredListing.length !== listing.length ? ` de ${formatInt(listing.length)}` : ''}.
+          </p>
+          <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
+                <tr>
+                  {['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente', 'Código colectivo', 'Agente colectivo'].map((col) => (
+                    <th key={col} className="whitespace-nowrap px-2 py-2 font-semibold">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {listingPage.length === 0 && (
+                  <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={10}>Sin albaranes con este filtro.</td></tr>
+                )}
+                {listingPage.map((row, index) => {
+                  const hoy = todayIso();
+                  return (
+                    <tr key={`${row.albaran}-${listPage * LIST_PAGE + index}`} className="border-t border-[var(--border)]">
+                      <td className="whitespace-nowrap px-2 py-2 font-medium">{row.albaran}</td>
+                      <td className="px-2 py-2">{displayDash(row.serie)}</td>
+                      <td className="px-2 py-2">{row.estado}</td>
+                      <td className="px-2 py-2">{formatIsoDate(row.fechaAlbaran)}</td>
+                      <td className="px-2 py-2">{formatIsoDate(row.fechaEstado)}</td>
+                      <td className="px-2 py-2 tabular-nums">{row.fechaAlbaran ? formatInt(daysBetween(row.fechaAlbaran, hoy)) : '—'}</td>
+                      <td className="px-2 py-2 tabular-nums">{row.fechaEstado ? formatInt(daysBetween(row.fechaEstado, hoy)) : '—'}</td>
+                      <td className="px-2 py-2">{displayDash(row.agente)}</td>
+                      <td className="px-2 py-2">{displayDash(row.colectivo)}</td>
+                      <td className="px-2 py-2">{displayDash(lookupAgenteColectivoFromIndex(row.colectivo, agenteColectivoMap))}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {listPages > 1 && (
+            <div className="flex items-center gap-2 text-xs">
+              <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={listPage === 0} onClick={() => setListPage((n) => Math.max(0, n - 1))}>Anterior</button>
+              <span className="text-[var(--text-muted)]">Página {listPage + 1} de {formatInt(listPages)}</span>
+              <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={listPage >= listPages - 1} onClick={() => setListPage((n) => Math.min(listPages - 1, n + 1))}>Siguiente</button>
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'acciones' && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -496,14 +645,14 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'incidencias' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Huecos del cruce albaranes × colectivos. El correo del agente no entra todavía.
+            Huecos para el correo: sin serie, WWW sin colectivo, y colectivos desconocidos, inactivos o sin agente.
           </p>
           {state.colectivos.length === 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               Sube el maestro de colectivos en Carga para detectar códigos desconocidos, inactivos o sin agente.
             </p>
           )}
-          {state.colectivos.length > 0 && incidents.length === 0 && last && !(last.rows || []).length && (
+          {state.colectivos.length > 0 && incidents.length === 0 && listing.length === 0 && last && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               Vuelve a subir el CSV de albaranes para recalcular incidencias con el maestro actual.
             </p>
@@ -517,26 +666,26 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <SearchBox value={incQuery} onChange={setIncQuery} />
-            <Select value={incSerie} onChange={setIncSerie} label="Serie" options={series.map((item) => [item, item])} />
-            <Select
-              value={incReason}
-              onChange={setIncReason}
+            <MultiSelect label="Serie" values={incSerie} onChange={setIncSerie} options={series.map((item) => [item, item])} />
+            <MultiSelect
               label="Motivo"
+              values={incReason}
+              onChange={setIncReason}
               options={incidentCounts.map((item) => [item.reason, `${item.reason} (${formatInt(item.count)})`])}
             />
-            {(incReason || incSerie || incQuery) && (
+            {(incReason.length || incSerie.length || incQuery) ? (
               <button
                 type="button"
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
                 onClick={() => {
-                  setIncReason('');
-                  setIncSerie('');
+                  setIncReason([]);
+                  setIncSerie([]);
                   setIncQuery('');
                 }}
               >
                 Quitar filtros
               </button>
-            )}
+            ) : null}
           </div>
           <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
             <table className="min-w-full text-left text-sm">
@@ -595,9 +744,12 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold">Tendencia por estado</p>
-              <select value={trendEstado} onChange={(e) => setTrendEstado(e.target.value)} className="rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-xs">
-                {estados.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
+              <label className="relative inline-flex">
+                <select value={trendEstado} onChange={(e) => setTrendEstado(e.target.value)} className="appearance-none rounded-md border border-[var(--border)] bg-white py-1.5 pl-2.5 pr-8 text-xs">
+                  {estados.map((item) => <option key={item} value={item}>{item}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+              </label>
             </div>
             <p className="mt-1 text-xs text-[var(--text-muted)]">Así ves si En proceso (u otro estado) sube o baja a lo largo de los años.</p>
             <div className="mt-3 overflow-x-auto">
@@ -755,17 +907,82 @@ function SearchBox({ value, onChange }: { value: string; onChange: (value: strin
 
 function Select({ value, onChange, label, options }: { value: string; onChange: (value: string) => void; label: string; options: Array<[string, string]> }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-xs">
-      <option value="">{label}</option>
-      {options.filter((item) => item[0]).map(([id, name]) => (
-        <option key={id} value={id}>{name}</option>
-      ))}
-    </select>
+    <label className="relative inline-flex">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="appearance-none rounded-md border border-[var(--border)] bg-white py-1.5 pl-2.5 pr-8 text-xs">
+        <option value="">{label}</option>
+        {options.filter((item) => item[0]).map(([id, name]) => (
+          <option key={id} value={id}>{name}</option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+    </label>
   );
 }
 
-function shareCaption(serie: string, estado: string, agente: string): string {
-  const bits = [serie, estado, agente].filter(Boolean);
+function MultiSelect({
+  label,
+  options,
+  values,
+  onChange,
+}: {
+  label: string;
+  options: Array<[string, string]>;
+  values: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (!boxRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+  const shown = values.length === 0
+    ? label
+    : values.length === 1
+      ? (options.find((item) => item[0] === values[0])?.[1] || values[0])
+      : `${values.length} ${label.toLocaleLowerCase('es')}`;
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="relative flex min-w-[8.5rem] max-w-[16rem] items-center rounded-md border border-[var(--border)] bg-white py-1.5 pl-2.5 pr-8 text-left text-xs"
+      >
+        <span className="truncate">{shown}</span>
+        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 max-h-64 min-w-[16rem] overflow-auto rounded-md border border-[var(--border)] bg-white py-1 shadow-lg">
+          {options.filter((item) => item[0]).map(([id, name]) => {
+            const on = values.includes(id);
+            return (
+              <label key={id} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-[var(--bg-soft)]">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => onChange(on ? values.filter((item) => item !== id) : [...values, id])}
+                />
+                <span>{name}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function shareCaption(series: string[], estados: string[], agentes: string[]): string {
+  const bits: string[] = [];
+  if (series.length === 1) bits.push(series[0]);
+  else if (series.length > 1) bits.push(`${series.length} series`);
+  if (estados.length === 1) bits.push(estados[0]);
+  else if (estados.length > 1) bits.push(`${estados.length} estados`);
+  if (agentes.length === 1) bits.push(agentes[0]);
+  else if (agentes.length > 1) bits.push(`${agentes.length} agentes`);
   if (bits.length === 0) return '% sobre el total';
   return `% sobre ${bits.join(' · ')}`;
 }

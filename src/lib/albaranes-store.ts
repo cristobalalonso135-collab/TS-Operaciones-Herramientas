@@ -39,9 +39,10 @@ function daysAgo(days: number): string {
 
 function photoState(state: AlbaranesState): AlbaranesState {
   const from = daysAgo(45);
+  const lastId = state.cargas[state.cargas.length - 1]?.id;
   return {
     ...state,
-    cargas: state.cargas.map(photoCarga),
+    cargas: state.cargas.map((carga) => photoCarga(carga, carga.id === lastId)),
     disappeared: [],
     evaluations: state.evaluations.filter((item) => item.loadDate >= from),
     communications: state.communications
@@ -58,7 +59,11 @@ function normalize(state: AlbaranesState): AlbaranesState {
     colectivos: Array.isArray(state.colectivos) ? state.colectivos : [],
     colectivosFileName: typeof state.colectivosFileName === 'string' ? state.colectivosFileName : '',
     colectivosLoadedAt: typeof state.colectivosLoadedAt === 'string' ? state.colectivosLoadedAt : '',
-    cargas: (Array.isArray(state.cargas) ? state.cargas : []).map(photoCarga),
+    cargas: (() => {
+      const list = Array.isArray(state.cargas) ? state.cargas : [];
+      const lastId = list[list.length - 1]?.id;
+      return list.map((carga) => photoCarga(carga, carga.id === lastId));
+    })(),
     disappeared: [],
     evaluations: Array.isArray(state.evaluations) ? state.evaluations : [],
     lots: Array.isArray(state.lots) ? state.lots : [],
