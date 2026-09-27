@@ -45,6 +45,8 @@ export interface Carga {
   estadoCounts?: Array<{ name: string; count: number; importe: number }>;
   serieCounts?: Array<{ name: string; count: number; importe: number }>;
   buckets?: Array<{ serie: string; estado: string; count: number; importe: number }>;
+  monthCounts?: Array<{ name: string; count: number; importe: number }>;
+  estadoMonthCounts?: Array<{ name: string; count: number; importe: number }>;
   listing?: ListingRow[];
   incidents?: DataIncident[];
   newCount: number;
@@ -313,6 +315,35 @@ function sortCounts(rows: Array<{ name: string; count: number; importe: number }
   return [...rows].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'));
 }
 
+export function monthKey(iso: string | null | undefined): string {
+  const match = String(iso || '').match(/^(\d{4})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}` : '(sin fecha)';
+}
+
+export function formatMonthKey(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})$/);
+  return match ? `${match[2]}/${match[1]}` : value;
+}
+
+export function monthsBetween(month: string, todayIsoValue: string): number | null {
+  const from = month.match(/^(\d{4})-(\d{2})$/);
+  const to = todayIsoValue.match(/^(\d{4})-(\d{2})/);
+  if (!from || !to) return null;
+  return (Number(to[1]) - Number(from[1])) * 12 + (Number(to[2]) - Number(from[2]));
+}
+
+function sortMonths(rows: Array<{ name: string; count: number; importe: number }>) {
+  return [...rows].sort((a, b) => {
+    if (a.name === '(sin fecha)') return 1;
+    if (b.name === '(sin fecha)') return -1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function tallyMonths(rows: AlbaranRow[], pick: (row: AlbaranRow) => string | null | undefined) {
+  return sortMonths(tally(rows, (row) => monthKey(pick(row))));
+}
+
 function tally(rows: AlbaranRow[], pick: (row: AlbaranRow) => string): Array<{ name: string; count: number; importe: number }> {
   const counts = new Map<string, { count: number; importe: number }>();
   rows.forEach((row) => {
@@ -370,6 +401,8 @@ export interface CargaSummary {
   importe: number;
   estadoCounts: Array<{ name: string; count: number; importe: number }>;
   serieCounts: Array<{ name: string; count: number; importe: number }>;
+  monthCounts: Array<{ name: string; count: number; importe: number }>;
+  estadoMonthCounts: Array<{ name: string; count: number; importe: number }>;
   estadoCount: number;
   serieCount: number;
 }
@@ -392,6 +425,8 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
     importe: 0,
     estadoCounts: [],
     serieCounts: [],
+    monthCounts: [],
+    estadoMonthCounts: [],
     estadoCount: 0,
     serieCount: 0,
   };
@@ -402,6 +437,27 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
   const agentes = asSet(filters.agentes, normKey);
   const almacenes = asSet(filters.almacenes, normKey);
   const rowFilters = agentes.size > 0 || almacenes.size > 0;
+  const hasFilters = rowFilters || series.size > 0 || estados.size > 0;
+  const needsMonthDetail = hasFilters || !(carga.monthCounts && carga.monthCounts.length);
+  const detail = needsMonthDetail
+    ? ((carga.rows && carga.rows.length > 0) ? carga.rows : listingAsRows(carga.listing || []))
+    : [];
+  const filteredDetail = detail.filter((row) => {
+    if (!allows(series, serieKey(row.serie))) return false;
+    if (!allows(estados, normKey(row.estado))) return false;
+    if (!allows(agentes, normKey(row.agente))) return false;
+    if (!allows(almacenes, normKey(row.almacenOrigen))) return false;
+    return true;
+  });
+  const months = filteredDetail.length > 0
+    ? {
+        monthCounts: tallyMonths(filteredDetail, (row) => row.fechaAlbaran),
+        estadoMonthCounts: tallyMonths(filteredDetail, (row) => row.fechaEstado),
+      }
+    : {
+        monthCounts: sortMonths(carga.monthCounts || []),
+        estadoMonthCounts: sortMonths(carga.estadoMonthCounts || []),
+      };
 
   const rows = carga.rows || [];
   if (rowFilters && rows.length > 0) {
@@ -419,6 +475,7 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
       importe: filteredRows.reduce((sum, row) => sum + (row.importe || 0), 0),
       estadoCounts,
       serieCounts,
+      ...months,
       estadoCount: estadoCounts.length,
       serieCount: serieCounts.length,
     };
@@ -438,6 +495,7 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
       importe: buckets.reduce((sum, item) => sum + item.importe, 0),
       estadoCounts,
       serieCounts,
+      ...months,
       estadoCount: estadoCounts.length,
       serieCount: serieCounts.length,
     };
@@ -456,6 +514,7 @@ export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}):
     importe: series.size && !estados.size ? fromSerieImporte : fromEstadoImporte || fromSerieImporte,
     estadoCounts,
     serieCounts,
+    ...months,
     estadoCount: estadoCounts.length,
     serieCount: serieCounts.length,
   };
@@ -915,14 +974,16 @@ export function ingestCarga(state: AlbaranesState, input: {
     if (!target) return { state, duplicate: true, carga: null };
     const listing = input.rows.map(toListing);
     const incidents = buildDataIncidents(input.rows, state.colectivos);
+    const monthCounts = tallyMonths(input.rows, (row) => row.fechaAlbaran);
+    const estadoMonthCounts = tallyMonths(input.rows, (row) => row.fechaEstado);
     return {
       duplicate: true,
-      carga: { ...target, listing, incidents, rows: [] },
+      carga: { ...target, listing, incidents, rows: [], monthCounts, estadoMonthCounts },
       state: {
         ...state,
         cargas: state.cargas.map((carga) => (
           carga.id === target.id
-            ? { ...carga, rows: [], listing, incidents }
+            ? { ...carga, rows: [], listing, incidents, monthCounts, estadoMonthCounts }
             : carga
         )),
       },
@@ -1039,6 +1100,8 @@ export function ingestCarga(state: AlbaranesState, input: {
     estadoCounts: tally(input.rows, (row) => row.estado || '(sin estado)'),
     serieCounts: tally(input.rows, (row) => row.serie || '(sin serie)'),
     buckets: tallyBuckets(input.rows),
+    monthCounts: tallyMonths(input.rows, (row) => row.fechaAlbaran),
+    estadoMonthCounts: tallyMonths(input.rows, (row) => row.fechaEstado),
     listing: input.rows.map(toListing),
     incidents: buildDataIncidents(input.rows, state.colectivos),
     newCount,
@@ -1297,6 +1360,8 @@ export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
     serieCount: summary.serieCount,
     estadoCounts: summary.estadoCounts,
     serieCounts: summary.serieCounts,
+    monthCounts: summary.monthCounts,
+    estadoMonthCounts: summary.estadoMonthCounts,
     newBreaches: last?.newBreaches || 0,
     continuingBreaches: last?.continuingBreaches || 0,
     resolvedBreaches: last?.resolvedBreaches || 0,

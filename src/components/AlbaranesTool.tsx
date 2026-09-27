@@ -28,7 +28,9 @@ import {
   formatIsoDateTime,
   formatEuro,
   formatInt,
+  formatMonthKey,
   formatShare,
+  monthsBetween,
   ingestCarga,
   knownEstados,
   knownSeries,
@@ -147,6 +149,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [vistaEstado, setVistaEstado] = useState<string[]>([]);
   const [vistaAgente, setVistaAgente] = useState<string[]>([]);
   const [histMetric, setHistMetric] = useState<'count' | 'importe'>('count');
+  const [vintageField, setVintageField] = useState<'albaran' | 'estado'>('albaran');
   const [incPage, setIncPage] = useState(0);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
   const [dirTab, setDirTab] = useState<'agentes' | 'colectivos'>('agentes');
@@ -558,6 +561,13 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               rows={kpis?.serieCounts || []}
             />
           </div>
+          <MonthAgeTable
+            field={vintageField}
+            onField={setVintageField}
+            caption={shareCaption(vistaSerie, vistaEstado, vistaAgente)}
+            baseTotal={kpis?.activeCount || 0}
+            rows={vintageField === 'albaran' ? (kpis?.monthCounts || []) : (kpis?.estadoMonthCounts || [])}
+          />
         </div>
       )}
 
@@ -1131,6 +1141,83 @@ function shareCaption(series: string[], estados: string[], agentes: string[]): s
   else if (agentes.length > 1) bits.push(`${agentes.length} agentes`);
   if (bits.length === 0) return '% sobre el total';
   return `% sobre ${bits.join(' · ')}`;
+}
+
+function MonthAgeTable({
+  field,
+  onField,
+  caption,
+  rows,
+  baseTotal,
+}: {
+  field: 'albaran' | 'estado';
+  onField: (value: 'albaran' | 'estado') => void;
+  caption: string;
+  rows: Array<{ name: string; count: number; importe: number }>;
+  baseTotal: number;
+}) {
+  const hoy = todayIso();
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">Por mes-año</p>
+          <p className="text-[11px] text-[var(--text-muted)]">
+            De más antiguo a más reciente. Así ves qué albaranes llevan más tiempo. {caption}.
+          </p>
+        </div>
+        <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-1">
+          <button
+            type="button"
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold ${field === 'albaran' ? 'bg-[var(--text-primary)] text-white' : ''}`}
+            onClick={() => onField('albaran')}
+          >
+            Fecha albarán
+          </button>
+          <button
+            type="button"
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold ${field === 'estado' ? 'bg-[var(--text-primary)] text-white' : ''}`}
+            onClick={() => onField('estado')}
+          >
+            Fecha estado
+          </button>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-sm text-[var(--text-muted)]">
+          Sube otra vez Albaranes.csv en Carga para calcular el corte por mes.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
+              <tr>
+                {['Mes', 'Albaranes', '%', 'Importe', 'Antigüedad'].map((col) => (
+                  <th key={col} className="px-2 py-2 font-semibold first:pl-0 last:pr-0 last:text-right">{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const age = monthsBetween(row.name, hoy);
+                return (
+                  <tr key={row.name} className="border-t border-[var(--border)]">
+                    <td className="px-2 py-2 pl-0 font-medium">{formatMonthKey(row.name)}</td>
+                    <td className="px-2 py-2 tabular-nums">{formatInt(row.count)}</td>
+                    <td className="px-2 py-2 tabular-nums text-[var(--text-secondary)]">{formatShare(row.count, baseTotal)}</td>
+                    <td className="px-2 py-2 tabular-nums text-[var(--text-muted)]">{row.importe ? formatEuro(row.importe) : '—'}</td>
+                    <td className="px-2 py-2 pr-0 text-right tabular-nums">
+                      {age == null ? '—' : age === 0 ? 'Este mes' : `${formatInt(age)} ${age === 1 ? 'mes' : 'meses'}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function HistoryTable({
