@@ -57,17 +57,30 @@ import { ChevronDown, ChevronUp, Download, Plus, Search, Trash2 } from 'lucide-r
 
 type ActSortKey = 'plazoDias' | 'albaran' | 'serie' | 'estado' | 'fechaAlbaran' | 'fechaEstado' | 'diasCreacion' | 'diasEstado' | 'agente' | 'email';
 const ACT_COLUMNS: Array<{ key: ActSortKey; label: string }> = [
-  { key: 'plazoDias', label: 'Máximos días' },
   { key: 'albaran', label: 'Albarán' },
   { key: 'serie', label: 'Serie' },
   { key: 'estado', label: 'Estado' },
-  { key: 'fechaAlbaran', label: 'Fecha albarán' },
-  { key: 'fechaEstado', label: 'Fecha estado' },
-  { key: 'diasCreacion', label: 'Días creación' },
-  { key: 'diasEstado', label: 'Días estado' },
   { key: 'agente', label: 'Agente' },
   { key: 'email', label: 'Email' },
+  { key: 'fechaAlbaran', label: 'Fecha albarán' },
+  { key: 'diasCreacion', label: 'Días albarán' },
+  { key: 'fechaEstado', label: 'Fecha estado' },
+  { key: 'diasEstado', label: 'Días estado' },
+  { key: 'plazoDias', label: 'Máximos días' },
 ];
+
+function actionCell(row: AccionRow, key: ActSortKey): string | number {
+  if (key === 'plazoDias') return row.plazoDias;
+  if (key === 'albaran') return row.albaran;
+  if (key === 'serie') return row.serie;
+  if (key === 'estado') return row.estado;
+  if (key === 'agente') return row.agente;
+  if (key === 'email') return row.email;
+  if (key === 'fechaAlbaran') return formatIsoDate(row.fechaAlbaran);
+  if (key === 'fechaEstado') return formatIsoDate(row.fechaEstado);
+  if (key === 'diasCreacion') return row.diasCreacion ?? '';
+  return row.diasEstado;
+}
 
 const TABS = [
   { id: 'carga', label: 'Carga' },
@@ -789,19 +802,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               type="button"
               className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
               onClick={() => {
-                const header = ['Máximos días', 'Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente', 'Email'];
-                const rows = filteredActions.map((row) => [
-                  row.plazoDias,
-                  row.albaran,
-                  row.serie,
-                  row.estado,
-                  formatIsoDate(row.fechaAlbaran),
-                  formatIsoDate(row.fechaEstado),
-                  row.diasCreacion ?? '',
-                  row.diasEstado,
-                  row.agente,
-                  row.email,
-                ]);
+                const header = ACT_COLUMNS.map((col) => col.label);
+                const rows = filteredActions.map((row) => ACT_COLUMNS.map((col) => actionCell(row, col.key)));
                 downloadAoa({ Acciones: [header, ...rows] }, `albaranes_acciones_${last?.loadDate || todayIso()}.xlsx`);
               }}
             >
@@ -1380,16 +1382,11 @@ function ActionTable({
           )}
           {rows.map((row) => (
             <tr key={row.key} className="border-t border-[var(--border)]">
-              <td className="px-2 py-2 tabular-nums">{formatInt(row.plazoDias)}</td>
-              <td className="px-2 py-2 font-medium">{row.albaran}</td>
-              <td className="px-2 py-2">{row.serie}</td>
-              <td className="px-2 py-2">{row.estado}</td>
-              <td className="px-2 py-2">{formatIsoDate(row.fechaAlbaran)}</td>
-              <td className="px-2 py-2">{formatIsoDate(row.fechaEstado)}</td>
-              <td className="px-2 py-2 tabular-nums">{row.diasCreacion == null ? '—' : formatInt(row.diasCreacion)}</td>
-              <td className="px-2 py-2 tabular-nums">{formatInt(row.diasEstado)}</td>
-              <td className="px-2 py-2">{displayDash(row.agente)}</td>
-              <td className="px-2 py-2">{displayDash(row.email)}</td>
+              {ACT_COLUMNS.map((col) => (
+                <td key={col.key} className={`px-2 py-2 ${col.key === 'albaran' ? 'font-medium' : ''} ${col.key.includes('dias') || col.key === 'plazoDias' ? 'tabular-nums' : ''}`}>
+                  {displayDash(String(actionCell(row, col.key)))}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>
