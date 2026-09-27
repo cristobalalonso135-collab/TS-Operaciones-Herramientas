@@ -581,8 +581,23 @@ export function findAgentByErp(agents: Agent[], agenteErp: string): Agent[] {
 }
 
 export function findColectivos(colectivos: Colectivo[], codigo: string): Colectivo[] {
-  const key = normKey(codigo);
-  return colectivos.filter((item) => normKey(item.codigo) === key);
+  return findColectivosFromIndex(indexColectivos(colectivos), codigo);
+}
+
+export function indexColectivos(colectivos: Colectivo[]): Map<string, Colectivo[]> {
+  const map = new Map<string, Colectivo[]>();
+  colectivos.forEach((item) => {
+    const key = normKey(item.codigo);
+    if (!key) return;
+    const list = map.get(key);
+    if (list) list.push(item);
+    else map.set(key, [item]);
+  });
+  return map;
+}
+
+export function findColectivosFromIndex(index: Map<string, Colectivo[]>, codigo: string): Colectivo[] {
+  return index.get(normKey(codigo)) || [];
 }
 
 export function toListing(row: AlbaranRow): ListingRow {
@@ -715,6 +730,7 @@ export function currentListing(state: AlbaranesState): ListingRow[] {
 
 export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]): DataIncident[] {
   const hasMaster = colectivos.length > 0;
+  const colectivoIndex = hasMaster ? indexColectivos(colectivos) : new Map<string, Colectivo[]>();
   const out: DataIncident[] = [];
   const push = (row: AlbaranRow, reason: DataIncidentReason) => {
     out.push({
@@ -737,7 +753,7 @@ export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]):
     }
     if (codes.length > 1) push(row, 'Varios códigos de colectivo');
     if (!hasMaster || codes.length !== 1) return;
-    const mapped = findColectivos(colectivos, codes[0]);
+    const mapped = findColectivosFromIndex(colectivoIndex, codes[0]);
     if (mapped.length === 0) {
       push(row, 'Colectivo desconocido');
       return;
@@ -775,7 +791,12 @@ export function withLatestIncidents(state: AlbaranesState, colectivos: Colectivo
   };
 }
 
-export function resolveAssignment(row: AlbaranRow, agents: Agent[], colectivos: Colectivo[]): Assignment {
+export function resolveAssignment(
+  row: AlbaranRow,
+  agents: Agent[],
+  colectivos: Colectivo[],
+  colectivoIndex = indexColectivos(colectivos),
+): Assignment {
   const fail = (reason: AssignmentReason, action: string): Assignment => ({
     ok: false,
     agenteResuelto: '',
@@ -813,9 +834,9 @@ export function resolveAssignment(row: AlbaranRow, agents: Agent[], colectivos: 
     return fail('Varios códigos de colectivo en el mismo campo', `Separa o deja un único código. Ahora mismo: ${codes.join(', ')}.`);
   }
 
-  const mapped = findColectivos(colectivos, codes[0]).filter((item) => item.activo);
+  const mapped = findColectivosFromIndex(colectivoIndex, codes[0]).filter((item) => item.activo);
   if (mapped.length === 0) {
-    const any = findColectivos(colectivos, codes[0]);
+    const any = findColectivosFromIndex(colectivoIndex, codes[0]);
     if (any.length === 0) return fail('Colectivo desconocido', `Añade el colectivo “${codes[0]}” y su comercial responsable.`);
     return fail('Colectivo desconocido', `El colectivo “${codes[0]}” está inactivo. Actívalo o asigna otro responsable.`);
   }
@@ -896,12 +917,12 @@ export function ingestCarga(state: AlbaranesState, input: {
     const incidents = buildDataIncidents(input.rows, state.colectivos);
     return {
       duplicate: true,
-      carga: target,
+      carga: { ...target, listing, incidents, rows: [] },
       state: {
         ...state,
         cargas: state.cargas.map((carga) => (
           carga.id === target.id
-            ? { ...carga, rows: input.rows, listing, incidents }
+            ? { ...carga, rows: [], listing, incidents }
             : carga
         )),
       },
@@ -940,19 +961,37 @@ export function ingestCarga(state: AlbaranesState, input: {
       .filter((item) => item.cargaId === previous?.id)
       .map((item) => `${item.albaranId}|${item.reglaId}`)
   );
+  const prevEvalByKey = new Map<string, Evaluacion>();
+  for (let i = state.evaluations.length - 1; i >= 0; i -= 1) {
+    const row = state.evaluations[i];
+    const key = `${row.albaranId}|${row.reglaId}`;
+    if (!prevEvalByKey.has(key)) prevEvalByKey.set(key, row);
+  }
+  const mailedToday = new Set(
+    state.communications
+      .filter((item) => item.loadDate === input.loadDate && item.enviar)
+      .map((item) => item.clave),
+  );
+  const colectivoIndex = indexColectivos(state.colectivos);
 
   const nextEvaluations: Evaluacion[] = [];
-  state.rules.filter((rule) => rule.activa).forEach((rule) => {
+  const activeRules = state.rules.filter((rule) => rule.activa);
+  activeRules.forEach((rule) => {
     input.rows.forEach((row) => {
       if (!ruleMatches(rule, row, input.loadDate)) return;
-      const assignment = resolveAssignment(row, state.agents, state.colectivos);
+      const assignment = resolveAssignment(row, state.agents, state.colectivos, colectivoIndex);
       const evalKey = `${row.id}|${rule.id}`;
-      const first = previousFirstBreach(state, row.id, rule.id) || input.loadDate;
-      const prior = previousNotification(state, row.id, rule.id);
-      const willMail = assignment.ok && !alreadyMailed(state, input.loadDate, assignment.email);
+      const priorEval = prevEvalByKey.get(evalKey);
+      const first = priorEval?.primeraFechaIncumplimiento || input.loadDate;
+      const prior = priorEval
+        ? { count: priorEval.numeroNotificaciones, last: priorEval.ultimaNotificacion }
+        : { count: 0, last: null as string | null };
+      const mailKey = `${input.loadDate}|${normKey(assignment.email)}`;
+      const mailed = mailedToday.has(mailKey);
+      const willMail = assignment.ok && !mailed;
       const envio: MailStatus = !assignment.ok
         ? 'incidencia'
-        : alreadyMailed(state, input.loadDate, assignment.email)
+        : mailed
           ? 'omitido-duplicado'
           : 'pendiente';
       nextEvaluations.push({
@@ -996,7 +1035,7 @@ export function ingestCarga(state: AlbaranesState, input: {
     fileHash: input.fileHash,
     recordCount: input.rows.length,
     totalImporte: input.rows.reduce((sum, row) => sum + (row.importe || 0), 0),
-    rows: input.rows,
+    rows: [],
     estadoCounts: tally(input.rows, (row) => row.estado || '(sin estado)'),
     serieCounts: tally(input.rows, (row) => row.serie || '(sin serie)'),
     buckets: tallyBuckets(input.rows),

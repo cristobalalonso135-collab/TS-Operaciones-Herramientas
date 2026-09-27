@@ -138,13 +138,15 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [incPage, setIncPage] = useState(0);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
   const [dirTab, setDirTab] = useState<'agentes' | 'colectivos'>('agentes');
+  const [busy, setBusy] = useState<string | null>(null);
 
   const persist = useCallback(async (next: AlbaranesState, currentBackend: AlbaranesBackend) => {
-    setState(next);
     setError(null);
     try {
       await saveAlbaranesState(next, currentBackend);
+      setState(next);
     } catch (err) {
+      setState(next);
       setError(err instanceof Error ? err.message : 'No he podido guardar.');
     }
   }, []);
@@ -195,7 +197,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     () => (state ? state.colectivos.filter((item) => item.activo && !(item.agente || item.idAgente).trim()) : []),
     [state],
   );
-  const listing = useMemo(() => (state ? currentListing(state) : []), [state]);
+  const listing = useMemo(() => (state && tab === 'listado' ? currentListing(state) : []), [state, tab]);
   const agenteColectivoMap = useMemo(
     () => (state ? colectivoAgenteIndex(state.colectivos) : new Map<string, string>()),
     [state],
@@ -233,17 +235,21 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     setIncPage(0);
   }, [incQuery, incReason, incSerie]);
-  const actuales = useMemo(() => (state ? currentAlbaranes(state) : []), [state]);
+  const actuales = useMemo(() => {
+    if (!state || tab !== 'reglas') return [];
+    return currentAlbaranes(state);
+  }, [state, tab]);
   const series = state ? knownSeries(state) : [...DEFAULT_SERIES];
   const estados = state ? knownEstados(state) : [];
   const agentesVista = useMemo(() => {
+    if (!state || (tab !== 'resumen' && tab !== 'listado')) return [];
     const names = new Set<string>();
-    actuales.forEach((row) => {
+    currentListing(state).forEach((row) => {
       const name = row.agente.trim();
       if (name) names.add(name);
     });
     return Array.from(names).sort((a, b) => a.localeCompare(b, 'es'));
-  }, [actuales]);
+  }, [state, tab]);
 
   const filteredActions = useMemo(() => {
     return actions.filter((row) => {
@@ -272,6 +278,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       setAck({ title: 'Archivo vacío', message: 'No he encontrado albaranes. Revisa que el Excel tenga columna Albarán.' });
       return;
     }
+    setBusy(`Preparando ${formatInt(rows.length)} albaranes…`);
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
     const result = ingestCarga(state, {
       id: newId('carga'),
       loadedAt: nowIso(),
@@ -280,8 +288,10 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       fileHash: hash || `${fileName}-${rows.length}`,
       rows,
     });
+    setBusy('Guardando listado…');
     await persist(result.state, backend);
     setTab('listado');
+    setBusy(null);
     if (result.duplicate) {
       setAck({
         title: 'Listado actualizado',
@@ -296,11 +306,19 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   };
 
   const handleAlbaranesFile = async (data: unknown[][], fileName: string) => {
-    const file = lastFileRef.current;
-    const hash = file ? await sha256(file) : `${fileName}-${data.length}`;
-    lastFileRef.current = null;
-    const rows = parseAlbaranesSheet(data);
-    await ingestRows(rows, fileName, hash);
+    try {
+      setBusy('Leyendo archivo…');
+      await new Promise((resolve) => window.setTimeout(resolve, 40));
+      const file = lastFileRef.current;
+      const hash = file ? await sha256(file) : `${fileName}-${data.length}`;
+      lastFileRef.current = null;
+      const rows = parseAlbaranesSheet(data);
+      await ingestRows(rows, fileName, hash);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No he podido cargar el CSV.');
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleColectivosFile = (data: unknown[][], fileName: string) => {
@@ -398,6 +416,14 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
         </div>
       )}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
+      {busy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] px-6 py-5 text-sm shadow-lg">
+            <p className="font-display text-base font-semibold">Cargando albaranes</p>
+            <p className="mt-1 text-[var(--text-secondary)]">{busy}</p>
+          </div>
+        </div>
+      )}
 
       {tab === 'carga' && (
         <div className="space-y-4">
@@ -412,7 +438,10 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               hint="CSV del ERP con punto y coma. Misma estructura cada día."
               keepDropzone
               compact
-              onRawFile={(file) => { lastFileRef.current = file; }}
+              onRawFile={(file) => {
+                lastFileRef.current = file;
+                setBusy('Leyendo archivo…');
+              }}
               onFileLoaded={handleAlbaranesFile}
             />
             <FileUpload
@@ -443,35 +472,6 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               hint="Sin correo todavía"
             />
           </div>
-          {state.colectivos.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
-                  <tr>
-                    {['Código', 'Nombre', 'Agente', 'Comercial', 'Activo'].map((col) => (
-                      <th key={col} className="px-3 py-2 font-semibold">{col}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.colectivos.slice(0, 12).map((row) => (
-                    <tr key={row.id} className="border-t border-[var(--border)]">
-                      <td className="px-3 py-2 font-medium">{row.codigo}</td>
-                      <td className="px-3 py-2">{row.nombre}</td>
-                      <td className="px-3 py-2">{displayDash(row.agente || row.idAgente)}</td>
-                      <td className="px-3 py-2">{displayDash(row.comercial)}</td>
-                      <td className="px-3 py-2">{row.activo ? 'Sí' : 'No'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {state.colectivos.length > 12 && (
-                <p className="px-3 py-2 text-xs text-[var(--text-muted)]">
-                  Mostrando 12 de {formatInt(state.colectivos.length)} colectivos.
-                </p>
-              )}
-            </div>
-          )}
         </div>
       )}
 
@@ -661,7 +661,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               Sube el maestro de colectivos en Carga para detectar códigos desconocidos, inactivos o sin agente.
             </p>
           )}
-          {incidents.length === 0 && listing.length === 0 && last && last.recordCount > 0 && (
+          {incidents.length === 0 && last && last.recordCount > 0 && !(last.listing && last.listing.length) && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               El resumen tiene {formatInt(last.recordCount)} albaranes, pero el detalle aún no está guardado. Vuelve a Carga y sube otra vez Albaranes.csv.
             </p>

@@ -5,7 +5,7 @@ import { Upload, FileSpreadsheet, X } from 'lucide-react';
 import { isCsvFile, parseDelimitedText } from '@/lib/delimited-text';
 
 interface FileUploadProps {
-  onFileLoaded: (data: any[][], fileName: string) => void;
+  onFileLoaded: (data: any[][], fileName: string) => void | Promise<void>;
   onWorkbookLoaded?: (workbook: Record<string, any[][]>, fileName: string) => void;
   onRawFile?: (file: File) => void;
   accept?: string;
@@ -38,12 +38,13 @@ export default function FileUpload({
       setError(null);
       try {
         onRawFile?.(file);
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
         if (isCsvFile(file)) {
           const text = await file.text();
           const data = parseDelimitedText(text);
           setFileName(file.name);
           onWorkbookLoaded?.({ [file.name]: data }, file.name);
-          onFileLoaded(data, file.name);
+          await Promise.resolve(onFileLoaded(data, file.name));
           return;
         }
         const XLSX = await import('xlsx');
@@ -61,7 +62,7 @@ export default function FileUpload({
 
         setFileName(file.name);
         onWorkbookLoaded?.(sheets, file.name);
-        onFileLoaded(data, file.name);
+        await Promise.resolve(onFileLoaded(data, file.name));
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Error leyendo el archivo. Asegurate de que es un Excel valido.');
         console.error(err);

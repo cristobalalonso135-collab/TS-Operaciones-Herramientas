@@ -12,7 +12,7 @@ const LOCAL_KEY = 'ts-albaranes-v1';
 const STORE_ID = 'main';
 const LISTING_ID = 'listing';
 const LISTING_CHUNK = 'listing:';
-const LISTING_CHUNK_SIZE = 7000;
+const LISTING_CHUNK_SIZE = 4000;
 
 export const ALBARANES_SETUP_SQL = `CREATE TABLE IF NOT EXISTS albaranes_store (
   id TEXT PRIMARY KEY,
@@ -175,6 +175,7 @@ async function writeListing(state: AlbaranesState): Promise<void> {
       payload: { listing: chunks[i] },
     }, { onConflict: 'id' });
     if (error) throw new Error(error.message);
+    await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
 
