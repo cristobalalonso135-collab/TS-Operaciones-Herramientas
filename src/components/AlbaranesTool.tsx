@@ -24,6 +24,7 @@ import {
   formatIsoDateTime,
   formatEuro,
   formatInt,
+  formatShare,
   ingestCarga,
   knownEstados,
   knownSeries,
@@ -72,13 +73,14 @@ function downloadAoa(sheets: Record<string, unknown[][]>, fileName: string) {
   });
 }
 
-function Kpi({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+function Kpi({ label, value, hint, amount }: { label: string; value: string | number; hint?: string; amount?: string }) {
   const shown = typeof value === 'number' ? formatInt(value) : value;
   return (
     <div className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3">
       <p className="text-xs text-[var(--text-secondary)]">{label}</p>
       <p className="mt-1 font-display text-lg font-semibold tabular-nums leading-tight">{shown}</p>
-      {hint ? <p className="mt-1 text-[11px] text-[var(--text-muted)]">{hint}</p> : null}
+      {hint ? <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{hint}</p> : null}
+      {amount ? <p className="mt-0.5 text-[10px] leading-tight text-[var(--text-muted)]">{amount}</p> : null}
     </div>
   );
 }
@@ -329,15 +331,30 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           </div>
           <div className="grid grid-cols-6 gap-3">
             <Kpi label="Última carga" value={formatIsoDateTime(kpis?.lastLoadedAt || kpis?.lastLoadDate)} hint={kpis?.lastFileName || 'Aún no hay fichero'} />
-            <Kpi label="Total albaranes" value={kpis?.activeCount || 0} hint={kpis?.totalImporte ? formatEuro(kpis.totalImporte) : undefined} />
+            <Kpi
+              label="Total albaranes"
+              value={kpis?.activeCount || 0}
+              hint={kpis?.shareOfTotal != null ? `${formatShare(kpis.activeCount, kpis.baselineCount)} del total` : undefined}
+              amount={kpis?.totalImporte ? formatEuro(kpis.totalImporte) : undefined}
+            />
             <Kpi label="Cumplen reglas" value={kpis?.actionCount || 0} />
             <Kpi label="Nº estados" value={kpis?.estadoCount || 0} />
             <Kpi label="Nº series" value={kpis?.serieCount || 0} />
             <Kpi label="Incidencias" value={kpis?.incidentCount || 0} />
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
-            <HistoryTable title="Por estado" rows={(kpis?.estadoCounts || []).map((row) => [row.name, formatInt(row.count), formatEuro(row.importe)])} />
-            <HistoryTable title="Por serie" rows={(kpis?.serieCounts || []).map((row) => [row.name, formatInt(row.count), formatEuro(row.importe)])} />
+            <HistoryTable
+              title="Por estado"
+              caption={shareCaption(vistaSerie, vistaEstado, vistaAgente)}
+              baseTotal={kpis?.activeCount || 0}
+              rows={kpis?.estadoCounts || []}
+            />
+            <HistoryTable
+              title="Por serie"
+              caption={shareCaption(vistaSerie, vistaEstado, vistaAgente)}
+              baseTotal={kpis?.activeCount || 0}
+              rows={kpis?.serieCounts || []}
+            />
           </div>
         </div>
       )}
@@ -582,17 +599,44 @@ function Select({ value, onChange, label, options }: { value: string; onChange: 
   );
 }
 
-function HistoryTable({ title, rows }: { title: string; rows: string[][] }) {
+function shareCaption(serie: string, estado: string, agente: string): string {
+  const bits = [serie, estado, agente].filter(Boolean);
+  if (bits.length === 0) return '% sobre el total';
+  return `% sobre ${bits.join(' · ')}`;
+}
+
+function HistoryTable({
+  title,
+  caption,
+  rows,
+  baseTotal,
+}: {
+  title: string;
+  caption: string;
+  rows: Array<{ name: string; count: number; importe: number }>;
+  baseTotal: number;
+}) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-      <p className="text-sm font-semibold">{title}</p>
-      <div className="mt-2 space-y-1 text-sm">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-sm font-semibold">{title}</p>
+        <p className="text-[11px] text-[var(--text-muted)]">{caption}</p>
+      </div>
+      <div className="mt-2 space-y-1.5 text-sm">
         {rows.length === 0 && <p className="text-[var(--text-muted)]">Sin datos de carga.</p>}
-        {rows.map(([name, count, importe]) => (
-          <div key={name} className="flex items-center justify-between gap-3">
-            <span>{name}</span>
-            <span className="tabular-nums text-[var(--text-secondary)] whitespace-nowrap">
-              {count}{importe ? ` (${importe})` : ''}
+        {rows.map((row) => (
+          <div key={row.name} className="flex items-start justify-between gap-3">
+            <span className="min-w-0 pr-2">{row.name}</span>
+            <span className="shrink-0 text-right">
+              <span className="tabular-nums">
+                {formatInt(row.count)}
+                <span className="ml-2 text-[var(--text-secondary)]">{formatShare(row.count, baseTotal)}</span>
+              </span>
+              {row.importe ? (
+                <span className="mt-0.5 block text-[10px] leading-tight tabular-nums text-[var(--text-muted)]">
+                  {formatEuro(row.importe)}
+                </span>
+              ) : null}
             </span>
           </div>
         ))}

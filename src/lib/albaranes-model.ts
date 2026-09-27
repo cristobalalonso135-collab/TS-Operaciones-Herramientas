@@ -232,6 +232,14 @@ export function formatEuro(value: number): string {
   return `${value.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €`;
 }
 
+export function formatShare(part: number, total: number): string {
+  if (!total || part <= 0) return '0 %';
+  const pct = (part / total) * 100;
+  if (pct > 0 && pct < 0.1) return '<0,1 %';
+  const digits = pct < 10 ? 1 : 0;
+  return `${pct.toLocaleString('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits })} %`;
+}
+
 export function parseAmount(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   const text = String(value ?? '').replace(/\u00a0/g, ' ').trim();
@@ -889,6 +897,7 @@ export function averageAge(rows: AlbaranRow[], loadDate: string): number {
 export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
   const last = latestCarga(state);
   const summary = summarizeCarga(last, filters);
+  const baseline = summarizeCarga(last);
   const matchEval = (item: Evaluacion) => {
     if (filters.serie && item.serie.toUpperCase() !== filters.serie.trim().toUpperCase()) return false;
     if (filters.estado && normKey(item.estado) !== normKey(filters.estado)) return false;
@@ -897,11 +906,14 @@ export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
   };
   const actions = currentActions(state).filter(matchEval);
   const incidents = currentIncidents(state).filter(matchEval);
+  const filtered = Boolean(filters.serie || filters.estado || filters.agente || filters.almacen);
   return {
     lastLoadDate: last?.loadDate || null,
     lastLoadedAt: last?.loadedAt || null,
     lastFileName: last?.fileName || null,
     activeCount: summary.total,
+    baselineCount: baseline.total,
+    shareOfTotal: filtered && baseline.total > 0 ? summary.total / baseline.total : null,
     totalImporte: summary.importe,
     actionCount: actions.length,
     incidentCount: incidents.length,
