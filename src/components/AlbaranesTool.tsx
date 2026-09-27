@@ -70,6 +70,9 @@ const ACT_COLUMNS: Array<{ key: ActSortKey; label: string }> = [
   { key: 'diasEstado', label: 'Días estado' },
   { key: 'plazoDias', label: 'Máximos días' },
 ];
+const ACCIONES_XLSX_FILE = 'albaranes_acciones.xlsx';
+const ACCIONES_XLSX_SHEET = 'Acciones';
+const ACCIONES_XLSX_TABLE = 'AlbaranesAcciones';
 
 function actionCell(row: AccionRow, key: ActSortKey): string | number {
   if (key === 'plazoDias') return row.plazoDias;
@@ -124,6 +127,28 @@ function downloadAoa(sheets: Record<string, unknown[][]>, fileName: string) {
     });
     XLSX.writeFile(wb, fileName);
   });
+}
+
+async function downloadNamedExcelTable(input: {
+  fileName: string;
+  sheetName: string;
+  tableName: string;
+  header: string[];
+  rows: Array<Array<string | number>>;
+}): Promise<void> {
+  const response = await fetch('/api/albaranes-acciones-xlsx', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error('export');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = input.fileName;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function Kpi({ label, value, hint, amount }: { label: string; value: string | number; hint?: string; amount?: string }) {
@@ -504,7 +529,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'albaranes_acciones.xlsx';
+    link.download = ACCIONES_XLSX_FILE;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -814,7 +839,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               onClick={() => {
                 const header = ACT_COLUMNS.map((col) => col.label);
                 const rows = filteredActions.map((row) => ACT_COLUMNS.map((col) => actionCell(row, col.key)));
-                downloadAoa({ Acciones: [header, ...rows] }, 'albaranes_acciones.xlsx');
+                void downloadNamedExcelTable({
+                  fileName: ACCIONES_XLSX_FILE,
+                  sheetName: ACCIONES_XLSX_SHEET,
+                  tableName: ACCIONES_XLSX_TABLE,
+                  header,
+                  rows,
+                }).catch(() => setAck({
+                  title: 'No se ha podido exportar',
+                  message: 'No he podido generar la tabla de Excel. Reinténtalo.',
+                }));
               }}
             >
               <Download className="h-3.5 w-3.5" /> Excel
@@ -823,7 +857,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           <p className="text-xs text-[var(--text-muted)]">
             {formatInt(filteredActions.length)} albaranes
             {filteredActions.length !== actions.length ? ` de ${formatInt(actions.length)}` : ''}.
-            El Excel se descarga siempre como albaranes_acciones.xlsx.
+            El Excel se descarga siempre como {ACCIONES_XLSX_FILE}: hoja {ACCIONES_XLSX_SHEET}, tabla {ACCIONES_XLSX_TABLE}.
           </p>
           <ActionTable
             rows={actionsPage}
