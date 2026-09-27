@@ -87,7 +87,11 @@ function truthy(value: unknown): boolean {
   return !['no', 'n', '0', 'false', 'inactivo'].includes(text);
 }
 
-export function parseEmailsSheet(rows: unknown[][]): Array<{ nombre: string; email: string }> {
+function normalizeIdioma(value: string): string {
+  return value.trim().toUpperCase().slice(0, 8);
+}
+
+export function parseEmailsSheet(rows: unknown[][]): Array<{ nombre: string; email: string; idioma: string }> {
   if (!rows.length) return [];
   const headerIndex = rows.findIndex((row) => {
     const joined = (row || []).map(normalizeHeader).join(' | ');
@@ -98,6 +102,7 @@ export function parseEmailsSheet(rows: unknown[][]): Array<{ nombre: string; ema
   const col = {
     nombre: findCol(header, ['display name', 'displayname', 'nombre para mostrar', 'nombre completo', 'full name', 'name', 'nombre', 'agente']),
     email: findCol(header, ['user principal name', 'userprincipalname', 'correo electrónico', 'email address', 'mail', 'email', 'correo', 'upn']),
+    idioma: findCol(header, ['idioma', 'language', 'lang', 'lengua']),
   };
   const body = rows.slice(headerIndex >= 0 ? start + 1 : 0);
   return body.flatMap((row) => {
@@ -108,7 +113,7 @@ export function parseEmailsSheet(rows: unknown[][]): Array<{ nombre: string; ema
       email = fromRow;
     }
     if (!email.includes('@')) return [];
-    return [{ nombre: named || email.split('@')[0], email }];
+    return [{ nombre: named || email.split('@')[0], email, idioma: normalizeIdioma(cellText(pick(row, col.idioma))) }];
   });
 }
 
@@ -121,6 +126,7 @@ export function parseAgentesSheet(rows: unknown[][]): Agent[] {
     erp: findCol(header, ['agenteerp', 'agente erp', 'agente']),
     nombre: findCol(header, ['nombre']),
     email: findCol(header, ['email', 'correo', 'mail']),
+    idioma: findCol(header, ['idioma', 'language', 'lang']),
     supervisor: findCol(header, ['supervisor']),
     activo: findCol(header, ['activo']),
   };
@@ -133,6 +139,7 @@ export function parseAgentesSheet(rows: unknown[][]): Agent[] {
       agenteErp,
       nombre: cellText(pick(row, col.nombre)) || agenteErp,
       email,
+      idioma: normalizeIdioma(cellText(pick(row, col.idioma))),
       supervisor: cellText(pick(row, col.supervisor)),
       activo: truthy(pick(row, col.activo)),
     }];
@@ -182,9 +189,9 @@ export function pickSheet(sheets: Record<string, unknown[][]>, aliases: string[]
 }
 
 export const AGENTES_TEMPLATE: unknown[][] = [
-  ['IdAgente', 'AgenteERP', 'Nombre', 'Email', 'Supervisor', 'Activo'],
-  ['AG-001', 'Ana Pérez', 'Ana Pérez', 'ana@teamsports.es', '', 'Sí'],
-  ['AG-002', 'Internet', 'Internet', '', '', 'No'],
+  ['IdAgente', 'AgenteERP', 'Nombre', 'Email', 'Idioma', 'Supervisor', 'Activo'],
+  ['AG-001', 'Ana Pérez', 'Ana Pérez', 'ana@teamsports.es', 'ES', '', 'Sí'],
+  ['AG-002', 'Internet', 'Internet', '', '', '', 'No'],
 ];
 
 export const COLECTIVOS_TEMPLATE: unknown[][] = [

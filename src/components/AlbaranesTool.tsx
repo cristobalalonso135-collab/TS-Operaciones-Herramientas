@@ -56,13 +56,14 @@ import {
 import { loadAlbaranesState, saveAlbaranesState, type AlbaranesBackend } from '@/lib/albaranes-store';
 import { ChevronDown, ChevronUp, Download, Plus, Search, Trash2 } from 'lucide-react';
 
-type ActSortKey = 'plazoDias' | 'albaran' | 'serie' | 'estado' | 'fechaAlbaran' | 'fechaEstado' | 'diasCreacion' | 'diasEstado' | 'agente' | 'email';
+type ActSortKey = 'plazoDias' | 'albaran' | 'serie' | 'estado' | 'fechaAlbaran' | 'fechaEstado' | 'diasCreacion' | 'diasEstado' | 'agente' | 'email' | 'idioma';
 const ACT_COLUMNS: Array<{ key: ActSortKey; label: string }> = [
   { key: 'albaran', label: 'Albarán' },
   { key: 'serie', label: 'Serie' },
   { key: 'estado', label: 'Estado' },
   { key: 'agente', label: 'Agente' },
   { key: 'email', label: 'Email' },
+  { key: 'idioma', label: 'Idioma' },
   { key: 'fechaAlbaran', label: 'Fecha albarán' },
   { key: 'diasCreacion', label: 'Días albarán' },
   { key: 'fechaEstado', label: 'Fecha estado' },
@@ -77,6 +78,7 @@ function actionCell(row: AccionRow, key: ActSortKey): string | number {
   if (key === 'estado') return row.estado;
   if (key === 'agente') return row.agente;
   if (key === 'email') return row.email;
+  if (key === 'idioma') return row.idioma;
   if (key === 'fechaAlbaran') return formatIsoDate(row.fechaAlbaran);
   if (key === 'fechaEstado') return formatIsoDate(row.fechaEstado);
   if (key === 'diasCreacion') return row.diasCreacion ?? '';
@@ -321,7 +323,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       if (filterEstado && row.estado !== filterEstado) return false;
       if (filterResp && row.agente !== filterResp) return false;
       if (query) {
-        const hay = `${row.albaran} ${row.agente} ${row.email} ${row.estado}`.toLocaleLowerCase('es');
+        const hay = `${row.albaran} ${row.agente} ${row.email} ${row.idioma} ${row.estado}`.toLocaleLowerCase('es');
         if (!hay.includes(query.toLocaleLowerCase('es'))) return false;
       }
       return true;
@@ -337,6 +339,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       if (actSort.key === 'serie') return row.serie;
       if (actSort.key === 'estado') return row.estado;
       if (actSort.key === 'email') return row.email;
+      if (actSort.key === 'idioma') return row.idioma;
       return row.agente;
     };
     return [...rows].sort((a, b) => {
@@ -560,7 +563,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             <FileUpload
               inputId="albaranes-emails"
               label="Correos del grupo"
-              hint="Excel/CSV con Nombre y Email (vale el de Outlook, Teams admin o Entra)."
+              hint="Excel/CSV con Nombre, Email e Idioma (vale el de Outlook, Teams admin o Entra)."
               keepDropzone
               compact
               onFileLoaded={handleEmailsFile}
@@ -590,10 +593,10 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             type="button"
             className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
             onClick={() => {
-              const header = ['Agente', 'Email'];
+              const header = ['Agente', 'Email', 'Idioma'];
               const rows = uniqueAgentes(state).map((name) => {
                 const hit = state.agents.find((item) => item.agenteErp === name || item.nombre === name);
-                return [name, hit?.email || ''];
+                return [name, hit?.email || '', hit?.idioma || ''];
               });
               downloadAoa({ Correos: [header, ...rows] }, 'agentes_emails.xlsx');
             }}
@@ -1543,7 +1546,7 @@ function AgentTable({ agents, onChange }: { agents: Agent[]; onChange: (agents: 
       <table className="min-w-full text-left text-sm">
         <thead className="bg-[var(--bg-soft)] text-xs uppercase text-[var(--text-muted)]">
           <tr>
-            {['Id', 'Agente ERP', 'Nombre', 'Email', 'Supervisor', 'Activo', ''].map((col) => <th key={col || 'x'} className="px-2 py-2">{col}</th>)}
+            {['Id', 'Agente ERP', 'Nombre', 'Email', 'Idioma', 'Supervisor', 'Activo', ''].map((col) => <th key={col || 'x'} className="px-2 py-2">{col}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -1553,6 +1556,7 @@ function AgentTable({ agents, onChange }: { agents: Agent[]; onChange: (agents: 
               <td className="px-2 py-1"><input value={agent.agenteErp} onChange={(e) => onChange(agents.map((item, i) => i === index ? { ...item, agenteErp: e.target.value } : item))} className="w-36 rounded border border-[var(--border)] px-2 py-1 text-xs" /></td>
               <td className="px-2 py-1"><input value={agent.nombre} onChange={(e) => onChange(agents.map((item, i) => i === index ? { ...item, nombre: e.target.value } : item))} className="w-36 rounded border border-[var(--border)] px-2 py-1 text-xs" /></td>
               <td className="px-2 py-1"><input value={agent.email} onChange={(e) => onChange(agents.map((item, i) => i === index ? { ...item, email: e.target.value } : item))} className="w-48 rounded border border-[var(--border)] px-2 py-1 text-xs" /></td>
+              <td className="px-2 py-1"><input value={agent.idioma || ''} onChange={(e) => onChange(agents.map((item, i) => i === index ? { ...item, idioma: e.target.value.toUpperCase() } : item))} className="w-16 rounded border border-[var(--border)] px-2 py-1 text-xs" /></td>
               <td className="px-2 py-1"><input value={agent.supervisor} onChange={(e) => onChange(agents.map((item, i) => i === index ? { ...item, supervisor: e.target.value } : item))} className="w-28 rounded border border-[var(--border)] px-2 py-1 text-xs" /></td>
               <td className="px-2 py-1"><input type="checkbox" checked={agent.activo} onChange={(e) => onChange(agents.map((item, i) => i === index ? { ...item, activo: e.target.checked } : item))} /></td>
               <td className="px-2 py-1"><button type="button" onClick={() => onChange(agents.filter((_, i) => i !== index))}><Trash2 className="h-4 w-4 text-[var(--text-muted)]" /></button></td>
@@ -1563,7 +1567,7 @@ function AgentTable({ agents, onChange }: { agents: Agent[]; onChange: (agents: 
       <button
         type="button"
         className="m-3 flex items-center gap-2 text-sm"
-        onClick={() => onChange([...agents, { id: newId('ag'), agenteErp: '', nombre: '', email: '', supervisor: '', activo: true }])}
+        onClick={() => onChange([...agents, { id: newId('ag'), agenteErp: '', nombre: '', email: '', idioma: '', supervisor: '', activo: true }])}
       >
         <Plus className="h-4 w-4" /> Agente
       </button>

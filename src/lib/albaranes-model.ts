@@ -74,6 +74,7 @@ export interface Agent {
   agenteErp: string;
   nombre: string;
   email: string;
+  idioma?: string;
   supervisor: string;
   activo: boolean;
 }
@@ -644,11 +645,12 @@ export function uniqueAgentes(state: AlbaranesState): string[] {
 
 export function mergeAgentEmails(
   state: AlbaranesState,
-  contacts: Array<{ nombre: string; email: string }>,
+  contacts: Array<{ nombre: string; email: string; idioma?: string }>,
 ): { state: AlbaranesState; matched: number; unmatched: string[] } {
   const names = uniqueAgentes(state);
   const unmatched: string[] = [];
   const emailByName = new Map<string, string>();
+  const idiomaByName = new Map<string, string>();
   contacts.forEach((item) => {
     if (!item.email.includes('@')) return;
     const hit = names.find((name) => namesMatch(name, item.nombre) || namesMatch(name, item.email.split('@')[0].replace(/[._]/g, ' ')));
@@ -656,7 +658,9 @@ export function mergeAgentEmails(
       unmatched.push(item.nombre || item.email);
       return;
     }
-    emailByName.set(peopleKey(hit), item.email.trim());
+    const key = peopleKey(hit);
+    emailByName.set(key, item.email.trim());
+    if (item.idioma) idiomaByName.set(key, item.idioma);
   });
   const agents = names.map((name) => {
     const key = peopleKey(name);
@@ -666,6 +670,7 @@ export function mergeAgentEmails(
       agenteErp: prior?.agenteErp || name,
       nombre: prior?.nombre || name,
       email: emailByName.get(key) || prior?.email || '',
+      idioma: idiomaByName.get(key) || prior?.idioma || '',
       supervisor: prior?.supervisor || '',
       activo: prior?.activo ?? true,
     };
@@ -1303,6 +1308,7 @@ export interface AccionRow {
   plazoDias: number;
   agente: string;
   email: string;
+  idioma: string;
 }
 
 export function presentActions(state: AlbaranesState, today: string): AccionRow[] {
@@ -1334,6 +1340,7 @@ export function presentActions(state: AlbaranesState, today: string): AccionRow[
       plazoDias: item.plazoDias ?? rules.get(item.reglaId)?.plazoDias ?? 0,
       agente,
       email: item.email || agent?.email || '',
+      idioma: agent?.idioma || '',
     };
   });
 }
