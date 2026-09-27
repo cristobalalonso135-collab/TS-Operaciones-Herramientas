@@ -2,6 +2,7 @@ import {
   cellToIso,
   extractSerie,
   parseAmount,
+  normKey,
   type Agent,
   type AlbaranRow,
   type Colectivo,
@@ -115,25 +116,38 @@ export function parseAgentesSheet(rows: unknown[][]): Agent[] {
 
 export function parseColectivosSheet(rows: unknown[][]): Colectivo[] {
   if (!rows.length) return [];
-  const headerIndex = detectHeaderRow(rows, ['colectivo']);
+  const headerIndex = detectHeaderRow(rows, ['nombre']);
   const header = (rows[headerIndex] || []).map(normalizeHeader);
   const col = {
-    codigo: findCol(header, ['codigocolectivo', 'codigo colectivo', 'código colectivo', 'codigo', 'colectivo']),
-    nombre: findCol(header, ['nombrecolectivo', 'nombre colectivo', 'nombre']),
-    idAgente: findCol(header, ['idagenteresponsable', 'id agente', 'responsable', 'agente']),
-    activo: findCol(header, ['activo']),
+    codigo: findCol(header, ['código', 'codigo', 'codigocolectivo', 'codigo colectivo', 'colectivo']),
+    nombre: findCol(header, ['nombre', 'nombrecolectivo', 'nombre colectivo']),
+    agente: findCol(header, ['agente', 'idagenteresponsable', 'id agente', 'responsable']),
+    comercial: findCol(header, ['comercial']),
+    activo: findCol(header, ['act.', 'act', 'activo']),
+    zona: findCol(header, ['zona comercial', 'zona']),
+    pais: findCol(header, ['país', 'pais']),
+    marca: findCol(header, ['marca']),
   };
-  return rows.slice(headerIndex + 1).flatMap((row) => {
+  if (col.codigo === null) return [];
+  const byCode = new Map<string, Colectivo>();
+  rows.slice(headerIndex + 1).forEach((row) => {
     const codigo = cellText(pick(row, col.codigo));
-    if (!codigo) return [];
-    return [{
-      id: newId('col'),
+    if (!codigo) return;
+    const agente = cellText(pick(row, col.agente));
+    byCode.set(normKey(codigo), {
+      id: codigo,
       codigo,
       nombre: cellText(pick(row, col.nombre)) || codigo,
-      idAgente: cellText(pick(row, col.idAgente)),
+      idAgente: agente,
+      agente,
+      comercial: cellText(pick(row, col.comercial)),
+      zona: cellText(pick(row, col.zona)),
+      pais: cellText(pick(row, col.pais)),
+      marca: cellText(pick(row, col.marca)),
       activo: truthy(pick(row, col.activo)),
-    }];
+    });
   });
+  return Array.from(byCode.values());
 }
 
 export function pickSheet(sheets: Record<string, unknown[][]>, aliases: string[]): unknown[][] | null {

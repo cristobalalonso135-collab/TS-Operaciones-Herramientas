@@ -14,6 +14,7 @@ interface FileUploadProps {
   multiple?: boolean;
   keepDropzone?: boolean;
   hint?: string;
+  compact?: boolean;
 }
 
 export default function FileUpload({
@@ -26,6 +27,7 @@ export default function FileUpload({
   multiple = false,
   keepDropzone = false,
   hint,
+  compact = false,
 }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -103,7 +105,9 @@ export default function FileUpload({
     <div className="space-y-2">
       <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>
       <div
-        className={`relative cursor-pointer rounded-lg border border-dashed p-8 text-center transition ${
+        className={`relative cursor-pointer rounded-lg border border-dashed text-center transition ${
+          compact ? 'p-5' : 'p-8'
+        } ${
           dragActive
             ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
             : 'border-[var(--border-strong)] bg-[var(--bg-secondary)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]'
@@ -140,7 +144,7 @@ export default function FileUpload({
           </div>
         ) : (
           <div className="space-y-2">
-            <Upload className="mx-auto h-9 w-9 text-[var(--text-secondary)]" />
+            <Upload className={`mx-auto ${compact ? 'h-7 w-7' : 'h-9 w-9'} text-[var(--text-secondary)]`} />
             <p className="text-sm text-[var(--text-secondary)]">
               Arrastra {multiple ? 'los archivos' : 'el archivo'} aquí o <span className="font-medium text-[var(--accent)]">selecciónalo</span>
             </p>

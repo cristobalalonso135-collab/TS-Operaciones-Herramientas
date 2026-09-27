@@ -17,7 +17,9 @@ import {
   countRuleHits,
   currentActions,
   currentAlbaranes,
-  currentIncidents,
+  currentDataIncidents,
+  DATA_INCIDENT_DETAIL,
+  DATA_INCIDENT_REASONS,
   displayDash,
   exportPayload,
   formatIsoDate,
@@ -35,10 +37,12 @@ import {
   resumenKpis,
   todayIso,
   trendByBucket,
+  withLatestIncidents,
   STATE_EN_PROCESO,
   type Agent,
   type AlbaranesState,
   type Colectivo,
+  type DataIncident,
   type Evaluacion,
   type Regla,
 } from '@/lib/albaranes-model';
@@ -46,16 +50,14 @@ import { loadAlbaranesState, saveAlbaranesState, type AlbaranesBackend } from '@
 import { Download, Plus, Search, Trash2 } from 'lucide-react';
 
 const TABS = [
-  { id: 'resumen', label: 'Resumen' },
-  { id: 'acciones', label: 'Bandeja' },
-  { id: 'incidencias', label: 'Incidencias' },
+  { id: 'carga', label: 'Carga' },
   { id: 'reglas', label: 'Reglas' },
+  { id: 'resumen', label: 'Resumen' },
+  { id: 'incidencias', label: 'Incidencias' },
   { id: 'historico', label: 'Histórico' },
-  { id: 'directorios', label: 'Directorios' },
-  { id: 'comunicaciones', label: 'Correos' },
 ] as const;
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = (typeof TABS)[number]['id'] | 'acciones' | 'incidencias' | 'directorios' | 'comunicaciones';
 
 async function sha256(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -100,7 +102,7 @@ function Ack({ title, message, onClose }: { title: string; message: string; onCl
 }
 
 export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<TabId>('resumen');
+  const [tab, setTab] = useState<TabId>('carga');
   const [state, setState] = useState<AlbaranesState | null>(null);
   const [backend, setBackend] = useState<AlbaranesBackend>('local');
   const [setupSql, setSetupSql] = useState<string | null>(null);
@@ -115,6 +117,9 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [filterEnvio, setFilterEnvio] = useState('');
   const [filterNuevo, setFilterNuevo] = useState('');
   const [filterAge, setFilterAge] = useState('');
+  const [incReason, setIncReason] = useState('');
+  const [incSerie, setIncSerie] = useState('');
+  const [incQuery, setIncQuery] = useState('');
   const [vistaSerie, setVistaSerie] = useState('');
   const [vistaEstado, setVistaEstado] = useState('');
   const [vistaAgente, setVistaAgente] = useState('');
@@ -154,7 +159,27 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const kpis = useMemo(() => (state ? resumenKpis(state, vistaFilters) : null), [state, vistaFilters]);
   const last = state ? latestCarga(state) : null;
   const actions = useMemo(() => (state ? currentActions(state) : []), [state]);
-  const incidents = useMemo(() => (state ? currentIncidents(state) : []), [state]);
+  const incidents = useMemo(() => (state ? currentDataIncidents(state) : []), [state]);
+  const incidentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    incidents.forEach((item) => counts.set(item.reason, (counts.get(item.reason) || 0) + 1));
+    return DATA_INCIDENT_REASONS.map((reason) => ({ reason, count: counts.get(reason) || 0 })).filter((item) => item.count > 0);
+  }, [incidents]);
+  const filteredIncidents = useMemo(() => {
+    return incidents.filter((row) => {
+      if (incReason && row.reason !== incReason) return false;
+      if (incSerie && row.serie !== incSerie) return false;
+      if (incQuery) {
+        const hay = `${row.albaran} ${row.agente} ${row.codigoColectivo} ${row.estado}`.toLocaleLowerCase('es');
+        if (!hay.includes(incQuery.toLocaleLowerCase('es'))) return false;
+      }
+      return true;
+    });
+  }, [incQuery, incReason, incSerie, incidents]);
+  const masterSinAgente = useMemo(
+    () => (state ? state.colectivos.filter((item) => item.activo && !(item.agente || item.idAgente).trim()) : []),
+    [state],
+  );
   const actuales = useMemo(() => (state ? currentAlbaranes(state) : []), [state]);
   const series = state ? knownSeries(state) : [...DEFAULT_SERIES];
   const estados = state ? knownEstados(state) : [];
@@ -214,7 +239,6 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
         title: 'Carga guardada',
         message: `${formatInt(rows.length)} albaranes. ${formatInt(result.carga?.newBreaches || 0)} incumplimientos nuevos, ${formatInt(result.carga?.continuingBreaches || 0)} que continúan.`,
       });
-    setTab('resumen');
   };
 
   const handleAlbaranesFile = async (data: unknown[][], fileName: string) => {
@@ -223,6 +247,29 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     lastFileRef.current = null;
     const rows = parseAlbaranesSheet(data);
     await ingestRows(rows, fileName, hash);
+  };
+
+  const handleColectivosFile = (data: unknown[][], fileName: string) => {
+    if (!state) return;
+    const colectivos = parseColectivosSheet(data);
+    if (colectivos.length === 0) {
+      setAck({
+        title: 'Sin colectivos',
+        message: 'No he encontrado la columna Código. Usa el CSV del ERP: Nombre, Código, Agente, Comercial, Act.',
+      });
+      return;
+    }
+    const next = withLatestIncidents(state, colectivos);
+    void persist({
+      ...next,
+      colectivosFileName: fileName,
+      colectivosLoadedAt: nowIso(),
+    }, backend);
+    const agentes = new Set(colectivos.map((item) => item.agente || item.idAgente).filter(Boolean));
+    setAck({
+      title: 'Colectivos guardados',
+      message: `${formatInt(colectivos.length)} colectivos y ${formatInt(agentes.size)} agentes distintos. El correo de cada agente lo añadiremos después.`,
+    });
   };
 
   const importDirectories = (sheets: Record<string, unknown[][]>) => {
@@ -298,16 +345,84 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       )}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
 
+      {tab === 'carga' && (
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Sube el CSV diario de albaranes y el maestro de colectivos. El correo de cada agente se añadirá después.
+          </p>
+          <p className="text-xs text-[var(--text-muted)]">{ALCANCE_ALBARANES}</p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <FileUpload
+              inputId="albaranes-erp"
+              label="Albaranes no facturados"
+              hint="CSV del ERP con punto y coma. Misma estructura cada día."
+              keepDropzone
+              compact
+              onRawFile={(file) => { lastFileRef.current = file; }}
+              onFileLoaded={handleAlbaranesFile}
+            />
+            <FileUpload
+              inputId="albaranes-colectivos"
+              label="Maestro de colectivos"
+              hint="CSV del ERP: Nombre, Código, Agente, Comercial, Act."
+              keepDropzone
+              compact
+              onFileLoaded={handleColectivosFile}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Kpi
+              label="Albaranes cargados"
+              value={last?.recordCount || 0}
+              hint={last?.fileName || 'Aún no hay fichero'}
+              amount={last ? formatIsoDateTime(last.loadedAt) : undefined}
+            />
+            <Kpi
+              label="Colectivos cargados"
+              value={state.colectivos.length}
+              hint={state.colectivosFileName || 'Aún no hay fichero'}
+              amount={state.colectivosLoadedAt ? formatIsoDateTime(state.colectivosLoadedAt) : undefined}
+            />
+            <Kpi
+              label="Agentes en colectivos"
+              value={new Set(state.colectivos.map((item) => item.agente || item.idAgente).filter(Boolean)).size}
+              hint="Sin correo todavía"
+            />
+          </div>
+          {state.colectivos.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                  <tr>
+                    {['Código', 'Nombre', 'Agente', 'Comercial', 'Activo'].map((col) => (
+                      <th key={col} className="px-3 py-2 font-semibold">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {state.colectivos.slice(0, 12).map((row) => (
+                    <tr key={row.id} className="border-t border-[var(--border)]">
+                      <td className="px-3 py-2 font-medium">{row.codigo}</td>
+                      <td className="px-3 py-2">{row.nombre}</td>
+                      <td className="px-3 py-2">{displayDash(row.agente || row.idAgente)}</td>
+                      <td className="px-3 py-2">{displayDash(row.comercial)}</td>
+                      <td className="px-3 py-2">{row.activo ? 'Sí' : 'No'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {state.colectivos.length > 12 && (
+                <p className="px-3 py-2 text-xs text-[var(--text-muted)]">
+                  Mostrando 12 de {formatInt(state.colectivos.length)} colectivos.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'resumen' && (
         <div className="space-y-4">
-          <FileUpload
-            inputId="albaranes-erp"
-            label="Excel / CSV diario del ERP"
-            hint="CSV del ERP con punto y coma. Misma estructura cada día."
-            keepDropzone
-            onRawFile={(file) => { lastFileRef.current = file; }}
-            onFileLoaded={handleAlbaranesFile}
-          />
           <p className="text-sm text-[var(--text-secondary)]">{ALCANCE_ALBARANES}</p>
           <div className="flex flex-wrap items-center gap-2">
             <Select value={vistaSerie} onChange={setVistaSerie} label="Serie" options={series.map((item) => [item, item])} />
@@ -379,32 +494,82 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'incidencias' && (
-        <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
-              <tr>
-                {['Albarán', 'Serie', 'Estado', 'Agente', 'Colectivo', 'Motivo', 'Qué hacer'].map((col) => (
-                  <th key={col} className="px-3 py-2 font-semibold">{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {incidents.length === 0 && (
-                <tr><td className="px-3 py-6 text-[var(--text-muted)]" colSpan={7}>Sin incidencias de asignación.</td></tr>
-              )}
-              {incidents.map((row) => (
-                <tr key={row.key} className="border-t border-[var(--border)]">
-                  <td className="px-3 py-2 font-medium">{row.albaran}</td>
-                  <td className="px-3 py-2">{row.serie}</td>
-                  <td className="px-3 py-2">{row.estado}</td>
-                  <td className="px-3 py-2">{displayDash(row.agenteOriginal)}</td>
-                  <td className="px-3 py-2">{displayDash(row.codigoColectivo)}</td>
-                  <td className="px-3 py-2 text-[var(--danger)]">{row.assignmentReason}</td>
-                  <td className="px-3 py-2 text-[var(--text-secondary)]">{row.assignmentAction}</td>
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Huecos del cruce albaranes × colectivos. El correo del agente no entra todavía.
+          </p>
+          {state.colectivos.length === 0 && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Sube el maestro de colectivos en Carga para detectar códigos desconocidos, inactivos o sin agente.
+            </p>
+          )}
+          {state.colectivos.length > 0 && incidents.length === 0 && last && !(last.rows || []).length && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Vuelve a subir el CSV de albaranes para recalcular incidencias con el maestro actual.
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Kpi label="Albaranes con incidencia" value={incidents.length} />
+            <Kpi label="Colectivos activos sin agente" value={masterSinAgente.length} hint="En el maestro" />
+            {incidentCounts.map((item) => (
+              <Kpi key={item.reason} label={item.reason} value={item.count} />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchBox value={incQuery} onChange={setIncQuery} />
+            <Select value={incSerie} onChange={setIncSerie} label="Serie" options={series.map((item) => [item, item])} />
+            <Select
+              value={incReason}
+              onChange={setIncReason}
+              label="Motivo"
+              options={incidentCounts.map((item) => [item.reason, `${item.reason} (${formatInt(item.count)})`])}
+            />
+            {(incReason || incSerie || incQuery) && (
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
+                onClick={() => {
+                  setIncReason('');
+                  setIncSerie('');
+                  setIncQuery('');
+                }}
+              >
+                Quitar filtros
+              </button>
+            )}
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                <tr>
+                  {['Albarán', 'Serie', 'Estado', 'Agente', 'Colectivo', 'Motivo', 'Qué hacer'].map((col) => (
+                    <th key={col} className="px-3 py-2 font-semibold">{col}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredIncidents.length === 0 && (
+                  <tr><td className="px-3 py-6 text-[var(--text-muted)]" colSpan={7}>Sin incidencias con este filtro.</td></tr>
+                )}
+                {filteredIncidents.slice(0, 400).map((row: DataIncident) => (
+                  <tr key={row.key} className="border-t border-[var(--border)]">
+                    <td className="px-3 py-2 font-medium">{row.albaran}</td>
+                    <td className="px-3 py-2">{row.serie}</td>
+                    <td className="px-3 py-2">{row.estado}</td>
+                    <td className="px-3 py-2">{displayDash(row.agente)}</td>
+                    <td className="px-3 py-2">{displayDash(row.codigoColectivo)}</td>
+                    <td className="px-3 py-2 text-[var(--danger)]">{row.reason}</td>
+                    <td className="px-3 py-2 text-[var(--text-secondary)]">{DATA_INCIDENT_DETAIL[row.reason]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {filteredIncidents.length > 400 && (
+              <p className="px-3 py-2 text-xs text-[var(--text-muted)]">
+                Mostrando 400 de {formatInt(filteredIncidents.length)}. Afina el filtro para ver el resto.
+              </p>
+            )}
+          </div>
         </div>
       )}
 
@@ -883,7 +1048,7 @@ function ColectivoTable({ colectivos, agents, onChange }: { colectivos: Colectiv
       <button
         type="button"
         className="m-3 flex items-center gap-2 text-sm"
-        onClick={() => onChange([...colectivos, { id: newId('col'), codigo: '', nombre: '', idAgente: '', activo: true }])}
+        onClick={() => onChange([...colectivos, { id: newId('col'), codigo: '', nombre: '', idAgente: '', agente: '', comercial: '', activo: true }])}
       >
         <Plus className="h-4 w-4" /> Colectivo
       </button>

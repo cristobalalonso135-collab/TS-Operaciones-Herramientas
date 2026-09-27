@@ -45,6 +45,7 @@ export interface Carga {
   estadoCounts?: Array<{ name: string; count: number; importe: number }>;
   serieCounts?: Array<{ name: string; count: number; importe: number }>;
   buckets?: Array<{ serie: string; estado: string; count: number; importe: number }>;
+  incidents?: DataIncident[];
   newCount: number;
   sameCount: number;
   stateChangeCount: number;
@@ -74,11 +75,53 @@ export interface Agent {
   activo: boolean;
 }
 
+export type DataIncidentReason =
+  | 'Agente vacío'
+  | 'Colectivo vacío'
+  | 'Colectivo desconocido'
+  | 'Colectivo inactivo'
+  | 'Colectivo sin agente'
+  | 'Varios códigos de colectivo';
+
+export const DATA_INCIDENT_REASONS: DataIncidentReason[] = [
+  'Colectivo desconocido',
+  'Colectivo vacío',
+  'Colectivo inactivo',
+  'Colectivo sin agente',
+  'Varios códigos de colectivo',
+  'Agente vacío',
+];
+
+export const DATA_INCIDENT_DETAIL: Record<DataIncidentReason, string> = {
+  'Agente vacío': 'El albarán no es Internet y viene sin agente en el ERP.',
+  'Colectivo vacío': 'Es Internet y no trae código de colectivo.',
+  'Colectivo desconocido': 'El código no está en el maestro de colectivos.',
+  'Colectivo inactivo': 'El colectivo existe en el maestro pero está inactivo.',
+  'Colectivo sin agente': 'El colectivo no tiene agente en el maestro.',
+  'Varios códigos de colectivo': 'Hay más de un código en el mismo campo.',
+};
+
+export interface DataIncident {
+  key: string;
+  albaranId: string;
+  albaran: string;
+  serie: string;
+  estado: string;
+  agente: string;
+  codigoColectivo: string;
+  reason: DataIncidentReason;
+}
+
 export interface Colectivo {
   id: string;
   codigo: string;
   nombre: string;
   idAgente: string;
+  agente?: string;
+  comercial?: string;
+  zona?: string;
+  pais?: string;
+  marca?: string;
   activo: boolean;
 }
 
@@ -158,6 +201,8 @@ export interface AlbaranesState {
   rules: Regla[];
   agents: Agent[];
   colectivos: Colectivo[];
+  colectivosFileName?: string;
+  colectivosLoadedAt?: string;
   cargas: Carga[];
   disappeared: DisappearedAlbaran[];
   evaluations: Evaluacion[];
@@ -169,6 +214,8 @@ export const EMPTY_ALBARANES_STATE: AlbaranesState = {
   rules: [],
   agents: [],
   colectivos: [],
+  colectivosFileName: '',
+  colectivosLoadedAt: '',
   cargas: [],
   disappeared: [],
   evaluations: [],
@@ -513,6 +560,70 @@ export function findColectivos(colectivos: Colectivo[], codigo: string): Colecti
   return colectivos.filter((item) => normKey(item.codigo) === key);
 }
 
+export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]): DataIncident[] {
+  const hasMaster = colectivos.length > 0;
+  const out: DataIncident[] = [];
+  const push = (row: AlbaranRow, reason: DataIncidentReason) => {
+    out.push({
+      key: `${row.id}|${reason}`,
+      albaranId: row.id,
+      albaran: row.albaran,
+      serie: row.serie,
+      estado: row.estado,
+      agente: row.agente,
+      codigoColectivo: row.colectivo,
+      reason,
+    });
+  };
+
+  rows.forEach((row) => {
+    if (isInternetAgent(row.agente)) {
+      const codes = splitColectivoCodes(row.colectivo);
+      if (codes.length === 0) {
+        push(row, 'Colectivo vacío');
+        return;
+      }
+      if (codes.length > 1) {
+        push(row, 'Varios códigos de colectivo');
+        return;
+      }
+      if (!hasMaster) return;
+      const mapped = findColectivos(colectivos, codes[0]);
+      if (mapped.length === 0) {
+        push(row, 'Colectivo desconocido');
+        return;
+      }
+      const active = mapped.filter((item) => item.activo);
+      if (active.length === 0) {
+        push(row, 'Colectivo inactivo');
+        return;
+      }
+      if (!active.some((item) => (item.agente || item.idAgente).trim())) {
+        push(row, 'Colectivo sin agente');
+      }
+      return;
+    }
+    if (!row.agente.trim()) push(row, 'Agente vacío');
+  });
+  return out;
+}
+
+export function currentDataIncidents(state: AlbaranesState): DataIncident[] {
+  return latestCarga(state)?.incidents || [];
+}
+
+export function withLatestIncidents(state: AlbaranesState, colectivos: Colectivo[]): AlbaranesState {
+  const last = latestCarga(state);
+  const rows = last?.rows || [];
+  if (!last || rows.length === 0) return { ...state, colectivos };
+  const incidents = buildDataIncidents(rows, colectivos);
+  return {
+    ...state,
+    colectivos,
+    cargas: state.cargas.map((carga) => (carga.id === last.id ? { ...carga, incidents } : carga)),
+  };
+}
+
 export function resolveAssignment(row: AlbaranRow, agents: Agent[], colectivos: Colectivo[]): Assignment {
   const fail = (reason: AssignmentReason, action: string): Assignment => ({
     ok: false,
@@ -723,6 +834,7 @@ export function ingestCarga(state: AlbaranesState, input: {
     estadoCounts: tally(input.rows, (row) => row.estado || '(sin estado)'),
     serieCounts: tally(input.rows, (row) => row.serie || '(sin serie)'),
     buckets: tallyBuckets(input.rows),
+    incidents: buildDataIncidents(input.rows, state.colectivos),
     newCount,
     sameCount,
     stateChangeCount,
@@ -905,7 +1017,12 @@ export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
     return true;
   };
   const actions = currentActions(state).filter(matchEval);
-  const incidents = currentIncidents(state).filter(matchEval);
+  const dataIncidents = currentDataIncidents(state).filter((item) => {
+    if (filters.serie && item.serie.toUpperCase() !== filters.serie.trim().toUpperCase()) return false;
+    if (filters.estado && normKey(item.estado) !== normKey(filters.estado)) return false;
+    if (filters.agente && normKey(item.agente) !== normKey(filters.agente)) return false;
+    return true;
+  });
   const filtered = Boolean(filters.serie || filters.estado || filters.agente || filters.almacen);
   return {
     lastLoadDate: last?.loadDate || null,
@@ -916,7 +1033,7 @@ export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
     shareOfTotal: filtered && baseline.total > 0 ? summary.total / baseline.total : null,
     totalImporte: summary.importe,
     actionCount: actions.length,
-    incidentCount: incidents.length,
+    incidentCount: dataIncidents.length,
     estadoCount: summary.estadoCount,
     serieCount: summary.serieCount,
     estadoCounts: summary.estadoCounts,
