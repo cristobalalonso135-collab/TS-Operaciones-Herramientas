@@ -596,6 +596,79 @@ export function seedAlbaranesState(): AlbaranesState {
   return { ...EMPTY_ALBARANES_STATE, rules: defaultRules() };
 }
 
+export function peopleKey(value: string): string {
+  return normKey(value)
+    .replace(/\b(eqi|eqk|eoi|www|b2b|dvc)\b/g, ' ')
+    .replace(/[^a-z0-9ñáéíóúü ]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function namesMatch(left: string, right: string): boolean {
+  const a = peopleKey(left);
+  const b = peopleKey(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= 6 && b.length >= 6 && (a.includes(b) || b.includes(a))) return true;
+  const at = a.split(' ');
+  const bt = b.split(' ');
+  return Boolean(at[0] && bt[0] && at[at.length - 1] && bt[bt.length - 1] && at[0] === bt[0] && at[at.length - 1] === bt[bt.length - 1]);
+}
+
+export function uniqueAgentes(state: AlbaranesState): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (value: string) => {
+    const text = value.trim();
+    if (!text) return;
+    const key = peopleKey(text);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(text);
+  };
+  state.colectivos.forEach((item) => push(item.agente || item.idAgente));
+  state.agents.forEach((item) => {
+    push(item.agenteErp);
+    push(item.nombre);
+  });
+  return out.sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+export function mergeAgentEmails(
+  state: AlbaranesState,
+  contacts: Array<{ nombre: string; email: string }>,
+): { state: AlbaranesState; matched: number; unmatched: string[] } {
+  const names = uniqueAgentes(state);
+  const unmatched: string[] = [];
+  const emailByName = new Map<string, string>();
+  contacts.forEach((item) => {
+    if (!item.email.includes('@')) return;
+    const hit = names.find((name) => namesMatch(name, item.nombre) || namesMatch(name, item.email.split('@')[0].replace(/[._]/g, ' ')));
+    if (!hit) {
+      unmatched.push(item.nombre || item.email);
+      return;
+    }
+    emailByName.set(peopleKey(hit), item.email.trim());
+  });
+  const agents = names.map((name) => {
+    const key = peopleKey(name);
+    const prior = state.agents.find((item) => namesMatch(item.agenteErp, name) || namesMatch(item.nombre, name));
+    return {
+      id: prior?.id || newId('ag'),
+      agenteErp: prior?.agenteErp || name,
+      nombre: prior?.nombre || name,
+      email: emailByName.get(key) || prior?.email || '',
+      supervisor: prior?.supervisor || '',
+      activo: prior?.activo ?? true,
+    };
+  });
+  return {
+    state: { ...state, agents },
+    matched: emailByName.size,
+    unmatched: unmatched.slice(0, 20),
+  };
+}
+
 export function knownEstados(state: AlbaranesState): string[] {
   const seen = new Set<string>();
   const out: string[] = [];

@@ -9,6 +9,7 @@ import {
   parseAgentesSheet,
   parseAlbaranesSheet,
   parseColectivosSheet,
+  parseEmailsSheet,
   pickSheet,
 } from '@/lib/albaranes-excel';
 import {
@@ -36,6 +37,8 @@ import {
   knownSeries,
   historyEstadoMatrix,
   latestCarga,
+  mergeAgentEmails,
+  uniqueAgentes,
   newId,
   nextRuleId,
   nowIso,
@@ -405,7 +408,25 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     const agentes = new Set(colectivos.map((item) => item.agente || item.idAgente).filter(Boolean));
     setAck({
       title: 'Colectivos guardados',
-      message: `${formatInt(colectivos.length)} colectivos y ${formatInt(agentes.size)} agentes distintos. El correo de cada agente lo añadiremos después.`,
+      message: `${formatInt(colectivos.length)} colectivos y ${formatInt(agentes.size)} agentes distintos. Sube ahora el Excel de correos del grupo si lo tienes.`,
+    });
+  };
+
+  const handleEmailsFile = (data: unknown[][]) => {
+    if (!state) return;
+    const contacts = parseEmailsSheet(data);
+    if (contacts.length === 0) {
+      setAck({
+        title: 'Sin correos',
+        message: 'No he encontrado una columna Email / Mail / Correo. Exporta el grupo desde Outlook o Entra con nombre y correo.',
+      });
+      return;
+    }
+    const result = mergeAgentEmails(state, contacts);
+    void persist(result.state, backend);
+    setAck({
+      title: 'Correos cruzados',
+      message: `He emparejado ${formatInt(result.matched)} agentes con email.${result.unmatched.length ? ` Sin cruce: ${result.unmatched.slice(0, 8).join(', ')}.` : ''}`,
     });
   };
 
@@ -493,10 +514,10 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'carga' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Sube el CSV diario de albaranes y el maestro de colectivos. El correo de cada agente se añadirá después.
+            Sube el CSV diario de albaranes, el maestro de colectivos y, si lo tienes, el Excel de correos del grupo de Teams/Outlook.
           </p>
           <p className="text-xs text-[var(--text-muted)]">{ALCANCE_ALBARANES}</p>
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-3">
             <FileUpload
               inputId="albaranes-erp"
               label="Albaranes no facturados"
@@ -517,6 +538,14 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               compact
               onFileLoaded={handleColectivosFile}
             />
+            <FileUpload
+              inputId="albaranes-emails"
+              label="Correos del grupo"
+              hint="Excel/CSV con Nombre y Email (vale el de Outlook, Teams admin o Entra)."
+              keepDropzone
+              compact
+              onFileLoaded={handleEmailsFile}
+            />
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Kpi
@@ -532,11 +561,25 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               amount={state.colectivosLoadedAt ? formatIsoDateTime(state.colectivosLoadedAt) : undefined}
             />
             <Kpi
-              label="Agentes en colectivos"
-              value={new Set(state.colectivos.map((item) => item.agente || item.idAgente).filter(Boolean)).size}
-              hint="Sin correo todavía"
+              label="Agentes con email"
+              value={`${formatInt(state.agents.filter((item) => item.email.includes('@')).length)} / ${formatInt(uniqueAgentes(state).length)}`}
+              hint={uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero'}
             />
           </div>
+          <button
+            type="button"
+            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
+            onClick={() => {
+              const header = ['Agente', 'Email'];
+              const rows = uniqueAgentes(state).map((name) => {
+                const hit = state.agents.find((item) => item.agenteErp === name || item.nombre === name);
+                return [name, hit?.email || ''];
+              });
+              downloadAoa({ Correos: [header, ...rows] }, 'agentes_emails.xlsx');
+            }}
+          >
+            Descargar agentes (para pedir el Excel de correos)
+          </button>
         </div>
       )}
 

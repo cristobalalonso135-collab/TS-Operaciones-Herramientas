@@ -87,6 +87,31 @@ function truthy(value: unknown): boolean {
   return !['no', 'n', '0', 'false', 'inactivo'].includes(text);
 }
 
+export function parseEmailsSheet(rows: unknown[][]): Array<{ nombre: string; email: string }> {
+  if (!rows.length) return [];
+  const headerIndex = rows.findIndex((row) => {
+    const joined = (row || []).map(normalizeHeader).join(' | ');
+    return joined.includes('mail') || joined.includes('correo') || joined.includes('email') || joined.includes('upn');
+  });
+  const start = headerIndex >= 0 ? headerIndex : 0;
+  const header = (rows[start] || []).map(normalizeHeader);
+  const col = {
+    nombre: findCol(header, ['display name', 'displayname', 'nombre para mostrar', 'nombre completo', 'full name', 'name', 'nombre', 'agente']),
+    email: findCol(header, ['user principal name', 'userprincipalname', 'correo electrónico', 'email address', 'mail', 'email', 'correo', 'upn']),
+  };
+  const body = rows.slice(headerIndex >= 0 ? start + 1 : 0);
+  return body.flatMap((row) => {
+    const named = cellText(pick(row, col.nombre));
+    let email = cellText(pick(row, col.email));
+    if (!email.includes('@')) {
+      const fromRow = (row || []).map(cellText).find((item) => item.includes('@')) || '';
+      email = fromRow;
+    }
+    if (!email.includes('@')) return [];
+    return [{ nombre: named || email.split('@')[0], email }];
+  });
+}
+
 export function parseAgentesSheet(rows: unknown[][]): Agent[] {
   if (!rows.length) return [];
   const headerIndex = detectHeaderRow(rows, ['agente']);
