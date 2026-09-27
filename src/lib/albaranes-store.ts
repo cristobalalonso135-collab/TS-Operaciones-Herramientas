@@ -1,9 +1,18 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isMissingTableError } from '@/lib/seguimiento-db';
-import { photoCarga, seedAlbaranesState, type AlbaranesState } from '@/lib/albaranes-model';
+import {
+  attachListing,
+  listingSnapshot,
+  photoCarga,
+  seedAlbaranesState,
+  type AlbaranesState,
+} from '@/lib/albaranes-model';
 
 const LOCAL_KEY = 'ts-albaranes-v1';
 const STORE_ID = 'main';
+const LISTING_ID = 'listing';
+const LISTING_CHUNK = 'listing:';
+const LISTING_CHUNK_SIZE = 7000;
 
 export const ALBARANES_SETUP_SQL = `CREATE TABLE IF NOT EXISTS albaranes_store (
   id TEXT PRIMARY KEY,
@@ -39,10 +48,9 @@ function daysAgo(days: number): string {
 
 function photoState(state: AlbaranesState): AlbaranesState {
   const from = daysAgo(45);
-  const lastId = state.cargas[state.cargas.length - 1]?.id;
   return {
     ...state,
-    cargas: state.cargas.map((carga) => photoCarga(carga, carga.id === lastId)),
+    cargas: state.cargas.map((carga) => photoCarga(carga)),
     disappeared: [],
     evaluations: state.evaluations.filter((item) => item.loadDate >= from),
     communications: state.communications
@@ -51,24 +59,32 @@ function photoState(state: AlbaranesState): AlbaranesState {
   };
 }
 
+function keepLastDetail(state: AlbaranesState): AlbaranesState {
+  const lastId = state.cargas[state.cargas.length - 1]?.id;
+  return {
+    ...state,
+    cargas: state.cargas.map((carga) => (
+      carga.id === lastId
+        ? { ...carga, rows: [] }
+        : photoCarga(carga)
+    )),
+  };
+}
+
 function normalize(state: AlbaranesState): AlbaranesState {
   const seeded = seedAlbaranesState();
-  return {
+  return keepLastDetail({
     rules: state.rules.length > 0 ? state.rules : seeded.rules,
     agents: Array.isArray(state.agents) ? state.agents : [],
     colectivos: Array.isArray(state.colectivos) ? state.colectivos : [],
     colectivosFileName: typeof state.colectivosFileName === 'string' ? state.colectivosFileName : '',
     colectivosLoadedAt: typeof state.colectivosLoadedAt === 'string' ? state.colectivosLoadedAt : '',
-    cargas: (() => {
-      const list = Array.isArray(state.cargas) ? state.cargas : [];
-      const lastId = list[list.length - 1]?.id;
-      return list.map((carga) => photoCarga(carga, carga.id === lastId));
-    })(),
+    cargas: Array.isArray(state.cargas) ? state.cargas : [],
     disappeared: [],
     evaluations: Array.isArray(state.evaluations) ? state.evaluations : [],
     lots: Array.isArray(state.lots) ? state.lots : [],
     communications: Array.isArray(state.communications) ? state.communications : [],
-  };
+  });
 }
 
 function readLocal(): AlbaranesState {
@@ -120,6 +136,70 @@ async function readDedicated(): Promise<RemoteRead> {
   return { kind: 'ok', payload: normalize(data.payload) };
 }
 
+async function clearListingRows(): Promise<void> {
+  const client = requireClient();
+  const { error: chunkError } = await client.from('albaranes_store').delete().like('id', `${LISTING_CHUNK}%`);
+  if (chunkError) throw new Error(chunkError.message);
+}
+
+async function writeListing(state: AlbaranesState): Promise<void> {
+  const snap = listingSnapshot(state);
+  if (!snap) return;
+  const client = requireClient();
+  await clearListingRows();
+  const packed = snap.listing;
+  const now = new Date().toISOString();
+  if (packed.length <= LISTING_CHUNK_SIZE) {
+    const { error } = await client.from('albaranes_store').upsert({
+      id: LISTING_ID,
+      saved_at: now,
+      payload: snap,
+    }, { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+    return;
+  }
+  const chunks: typeof packed[] = [];
+  for (let i = 0; i < packed.length; i += LISTING_CHUNK_SIZE) {
+    chunks.push(packed.slice(i, i + LISTING_CHUNK_SIZE));
+  }
+  const { error: metaError } = await client.from('albaranes_store').upsert({
+    id: LISTING_ID,
+    saved_at: now,
+    payload: { ...snap, listing: [], chunkCount: chunks.length },
+  }, { onConflict: 'id' });
+  if (metaError) throw new Error(metaError.message);
+  for (let i = 0; i < chunks.length; i += 1) {
+    const { error } = await client.from('albaranes_store').upsert({
+      id: `${LISTING_CHUNK}${i}`,
+      saved_at: now,
+      payload: { listing: chunks[i] },
+    }, { onConflict: 'id' });
+    if (error) throw new Error(error.message);
+  }
+}
+
+async function readListing(): Promise<{ listing?: unknown; incidents?: unknown } | null> {
+  const client = requireClient();
+  const { data, error } = await client.from('albaranes_store').select('payload').eq('id', LISTING_ID).maybeSingle();
+  if (error) {
+    if (isMissingTableError(error.message)) return null;
+    throw new Error(error.message);
+  }
+  const payload = data?.payload as { listing?: unknown; incidents?: unknown; chunkCount?: number } | null;
+  if (!payload) return null;
+  const chunkCount = Number(payload.chunkCount || 0);
+  if (chunkCount <= 0) return payload;
+  const ids = Array.from({ length: chunkCount }, (_, i) => `${LISTING_CHUNK}${i}`);
+  const { data: rows, error: chunkError } = await client.from('albaranes_store').select('id, payload').in('id', ids);
+  if (chunkError) throw new Error(chunkError.message);
+  const byId = new Map((rows || []).map((row) => [row.id as string, row.payload as { listing?: unknown }]));
+  const listing = ids.flatMap((id) => {
+    const chunk = byId.get(id)?.listing;
+    return Array.isArray(chunk) ? chunk : [];
+  });
+  return { ...payload, listing };
+}
+
 async function writeDedicated(state: AlbaranesState): Promise<void> {
   const client = requireClient();
   const { error } = await client.from('albaranes_store').upsert({
@@ -129,6 +209,7 @@ async function writeDedicated(state: AlbaranesState): Promise<void> {
   }, { onConflict: 'id' });
   if (error) throw new Error(error.message);
   await client.from('albaranes_store').delete().like('id', 'carga:%');
+  await writeListing(state);
 }
 
 export async function loadAlbaranesState(): Promise<{ state: AlbaranesState; backend: AlbaranesBackend; setupSql?: string }> {
@@ -137,7 +218,8 @@ export async function loadAlbaranesState(): Promise<{ state: AlbaranesState; bac
     if (dedicated.kind === 'missing') return { state: readLocal(), backend: 'local', setupSql: ALBARANES_SETUP_SQL };
     if (dedicated.kind === 'ok' && dedicated.payload) {
       clearLocal();
-      return { state: dedicated.payload, backend: 'supabase' };
+      const listing = await readListing();
+      return { state: attachListing(dedicated.payload, listing), backend: 'supabase' };
     }
     const seeded = seedAlbaranesState();
     if (dedicated.kind === 'ok') {

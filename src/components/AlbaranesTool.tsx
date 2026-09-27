@@ -34,15 +34,14 @@ import {
   ingestCarga,
   knownEstados,
   knownSeries,
+  historyEstadoMatrix,
   latestCarga,
   newId,
   nextRuleId,
   nowIso,
   resumenKpis,
   todayIso,
-  trendByBucket,
   withLatestIncidents,
-  STATE_EN_PROCESO,
   type Agent,
   type AlbaranesState,
   type Colectivo,
@@ -135,7 +134,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [vistaSerie, setVistaSerie] = useState<string[]>([]);
   const [vistaEstado, setVistaEstado] = useState<string[]>([]);
   const [vistaAgente, setVistaAgente] = useState<string[]>([]);
-  const [trendEstado, setTrendEstado] = useState(STATE_EN_PROCESO);
+  const [histMetric, setHistMetric] = useState<'count' | 'importe'>('count');
+  const [incPage, setIncPage] = useState(0);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
   const [dirTab, setDirTab] = useState<'agentes' | 'colectivos'>('agentes');
 
@@ -223,10 +223,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   }, [listAgente, listEstado, listQuery, listSerie, listing]);
   const listPages = Math.max(1, Math.ceil(filteredListing.length / LIST_PAGE));
   const listingPage = filteredListing.slice(listPage * LIST_PAGE, listPage * LIST_PAGE + LIST_PAGE);
+  const incPages = Math.max(1, Math.ceil(filteredIncidents.length / LIST_PAGE));
+  const incidentsPage = filteredIncidents.slice(incPage * LIST_PAGE, incPage * LIST_PAGE + LIST_PAGE);
+  const history = useMemo(() => (state ? historyEstadoMatrix(state) : { dates: [], rows: [], totals: [] }), [state]);
 
   useEffect(() => {
     setListPage(0);
   }, [listAgente, listEstado, listQuery, listSerie]);
+  useEffect(() => {
+    setIncPage(0);
+  }, [incQuery, incReason, incSerie]);
   const actuales = useMemo(() => (state ? currentAlbaranes(state) : []), [state]);
   const series = state ? knownSeries(state) : [...DEFAULT_SERIES];
   const estados = state ? knownEstados(state) : [];
@@ -274,18 +280,19 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       fileHash: hash || `${fileName}-${rows.length}`,
       rows,
     });
+    await persist(result.state, backend);
+    setTab('listado');
     if (result.duplicate) {
       setAck({
-        title: 'Carga repetida',
-        message: 'Este archivo ya se subió hoy. No he duplicado el histórico ni los correos.',
+        title: 'Listado actualizado',
+        message: `Este archivo ya se subió hoy. No he duplicado el histórico. Hay ${formatInt(rows.length)} albaranes en el listado.`,
       });
       return;
     }
-    await persist(result.state, backend);
-      setAck({
-        title: 'Carga guardada',
-        message: `${formatInt(rows.length)} albaranes. ${formatInt(result.carga?.newBreaches || 0)} incumplimientos nuevos, ${formatInt(result.carga?.continuingBreaches || 0)} que continúan.`,
-      });
+    setAck({
+      title: 'Carga guardada',
+      message: `${formatInt(rows.length)} albaranes. ${formatInt(result.carga?.newBreaches || 0)} incumplimientos nuevos, ${formatInt(result.carga?.continuingBreaches || 0)} que continúan.`,
+    });
   };
 
   const handleAlbaranesFile = async (data: unknown[][], fileName: string) => {
@@ -524,11 +531,13 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'listado' && (
         <div className="space-y-3">
           <p className="text-sm text-[var(--text-secondary)]">
-            Última carga para revisar, descargar y preparar el correo. Los días se calculan a hoy.
+            Todos los albaranes de la última subida, para revisar, descargar y preparar el correo. Los días se calculan a hoy.
           </p>
           {listing.length === 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Vuelve a subir el CSV de albaranes en Carga para ver el listado completo.
+              {last && last.recordCount > 0
+                ? `El resumen tiene ${formatInt(last.recordCount)} albaranes, pero el listado aún no está guardado. Vuelve a Carga y sube otra vez Albaranes.csv (aunque sea el mismo archivo).`
+                : 'Sube el CSV de albaranes en Carga para ver el listado completo.'}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -645,16 +654,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'incidencias' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Huecos para el correo: sin serie, WWW sin colectivo, y colectivos desconocidos, inactivos o sin agente.
+            Albaranes de la última subida que hay que revisar: sin serie, WWW sin colectivo, o colectivo desconocido, inactivo, sin agente o con varios códigos.
           </p>
           {state.colectivos.length === 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               Sube el maestro de colectivos en Carga para detectar códigos desconocidos, inactivos o sin agente.
             </p>
           )}
-          {state.colectivos.length > 0 && incidents.length === 0 && listing.length === 0 && last && (
+          {incidents.length === 0 && listing.length === 0 && last && last.recordCount > 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Vuelve a subir el CSV de albaranes para recalcular incidencias con el maestro actual.
+              El resumen tiene {formatInt(last.recordCount)} albaranes, pero el detalle aún no está guardado. Vuelve a Carga y sube otra vez Albaranes.csv.
             </p>
           )}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -686,7 +695,30 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 Quitar filtros
               </button>
             ) : null}
+            <button
+              type="button"
+              className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
+              onClick={() => {
+                const header = ['Albarán', 'Serie', 'Estado', 'Agente', 'Colectivo', 'Motivo', 'Qué hacer'];
+                const rows = filteredIncidents.map((row) => [
+                  row.albaran,
+                  row.serie,
+                  row.estado,
+                  row.agente,
+                  row.codigoColectivo,
+                  row.reason,
+                  DATA_INCIDENT_DETAIL[row.reason],
+                ]);
+                downloadAoa({ Incidencias: [header, ...rows] }, `albaranes_incidencias_${last?.loadDate || todayIso()}.xlsx`);
+              }}
+            >
+              <Download className="h-3.5 w-3.5" /> Excel
+            </button>
           </div>
+          <p className="text-xs text-[var(--text-muted)]">
+            {formatInt(filteredIncidents.length)} albaranes a revisar
+            {filteredIncidents.length !== incidents.length ? ` de ${formatInt(incidents.length)}` : ''}.
+          </p>
           <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
@@ -697,13 +729,13 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredIncidents.length === 0 && (
+                {incidentsPage.length === 0 && (
                   <tr><td className="px-3 py-6 text-[var(--text-muted)]" colSpan={7}>Sin incidencias con este filtro.</td></tr>
                 )}
-                {filteredIncidents.slice(0, 400).map((row: DataIncident) => (
+                {incidentsPage.map((row: DataIncident) => (
                   <tr key={row.key} className="border-t border-[var(--border)]">
                     <td className="px-3 py-2 font-medium">{row.albaran}</td>
-                    <td className="px-3 py-2">{row.serie}</td>
+                    <td className="px-3 py-2">{displayDash(row.serie)}</td>
                     <td className="px-3 py-2">{row.estado}</td>
                     <td className="px-3 py-2">{displayDash(row.agente)}</td>
                     <td className="px-3 py-2">{displayDash(row.codigoColectivo)}</td>
@@ -713,12 +745,14 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 ))}
               </tbody>
             </table>
-            {filteredIncidents.length > 400 && (
-              <p className="px-3 py-2 text-xs text-[var(--text-muted)]">
-                Mostrando 400 de {formatInt(filteredIncidents.length)}. Afina el filtro para ver el resto.
-              </p>
-            )}
           </div>
+          {incPages > 1 && (
+            <div className="flex items-center gap-2 text-xs">
+              <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={incPage === 0} onClick={() => setIncPage((n) => Math.max(0, n - 1))}>Anterior</button>
+              <span className="text-[var(--text-muted)]">Página {incPage + 1} de {formatInt(incPages)}</span>
+              <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={incPage >= incPages - 1} onClick={() => setIncPage((n) => Math.min(incPages - 1, n + 1))}>Siguiente</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -736,67 +770,92 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
 
       {tab === 'historico' && (
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Kpi label="Fotos guardadas" value={state.cargas.length} hint="Totales por estado y serie, sin albarán suelto" />
-            <Kpi label="Albaranes última foto" value={last?.recordCount || 0} hint={last?.totalImporte ? formatEuro(last.totalImporte) : undefined} />
-            <Kpi label="Antigüedad media" value={last?.averageAgeDays != null ? `${formatInt(last.averageAgeDays)} días` : '—'} />
-          </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold">Tendencia por estado</p>
-              <label className="relative inline-flex">
-                <select value={trendEstado} onChange={(e) => setTrendEstado(e.target.value)} className="appearance-none rounded-md border border-[var(--border)] bg-white py-1.5 pl-2.5 pr-8 text-xs">
-                  {estados.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
-              </label>
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Filas = estado. Columnas = día de subida. Si hay varias cargas el mismo día, cuenta la última.
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                {formatInt(history.dates.length)} {history.dates.length === 1 ? 'día' : 'días'} con foto.
+              </p>
             </div>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">Así ves si En proceso (u otro estado) sube o baja a lo largo de los años.</p>
-            <div className="mt-3 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
+            <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-1">
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold ${histMetric === 'count' ? 'bg-[var(--text-primary)] text-white' : ''}`}
+                onClick={() => setHistMetric('count')}
+              >
+                Nº albaranes
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold ${histMetric === 'importe' ? 'bg-[var(--text-primary)] text-white' : ''}`}
+                onClick={() => setHistMetric('importe')}
+              >
+                Importe
+              </button>
+            </div>
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold"
+              onClick={() => {
+                const header = ['Estado', ...history.dates.map((date) => formatIsoDate(date)), 'Total'];
+                const rows = history.rows.map((row) => {
+                  const cells = row.values.map((item) => (histMetric === 'count' ? item.count : Math.round(item.importe * 100) / 100));
+                  const total = row.values.reduce((sum, item) => sum + (histMetric === 'count' ? item.count : item.importe), 0);
+                  return [row.estado, ...cells, histMetric === 'count' ? total : Math.round(total * 100) / 100];
+                });
+                const totalRow = [
+                  'Total',
+                  ...history.totals.map((item) => (histMetric === 'count' ? item.count : Math.round(item.importe * 100) / 100)),
+                  histMetric === 'count'
+                    ? history.totals.reduce((sum, item) => sum + item.count, 0)
+                    : Math.round(history.totals.reduce((sum, item) => sum + item.importe, 0) * 100) / 100,
+                ];
+                downloadAoa({ Historico: [header, ...rows, totalRow] }, `albaranes_historico_${histMetric}.xlsx`);
+              }}
+            >
+              <Download className="h-3.5 w-3.5" /> Excel
+            </button>
+          </div>
+          {history.dates.length === 0 ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Aún no hay fotos. Sube Albaranes.csv en Carga.
+            </p>
+          ) : (
+            <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                   <tr>
-                    {['Fecha', 'Albaranes', 'Importe', 'Vs día anterior'].map((col) => (
-                      <th key={col} className="px-3 py-2 font-semibold">{col}</th>
+                    <th className="sticky left-0 z-20 whitespace-nowrap bg-[var(--bg-soft)] px-3 py-2 font-semibold">Estado</th>
+                    {history.dates.map((date) => (
+                      <th key={date} className="whitespace-nowrap px-2 py-2 text-right font-semibold">{formatIsoDate(date)}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {[...trendByBucket(state, 'estado', trendEstado)].reverse().map((row) => (
-                    <tr key={row.loadDate} className="border-t border-[var(--border)]">
-                      <td className="px-3 py-2">{formatIsoDate(row.loadDate)}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatInt(row.count)}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatEuro(row.importe)}</td>
-                      <td className="px-3 py-2 tabular-nums">
-                        {row.delta == null ? '—' : `${row.delta > 0 ? '+' : ''}${formatInt(row.delta)}`}
-                      </td>
+                  {history.rows.map((row) => (
+                    <tr key={row.estado} className="border-t border-[var(--border)]">
+                      <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2 font-medium">{row.estado}</td>
+                      {row.values.map((item, index) => (
+                        <td key={`${row.estado}-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
+                          {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
+                        </td>
+                      ))}
                     </tr>
                   ))}
+                  <tr className="border-t-2 border-[var(--border)] font-semibold">
+                    <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2">Total</td>
+                    {history.totals.map((item, index) => (
+                      <td key={`total-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
+                        {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
+                      </td>
+                    ))}
+                  </tr>
                 </tbody>
               </table>
             </div>
-          </div>
-          <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
-                <tr>
-                  {['Fecha', 'Archivo', 'Albaranes', 'Importe'].map((col) => (
-                    <th key={col} className="px-3 py-2 font-semibold">{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {[...state.cargas].reverse().map((carga) => (
-                  <tr key={carga.id} className="border-t border-[var(--border)]">
-                    <td className="px-3 py-2">{formatIsoDate(carga.loadDate)}</td>
-                    <td className="px-3 py-2">{carga.fileName}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatInt(carga.recordCount)}</td>
-                    <td className="px-3 py-2 tabular-nums">{formatEuro(carga.totalImporte || 0)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          )}
         </div>
       )}
 

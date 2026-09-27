@@ -632,6 +632,80 @@ export function lookupAgenteColectivoFromIndex(codigo: string, index: Map<string
     .join(', ');
 }
 
+export function packListing(rows: ListingRow[]): Array<[string, string, string, string, string, string, string]> {
+  return rows.map((row) => [
+    row.albaran,
+    row.serie,
+    row.estado,
+    row.fechaAlbaran || '',
+    row.fechaEstado || '',
+    row.agente,
+    row.colectivo,
+  ]);
+}
+
+export function unpackListing(value: unknown): ListingRow[] {
+  if (!Array.isArray(value) || value.length === 0) return [];
+  const first = value[0] as unknown;
+  if (first && typeof first === 'object' && !Array.isArray(first)) {
+    return (value as ListingRow[]).filter((row) => row?.albaran);
+  }
+  return (value as unknown[]).flatMap((item) => {
+    if (!Array.isArray(item) || !item[0]) return [];
+    return [{
+      albaran: String(item[0] || ''),
+      serie: String(item[1] || ''),
+      estado: String(item[2] || ''),
+      fechaAlbaran: item[3] ? String(item[3]) : null,
+      fechaEstado: item[4] ? String(item[4]) : null,
+      agente: String(item[5] || ''),
+      colectivo: String(item[6] || ''),
+    }];
+  });
+}
+
+export function attachListing(
+  state: AlbaranesState,
+  payload: { cargaId?: string; loadDate?: string; listing?: unknown; incidents?: unknown } | null,
+): AlbaranesState {
+  const last = latestCarga(state);
+  if (!last || !payload) return state;
+  const listing = unpackListing(payload.listing);
+  if (listing.length === 0) return state;
+  return {
+    ...state,
+    cargas: state.cargas.map((carga) => (
+      carga.id === last.id
+        ? {
+            ...carga,
+            listing,
+            incidents: Array.isArray(payload.incidents) ? payload.incidents : carga.incidents,
+          }
+        : carga
+    )),
+  };
+}
+
+export function listingSnapshot(state: AlbaranesState): {
+  cargaId: string;
+  loadDate: string;
+  fileName: string;
+  listing: ReturnType<typeof packListing>;
+  incidents: DataIncident[];
+} | null {
+  const last = latestCarga(state);
+  if (!last) return null;
+  const listing = last.listing?.length ? last.listing : (last.rows || []).map(toListing);
+  if (listing.length === 0) return null;
+  return {
+    cargaId: last.id,
+    loadDate: last.loadDate,
+    fileName: last.fileName,
+    listing: packListing(listing),
+    incidents: last.incidents || [],
+  };
+}
+
 export function currentListing(state: AlbaranesState): ListingRow[] {
   const last = latestCarga(state);
   if (!last) return [];
@@ -681,7 +755,12 @@ export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]):
 }
 
 export function currentDataIncidents(state: AlbaranesState): DataIncident[] {
-  return latestCarga(state)?.incidents || [];
+  const last = latestCarga(state);
+  if (!last) return [];
+  if (last.incidents && last.incidents.length > 0) return last.incidents;
+  const rows = last.rows?.length ? last.rows : listingAsRows(last.listing || []);
+  if (rows.length === 0) return [];
+  return buildDataIncidents(rows, state.colectivos);
 }
 
 export function withLatestIncidents(state: AlbaranesState, colectivos: Colectivo[]): AlbaranesState {
@@ -811,7 +890,22 @@ export function ingestCarga(state: AlbaranesState, input: {
 }): { state: AlbaranesState; duplicate: boolean; carga: Carga | null } {
   const sameDay = state.cargas.filter((item) => item.loadDate === input.loadDate);
   if (sameDay.some((item) => item.fileHash === input.fileHash)) {
-    return { state, duplicate: true, carga: null };
+    const target = sameDay[sameDay.length - 1] || latestCarga(state);
+    if (!target) return { state, duplicate: true, carga: null };
+    const listing = input.rows.map(toListing);
+    const incidents = buildDataIncidents(input.rows, state.colectivos);
+    return {
+      duplicate: true,
+      carga: target,
+      state: {
+        ...state,
+        cargas: state.cargas.map((carga) => (
+          carga.id === target.id
+            ? { ...carga, rows: input.rows, listing, incidents }
+            : carga
+        )),
+      },
+    };
   }
 
   const previous = latestCarga(state);
@@ -1070,16 +1164,47 @@ export function trendByBucket(
   }));
 }
 
-export function photoCarga(carga: Carga, keepDetail = false): Carga {
-  const listing = keepDetail
-    ? (carga.listing && carga.listing.length > 0 ? carga.listing : (carga.rows || []).map(toListing))
-    : undefined;
-  return {
-    ...carga,
-    rows: [],
-    listing,
-    incidents: keepDetail ? carga.incidents : undefined,
-  };
+export function photoCarga(carga: Carga): Carga {
+  return { ...carga, rows: [], listing: undefined, incidents: undefined };
+}
+
+export function dailyPhotos(state: AlbaranesState): Carga[] {
+  const byDay = new Map<string, Carga>();
+  state.cargas.forEach((carga) => {
+    if (!carga.loadDate) return;
+    byDay.set(carga.loadDate, carga);
+  });
+  return Array.from(byDay.values()).sort((a, b) => a.loadDate.localeCompare(b.loadDate));
+}
+
+export function historyEstadoMatrix(state: AlbaranesState): {
+  dates: string[];
+  rows: Array<{ estado: string; values: Array<{ count: number; importe: number }> }>;
+  totals: Array<{ count: number; importe: number }>;
+} {
+  const photos = dailyPhotos(state);
+  const dates = photos.map((item) => item.loadDate);
+  const names = new Set<string>();
+  photos.forEach((carga) => {
+    (carga.estadoCounts || []).forEach((item) => names.add(item.name || '(sin estado)'));
+  });
+  const last = photos[photos.length - 1];
+  const lastCount = new Map((last?.estadoCounts || []).map((item) => [item.name || '(sin estado)', item.count]));
+  const estados = Array.from(names).sort(
+    (a, b) => (lastCount.get(b) || 0) - (lastCount.get(a) || 0) || a.localeCompare(b, 'es'),
+  );
+  const rows = estados.map((estado) => ({
+    estado,
+    values: photos.map((carga) => {
+      const hit = (carga.estadoCounts || []).find((item) => (item.name || '(sin estado)') === estado);
+      return { count: hit?.count || 0, importe: hit?.importe || 0 };
+    }),
+  }));
+  const totals = photos.map((carga) => ({
+    count: carga.recordCount || (carga.estadoCounts || []).reduce((sum, item) => sum + item.count, 0),
+    importe: carga.totalImporte || (carga.estadoCounts || []).reduce((sum, item) => sum + (item.importe || 0), 0),
+  }));
+  return { dates, rows, totals };
 }
 
 export function averageAge(rows: AlbaranRow[], loadDate: string): number {
