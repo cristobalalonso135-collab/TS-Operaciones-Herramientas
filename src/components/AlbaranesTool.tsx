@@ -48,7 +48,7 @@ import {
   type Regla,
 } from '@/lib/albaranes-model';
 import { loadAlbaranesState, saveAlbaranesState, type AlbaranesBackend } from '@/lib/albaranes-store';
-import { ChevronDown, Download, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, Plus, Search, Trash2 } from 'lucide-react';
 
 const TABS = [
   { id: 'carga', label: 'Carga' },
@@ -63,6 +63,17 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'] | 'acciones' | 'directorios' | 'comunicaciones';
 
 const LIST_PAGE = 120;
+type ListSortKey = 'albaran' | 'serie' | 'estado' | 'fechaAlbaran' | 'fechaEstado' | 'diasCreacion' | 'diasEstado' | 'agente';
+const LIST_COLUMNS: Array<{ key: ListSortKey; label: string }> = [
+  { key: 'albaran', label: 'Albarán' },
+  { key: 'serie', label: 'Serie' },
+  { key: 'estado', label: 'Estado' },
+  { key: 'fechaAlbaran', label: 'Fecha albarán' },
+  { key: 'fechaEstado', label: 'Fecha estado' },
+  { key: 'diasCreacion', label: 'Días creación' },
+  { key: 'diasEstado', label: 'Días estado' },
+  { key: 'agente', label: 'Agente' },
+];
 
 async function sha256(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -130,6 +141,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [listAgente, setListAgente] = useState<string[]>([]);
   const [listQuery, setListQuery] = useState('');
   const [listPage, setListPage] = useState(0);
+  const [listSort, setListSort] = useState<{ key: ListSortKey; dir: 'asc' | 'desc' }>({ key: 'fechaAlbaran', dir: 'desc' });
   const [actPage, setActPage] = useState(0);
   const [vistaSerie, setVistaSerie] = useState<string[]>([]);
   const [vistaEstado, setVistaEstado] = useState<string[]>([]);
@@ -199,7 +211,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   );
   const listing = useMemo(() => (state && tab === 'listado' ? currentListing(state) : []), [state, tab]);
   const filteredListing = useMemo(() => {
-    return listing.filter((row) => {
+    const hoy = todayIso();
+    const rows = listing.filter((row) => {
       if (listSerie.length) {
         const keys = new Set(listSerie.map((item) => item.toUpperCase()));
         if (!keys.has((row.serie || '(sin serie)').toUpperCase())) return false;
@@ -218,7 +231,26 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       }
       return true;
     });
-  }, [listAgente, listEstado, listQuery, listSerie, listing]);
+    const dir = listSort.dir === 'asc' ? 1 : -1;
+    const valueOf = (row: (typeof rows)[number]): string | number => {
+      if (listSort.key === 'fechaAlbaran') return row.fechaAlbaran || '';
+      if (listSort.key === 'fechaEstado') return row.fechaEstado || '';
+      if (listSort.key === 'diasCreacion') return row.fechaAlbaran ? daysBetween(row.fechaAlbaran, hoy) : -1;
+      if (listSort.key === 'diasEstado') return row.fechaEstado ? daysBetween(row.fechaEstado, hoy) : -1;
+      if (listSort.key === 'albaran') return row.albaran;
+      if (listSort.key === 'serie') return row.serie;
+      if (listSort.key === 'estado') return row.estado;
+      return row.agente;
+    };
+    return [...rows].sort((a, b) => {
+      const left = valueOf(a);
+      const right = valueOf(b);
+      if (left === '' || left === -1) return 1;
+      if (right === '' || right === -1) return -1;
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * dir;
+      return String(left).localeCompare(String(right), 'es', { numeric: true }) * dir;
+    });
+  }, [listAgente, listEstado, listQuery, listSerie, listSort, listing]);
   const listPages = Math.max(1, Math.ceil(filteredListing.length / LIST_PAGE));
   const listingPage = filteredListing.slice(listPage * LIST_PAGE, listPage * LIST_PAGE + LIST_PAGE);
   const incPages = Math.max(1, Math.ceil(filteredIncidents.length / LIST_PAGE));
@@ -227,7 +259,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     setListPage(0);
-  }, [listAgente, listEstado, listQuery, listSerie]);
+  }, [listAgente, listEstado, listQuery, listSerie, listSort]);
   useEffect(() => {
     setIncPage(0);
   }, [incQuery, incReason, incSerie]);
@@ -532,7 +564,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'listado' && (
         <div className="space-y-3">
           <p className="text-sm text-[var(--text-secondary)]">
-            Todos los albaranes de la última subida. Sin cruce con colectivos.
+            Todos los albaranes de la última subida. Pulsa una columna para ordenar (fechas y días de mayor a menor al primer clic).
           </p>
           {listing.length === 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -592,9 +624,25 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             <table className="min-w-full text-left text-xs">
               <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                 <tr>
-                  {['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente'].map((col) => (
-                    <th key={col} className="whitespace-nowrap px-2 py-2 font-semibold">{col}</th>
-                  ))}
+                  {LIST_COLUMNS.map((col) => {
+                    const active = listSort.key === col.key;
+                    return (
+                      <th key={col.key} className="whitespace-nowrap px-2 py-2 font-semibold">
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-1 ${active ? 'text-[var(--text-primary)]' : ''}`}
+                          onClick={() => setListSort((current) => (
+                            current.key === col.key
+                              ? { key: col.key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+                              : { key: col.key, dir: col.key.startsWith('fecha') || col.key.startsWith('dias') ? 'desc' : 'asc' }
+                          ))}
+                        >
+                          {col.label}
+                          {active ? (listSort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />) : <ChevronDown className="h-3.5 w-3.5 opacity-30" />}
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
