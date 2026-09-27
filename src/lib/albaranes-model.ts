@@ -168,8 +168,10 @@ export interface Evaluacion {
   albaran: string;
   serie: string;
   estado: string;
+  fechaAlbaran?: string | null;
   fechaEstado: string | null;
   diasEstado: number;
+  plazoDias?: number;
   agenteOriginal: string;
   codigoColectivo: string;
   agenteResuelto: string;
@@ -1064,8 +1066,10 @@ export function ingestCarga(state: AlbaranesState, input: {
         albaran: row.albaran,
         serie: row.serie,
         estado: row.estado,
+        fechaAlbaran: row.fechaAlbaran,
         fechaEstado: row.fechaEstado,
         diasEstado: row.fechaEstado ? daysBetween(row.fechaEstado, input.loadDate) : 0,
+        plazoDias: rule.plazoDias,
         agenteOriginal: row.agente,
         codigoColectivo: row.colectivo,
         agenteResuelto: assignment.agenteResuelto,
@@ -1182,6 +1186,55 @@ export function currentActions(state: AlbaranesState): Evaluacion[] {
   const last = latestCarga(state);
   if (!last) return [];
   return state.evaluations.filter((item) => item.cargaId === last.id);
+}
+
+export interface AccionRow {
+  key: string;
+  reglaId: string;
+  albaran: string;
+  serie: string;
+  estado: string;
+  fechaAlbaran: string | null;
+  fechaEstado: string | null;
+  diasCreacion: number | null;
+  diasEstado: number;
+  plazoDias: number;
+  agente: string;
+  email: string;
+}
+
+export function presentActions(state: AlbaranesState, today: string): AccionRow[] {
+  const last = latestCarga(state);
+  if (!last) return [];
+  const listing = new Map((last.listing || []).map((row) => [row.albaran, row]));
+  const colectivoIndex = colectivoAgenteIndex(state.colectivos);
+  const rules = new Map(state.rules.map((rule) => [rule.id, rule]));
+  return currentActions(state).map((item) => {
+    const listed = listing.get(item.albaran);
+    const fechaAlbaran = item.fechaAlbaran || listed?.fechaAlbaran || null;
+    const www = item.serie.trim().toUpperCase() === 'WWW';
+    const agente = www
+      ? (lookupAgenteColectivoFromIndex(item.codigoColectivo, colectivoIndex) || item.agenteResuelto)
+      : (item.agenteOriginal || item.agenteResuelto);
+    const wanted = normKey(agente);
+    const agent = wanted
+      ? state.agents.find((row) => normKey(row.agenteErp) === wanted || normKey(row.nombre) === wanted)
+      : undefined;
+    return {
+      key: item.key,
+      reglaId: item.reglaId,
+      albaran: item.albaran,
+      serie: item.serie,
+      estado: item.estado,
+      fechaAlbaran,
+      fechaEstado: item.fechaEstado,
+      diasCreacion: fechaAlbaran ? daysBetween(fechaAlbaran, today) : null,
+      diasEstado: item.diasEstado,
+      plazoDias: item.plazoDias ?? rules.get(item.reglaId)?.plazoDias ?? 0,
+      agente,
+      email: item.email || agent?.email || '',
+    };
+  });
 }
 
 export function currentIncidents(state: AlbaranesState): Evaluacion[] {

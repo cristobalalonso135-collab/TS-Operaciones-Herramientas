@@ -15,10 +15,10 @@ import {
   ALCANCE_ALBARANES,
   DEFAULT_SERIES,
   countRuleHits,
-  currentActions,
   currentAlbaranes,
   currentDataIncidents,
   currentListing,
+  presentActions,
   daysBetween,
   DATA_INCIDENT_DETAIL,
   DATA_INCIDENT_REASONS,
@@ -43,14 +43,28 @@ import {
   todayIso,
   withLatestIncidents,
   type Agent,
+  type AccionRow,
   type AlbaranesState,
   type Colectivo,
   type DataIncident,
-  type Evaluacion,
   type Regla,
 } from '@/lib/albaranes-model';
 import { loadAlbaranesState, saveAlbaranesState, type AlbaranesBackend } from '@/lib/albaranes-store';
 import { ChevronDown, ChevronUp, Download, Plus, Search, Trash2 } from 'lucide-react';
+
+type ActSortKey = 'plazoDias' | 'albaran' | 'serie' | 'estado' | 'fechaAlbaran' | 'fechaEstado' | 'diasCreacion' | 'diasEstado' | 'agente' | 'email';
+const ACT_COLUMNS: Array<{ key: ActSortKey; label: string }> = [
+  { key: 'plazoDias', label: 'Máximos días' },
+  { key: 'albaran', label: 'Albarán' },
+  { key: 'serie', label: 'Serie' },
+  { key: 'estado', label: 'Estado' },
+  { key: 'fechaAlbaran', label: 'Fecha albarán' },
+  { key: 'fechaEstado', label: 'Fecha estado' },
+  { key: 'diasCreacion', label: 'Días creación' },
+  { key: 'diasEstado', label: 'Días estado' },
+  { key: 'agente', label: 'Agente' },
+  { key: 'email', label: 'Email' },
+];
 
 const TABS = [
   { id: 'carga', label: 'Carga' },
@@ -145,6 +159,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [listPage, setListPage] = useState(0);
   const [listSort, setListSort] = useState<{ key: ListSortKey; dir: 'asc' | 'desc' }>({ key: 'fechaAlbaran', dir: 'desc' });
   const [actPage, setActPage] = useState(0);
+  const [actSort, setActSort] = useState<{ key: ActSortKey; dir: 'asc' | 'desc' }>({ key: 'diasEstado', dir: 'desc' });
   const [vistaSerie, setVistaSerie] = useState<string[]>([]);
   const [vistaEstado, setVistaEstado] = useState<string[]>([]);
   const [vistaAgente, setVistaAgente] = useState<string[]>([]);
@@ -187,7 +202,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   );
   const kpis = useMemo(() => (state ? resumenKpis(state, vistaFilters) : null), [state, vistaFilters]);
   const last = state ? latestCarga(state) : null;
-  const actions = useMemo(() => (state ? currentActions(state) : []), [state]);
+  const actions = useMemo(() => (state && tab === 'acciones' ? presentActions(state, todayIso()) : []), [state, tab]);
   const incidents = useMemo(() => (state ? currentDataIncidents(state) : []), [state]);
   const incidentCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -283,31 +298,45 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   }, [state, tab]);
 
   const filteredActions = useMemo(() => {
-    return actions.filter((row) => {
+    const rows = actions.filter((row) => {
       if (filterRule && row.reglaId !== filterRule) return false;
       if (filterSerie && row.serie !== filterSerie) return false;
       if (filterEstado && row.estado !== filterEstado) return false;
-      if (filterResp && row.agenteResuelto !== filterResp) return false;
-      if (filterEnvio === 'enviado' && row.envio !== 'generado') return false;
-      if (filterEnvio === 'no' && row.envio === 'generado') return false;
-      if (filterNuevo === 'nuevo' && !row.nuevo) return false;
-      if (filterNuevo === 'recurrente' && row.nuevo) return false;
-      if (filterAge === '30' && row.diasEstado <= 30) return false;
-      if (filterAge === '14' && row.diasEstado <= 14) return false;
-      if (filterAge === '7' && row.diasEstado <= 7) return false;
+      if (filterResp && row.agente !== filterResp) return false;
       if (query) {
-        const hay = `${row.albaran} ${row.agenteOriginal} ${row.agenteResuelto} ${row.codigoColectivo}`.toLocaleLowerCase('es');
+        const hay = `${row.albaran} ${row.agente} ${row.email} ${row.estado}`.toLocaleLowerCase('es');
         if (!hay.includes(query.toLocaleLowerCase('es'))) return false;
       }
       return true;
     });
-  }, [actions, filterAge, filterEnvio, filterEstado, filterNuevo, filterResp, filterRule, filterSerie, query]);
+    const dir = actSort.dir === 'asc' ? 1 : -1;
+    const valueOf = (row: AccionRow): string | number => {
+      if (actSort.key === 'plazoDias') return row.plazoDias;
+      if (actSort.key === 'fechaAlbaran') return row.fechaAlbaran || '';
+      if (actSort.key === 'fechaEstado') return row.fechaEstado || '';
+      if (actSort.key === 'diasCreacion') return row.diasCreacion ?? -1;
+      if (actSort.key === 'diasEstado') return row.diasEstado;
+      if (actSort.key === 'albaran') return row.albaran;
+      if (actSort.key === 'serie') return row.serie;
+      if (actSort.key === 'estado') return row.estado;
+      if (actSort.key === 'email') return row.email;
+      return row.agente;
+    };
+    return [...rows].sort((a, b) => {
+      const left = valueOf(a);
+      const right = valueOf(b);
+      if (left === '' || left === -1) return 1;
+      if (right === '' || right === -1) return -1;
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * dir;
+      return String(left).localeCompare(String(right), 'es', { numeric: true }) * dir;
+    });
+  }, [actSort, actions, filterEstado, filterResp, filterRule, filterSerie, query]);
   const actPages = Math.max(1, Math.ceil(filteredActions.length / LIST_PAGE));
   const actionsPage = filteredActions.slice(actPage * LIST_PAGE, actPage * LIST_PAGE + LIST_PAGE);
 
   useEffect(() => {
     setActPage(0);
-  }, [filterAge, filterEnvio, filterEstado, filterNuevo, filterResp, filterRule, filterSerie, query]);
+  }, [actSort, filterEstado, filterResp, filterRule, filterSerie, query]);
 
   const ingestRows = async (rows: ReturnType<typeof parseAlbaranesSheet>, fileName: string, hash: string) => {
     if (!state) return;
@@ -697,7 +726,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             <Select value={filterRule} onChange={setFilterRule} label="Regla" options={state.rules.map((rule) => [rule.id, `${rule.id} · ${rule.nombre}`])} />
             <Select value={filterSerie} onChange={setFilterSerie} label="Serie" options={series.map((item) => [item, item])} />
             <Select value={filterEstado} onChange={setFilterEstado} label="Estado" options={estados.map((item) => [item, item])} />
-            <Select value={filterResp} onChange={setFilterResp} label="Responsable" options={Array.from(new Set(actions.map((row) => row.agenteResuelto).filter(Boolean))).map((item) => [item, item])} />
+            <Select value={filterResp} onChange={setFilterResp} label="Responsable" options={Array.from(new Set(actions.map((row) => row.agente).filter(Boolean))).map((item) => [item, item])} />
             {(filterRule || filterSerie || filterEstado || filterResp || query) ? (
               <button
                 type="button"
@@ -717,15 +746,18 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               type="button"
               className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
               onClick={() => {
-                const header = ['Regla', 'Albarán', 'Serie', 'Estado', 'Fecha estado', 'Días estado', 'Agente'];
+                const header = ['Máximos días', 'Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente', 'Email'];
                 const rows = filteredActions.map((row) => [
-                  row.reglaId,
+                  row.plazoDias,
                   row.albaran,
                   row.serie,
                   row.estado,
+                  formatIsoDate(row.fechaAlbaran),
                   formatIsoDate(row.fechaEstado),
+                  row.diasCreacion ?? '',
                   row.diasEstado,
-                  row.agenteOriginal,
+                  row.agente,
+                  row.email,
                 ]);
                 downloadAoa({ Acciones: [header, ...rows] }, `albaranes_acciones_${last?.loadDate || todayIso()}.xlsx`);
               }}
@@ -737,7 +769,15 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             {formatInt(filteredActions.length)} albaranes
             {filteredActions.length !== actions.length ? ` de ${formatInt(actions.length)}` : ''}.
           </p>
-          <ActionTable rows={actionsPage} />
+          <ActionTable
+            rows={actionsPage}
+            sort={actSort}
+            onSort={(key) => setActSort((current) => (
+              current.key === key
+                ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+                : { key, dir: key.startsWith('fecha') || key.startsWith('dias') || key === 'plazoDias' ? 'desc' : 'asc' }
+            ))}
+          />
           {actPages > 1 && (
             <div className="flex items-center gap-2 text-xs">
               <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={actPage === 0} onClick={() => setActPage((n) => Math.max(0, n - 1))}>Anterior</button>
@@ -1260,30 +1300,53 @@ function HistoryTable({
   );
 }
 
-function ActionTable({ rows }: { rows: Evaluacion[] }) {
+function ActionTable({
+  rows,
+  sort,
+  onSort,
+}: {
+  rows: AccionRow[];
+  sort: { key: ActSortKey; dir: 'asc' | 'desc' };
+  onSort: (key: ActSortKey) => void;
+}) {
   return (
     <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
       <table className="min-w-full text-left text-xs">
         <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
           <tr>
-            {['Regla', 'Albarán', 'Serie', 'Estado', 'Fecha estado', 'Días estado', 'Agente'].map((col) => (
-              <th key={col} className="whitespace-nowrap px-2 py-2 font-semibold">{col}</th>
-            ))}
+            {ACT_COLUMNS.map((col) => {
+              const active = sort.key === col.key;
+              return (
+                <th key={col.key} className="whitespace-nowrap px-2 py-2 font-semibold">
+                  <button
+                    type="button"
+                    className={`inline-flex items-center gap-1 ${active ? 'text-[var(--text-primary)]' : ''}`}
+                    onClick={() => onSort(col.key)}
+                  >
+                    {col.label}
+                    {active ? (sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />) : <ChevronDown className="h-3.5 w-3.5 opacity-30" />}
+                  </button>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={7}>Nadie cumple una regla activa.</td></tr>
+            <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={10}>Nadie cumple una regla activa.</td></tr>
           )}
           {rows.map((row) => (
             <tr key={row.key} className="border-t border-[var(--border)]">
-              <td className="px-2 py-2">{row.reglaId}</td>
+              <td className="px-2 py-2 tabular-nums">{formatInt(row.plazoDias)}</td>
               <td className="px-2 py-2 font-medium">{row.albaran}</td>
               <td className="px-2 py-2">{row.serie}</td>
               <td className="px-2 py-2">{row.estado}</td>
+              <td className="px-2 py-2">{formatIsoDate(row.fechaAlbaran)}</td>
               <td className="px-2 py-2">{formatIsoDate(row.fechaEstado)}</td>
+              <td className="px-2 py-2 tabular-nums">{row.diasCreacion == null ? '—' : formatInt(row.diasCreacion)}</td>
               <td className="px-2 py-2 tabular-nums">{formatInt(row.diasEstado)}</td>
-              <td className="px-2 py-2">{displayDash(row.agenteOriginal)}</td>
+              <td className="px-2 py-2">{displayDash(row.agente)}</td>
+              <td className="px-2 py-2">{displayDash(row.email)}</td>
             </tr>
           ))}
         </tbody>
