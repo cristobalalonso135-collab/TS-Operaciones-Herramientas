@@ -504,7 +504,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `albaranes_acciones_${last.loadDate}.xlsx`;
+    link.download = 'albaranes_acciones.xlsx';
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -814,7 +814,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               onClick={() => {
                 const header = ACT_COLUMNS.map((col) => col.label);
                 const rows = filteredActions.map((row) => ACT_COLUMNS.map((col) => actionCell(row, col.key)));
-                downloadAoa({ Acciones: [header, ...rows] }, `albaranes_acciones_${last?.loadDate || todayIso()}.xlsx`);
+                downloadAoa({ Acciones: [header, ...rows] }, 'albaranes_acciones.xlsx');
               }}
             >
               <Download className="h-3.5 w-3.5" /> Excel
@@ -823,6 +823,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           <p className="text-xs text-[var(--text-muted)]">
             {formatInt(filteredActions.length)} albaranes
             {filteredActions.length !== actions.length ? ` de ${formatInt(actions.length)}` : ''}.
+            El Excel se descarga siempre como albaranes_acciones.xlsx.
           </p>
           <ActionTable
             rows={actionsPage}
