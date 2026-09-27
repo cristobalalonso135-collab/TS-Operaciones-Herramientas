@@ -13,6 +13,7 @@ import TrackingTool, { type TrackingViewMode } from '@/components/TrackingTool';
 import OperationsDashboard from '@/components/OperationsDashboard';
 import StockTool from '@/components/StockTool';
 import AbonosTool from '@/components/AbonosTool';
+import AlbaranesTool from '@/components/AlbaranesTool';
 import MejorasTool from '@/components/MejorasTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -414,7 +415,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -662,6 +663,10 @@ export default function Home() {
     return <MejorasTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'albaranes') {
+    return <AlbaranesTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -712,6 +717,14 @@ export default function Home() {
         tone: 'bg-[#e7f1f0] text-[#1d5f5a]',
         link: 'text-[#1d5f5a]',
       },
+      {
+        id: 'albaranes' as const,
+        number: '07',
+        title: 'Albaranes',
+        description: 'Control diario de albaranes no facturados de Equipaciones: reglas, responsables y Excel para Power Automate.',
+        tone: 'bg-[#ece7f6] text-[#5b3d91]',
+        link: 'text-[#5b3d91]',
+      },
     ];
 
     return (
@@ -727,7 +740,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Seis entradas: comercial, almacén, abonos y mejoras IT. El resto vive en pestañas dentro de cada herramienta.
+              Siete entradas: comercial, almacén, abonos, mejoras IT y albaranes. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>

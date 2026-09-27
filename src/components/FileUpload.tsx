@@ -7,6 +7,7 @@ import { isCsvFile, parseDelimitedText } from '@/lib/delimited-text';
 interface FileUploadProps {
   onFileLoaded: (data: any[][], fileName: string) => void;
   onWorkbookLoaded?: (workbook: Record<string, any[][]>, fileName: string) => void;
+  onRawFile?: (file: File) => void;
   accept?: string;
   label?: string;
   inputId?: string;
@@ -18,6 +19,7 @@ interface FileUploadProps {
 export default function FileUpload({
   onFileLoaded,
   onWorkbookLoaded,
+  onRawFile,
   accept = '.xlsx,.xls,.csv',
   label = 'Sube tu Excel de budget',
   inputId = 'file-input',
@@ -33,6 +35,7 @@ export default function FileUpload({
     async (file: File) => {
       setError(null);
       try {
+        onRawFile?.(file);
         if (isCsvFile(file)) {
           const text = await file.text();
           const data = parseDelimitedText(text);
@@ -62,7 +65,7 @@ export default function FileUpload({
         console.error(err);
       }
     },
-    [onFileLoaded, onWorkbookLoaded]
+    [onFileLoaded, onRawFile, onWorkbookLoaded]
   );
 
   const processFiles = useCallback(
