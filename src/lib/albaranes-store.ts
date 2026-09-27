@@ -79,6 +79,8 @@ function normalize(state: AlbaranesState): AlbaranesState {
     colectivos: Array.isArray(state.colectivos) ? state.colectivos : [],
     colectivosFileName: typeof state.colectivosFileName === 'string' ? state.colectivosFileName : '',
     colectivosLoadedAt: typeof state.colectivosLoadedAt === 'string' ? state.colectivosLoadedAt : '',
+    emailsFileName: typeof state.emailsFileName === 'string' ? state.emailsFileName : '',
+    emailsLoadedAt: typeof state.emailsLoadedAt === 'string' ? state.emailsLoadedAt : '',
     cargas: Array.isArray(state.cargas) ? state.cargas : [],
     disappeared: [],
     evaluations: Array.isArray(state.evaluations) ? state.evaluations : [],

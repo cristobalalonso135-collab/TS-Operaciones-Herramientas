@@ -94,7 +94,8 @@ export type DataIncidentReason =
   | 'Colectivo desconocido'
   | 'Colectivo inactivo'
   | 'Colectivo sin agente'
-  | 'Varios códigos de colectivo';
+  | 'Varios códigos de colectivo'
+  | 'Agente sin email';
 
 export const DATA_INCIDENT_REASONS: DataIncidentReason[] = [
   'Sin serie',
@@ -103,6 +104,7 @@ export const DATA_INCIDENT_REASONS: DataIncidentReason[] = [
   'Colectivo inactivo',
   'Colectivo sin agente',
   'Varios códigos de colectivo',
+  'Agente sin email',
 ];
 
 export const DATA_INCIDENT_DETAIL: Record<DataIncidentReason, string> = {
@@ -112,6 +114,7 @@ export const DATA_INCIDENT_DETAIL: Record<DataIncidentReason, string> = {
   'Colectivo inactivo': 'El colectivo existe en el maestro pero está inactivo.',
   'Colectivo sin agente': 'El colectivo no tiene agente en el maestro; no se podrá enviar el correo.',
   'Varios códigos de colectivo': 'Hay más de un código en el mismo campo.',
+  'Agente sin email': 'Este agente no tiene correo. Súbelo en Carga con el Excel de emails o complétalo en el maestro.',
 };
 
 export interface DataIncident {
@@ -218,6 +221,8 @@ export interface AlbaranesState {
   colectivos: Colectivo[];
   colectivosFileName?: string;
   colectivosLoadedAt?: string;
+  emailsFileName?: string;
+  emailsLoadedAt?: string;
   cargas: Carga[];
   disappeared: DisappearedAlbaran[];
   evaluations: Evaluacion[];
@@ -231,6 +236,8 @@ export const EMPTY_ALBARANES_STATE: AlbaranesState = {
   colectivos: [],
   colectivosFileName: '',
   colectivosLoadedAt: '',
+  emailsFileName: '',
+  emailsLoadedAt: '',
   cargas: [],
   disappeared: [],
   evaluations: [],
@@ -604,7 +611,7 @@ export function peopleKey(value: string): string {
     .trim();
 }
 
-function namesMatch(left: string, right: string): boolean {
+export function namesMatch(left: string, right: string): boolean {
   const a = peopleKey(left);
   const b = peopleKey(right);
   if (!a || !b) return false;
@@ -631,6 +638,7 @@ export function uniqueAgentes(state: AlbaranesState): string[] {
     push(item.agenteErp);
     push(item.nombre);
   });
+  latestCarga(state)?.listing?.forEach((row) => push(row.agente));
   return out.sort((a, b) => a.localeCompare(b, 'es'));
 }
 
@@ -906,11 +914,32 @@ export function buildDataIncidents(rows: AlbaranRow[], colectivos: Colectivo[]):
 
 export function currentDataIncidents(state: AlbaranesState): DataIncident[] {
   const last = latestCarga(state);
-  if (!last) return [];
-  if (last.incidents && last.incidents.length > 0) return last.incidents;
-  const rows = last.rows?.length ? last.rows : listingAsRows(last.listing || []);
-  if (rows.length === 0) return [];
-  return buildDataIncidents(rows, state.colectivos);
+  const fromCarga = last?.incidents && last.incidents.length > 0
+    ? last.incidents.filter((item) => item.reason !== 'Agente sin email')
+    : (() => {
+        const rows = last?.rows?.length ? last.rows : listingAsRows(last?.listing || []);
+        return rows.length ? buildDataIncidents(rows, state.colectivos) : [];
+      })();
+  return [...fromCarga, ...agentEmailIncidents(state)];
+}
+
+export function agentEmailIncidents(state: AlbaranesState): DataIncident[] {
+  return uniqueAgentes(state)
+    .filter((name) => !isInternetAgent(name) && peopleKey(name) !== 'internet')
+    .filter((name) => {
+      const agent = state.agents.find((item) => namesMatch(item.agenteErp, name) || namesMatch(item.nombre, name));
+      return !agent?.email.includes('@');
+    })
+    .map((name) => ({
+      key: `agente|${peopleKey(name)}|Agente sin email`,
+      albaranId: peopleKey(name),
+      albaran: '',
+      serie: '',
+      estado: '',
+      agente: name,
+      codigoColectivo: '',
+      reason: 'Agente sin email' as const,
+    }));
 }
 
 export function withLatestIncidents(state: AlbaranesState, colectivos: Colectivo[]): AlbaranesState {
@@ -1289,9 +1318,8 @@ export function presentActions(state: AlbaranesState, today: string): AccionRow[
     const agente = www
       ? (lookupAgenteColectivoFromIndex(item.codigoColectivo, colectivoIndex) || item.agenteResuelto)
       : (item.agenteOriginal || item.agenteResuelto);
-    const wanted = normKey(agente);
-    const agent = wanted
-      ? state.agents.find((row) => normKey(row.agenteErp) === wanted || normKey(row.nombre) === wanted)
+    const agent = agente
+      ? state.agents.find((row) => namesMatch(row.agenteErp, agente) || namesMatch(row.nombre, agente))
       : undefined;
     return {
       key: item.key,

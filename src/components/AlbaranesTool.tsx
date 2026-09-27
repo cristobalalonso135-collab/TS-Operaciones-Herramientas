@@ -39,6 +39,7 @@ import {
   latestCarga,
   mergeAgentEmails,
   uniqueAgentes,
+  agentEmailIncidents,
   newId,
   nextRuleId,
   nowIso,
@@ -425,7 +426,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     });
   };
 
-  const handleEmailsFile = (data: unknown[][]) => {
+  const handleEmailsFile = (data: unknown[][], fileName: string) => {
     if (!state) return;
     const contacts = parseEmailsSheet(data);
     if (contacts.length === 0) {
@@ -436,10 +437,15 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       return;
     }
     const result = mergeAgentEmails(state, contacts);
-    void persist(result.state, backend);
+    void persist({
+      ...result.state,
+      emailsFileName: fileName,
+      emailsLoadedAt: nowIso(),
+    }, backend);
+    const missing = agentEmailIncidents(result.state).length;
     setAck({
       title: 'Correos cruzados',
-      message: `He emparejado ${formatInt(result.matched)} agentes con email.${result.unmatched.length ? ` Sin cruce: ${result.unmatched.slice(0, 8).join(', ')}.` : ''}`,
+      message: `He emparejado ${formatInt(result.matched)} agentes con email.${missing ? ` ${formatInt(missing)} agentes siguen sin correo: salen en Incidencias.` : ''}${result.unmatched.length ? ` Sin cruce del Excel: ${result.unmatched.slice(0, 8).join(', ')}.` : ''}`,
     });
   };
 
@@ -576,7 +582,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             <Kpi
               label="Agentes con email"
               value={`${formatInt(state.agents.filter((item) => item.email.includes('@')).length)} / ${formatInt(uniqueAgentes(state).length)}`}
-              hint={uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero'}
+              hint={state.emailsFileName || (uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero')}
+              amount={state.emailsLoadedAt ? formatIsoDateTime(state.emailsLoadedAt) : undefined}
             />
           </div>
           <button
@@ -836,7 +843,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'incidencias' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Albaranes de la última subida que hay que revisar: sin serie, WWW sin colectivo, o colectivo desconocido, inactivo, sin agente o con varios códigos.
+            Albaranes de la última subida que hay que revisar: sin serie, WWW sin colectivo, o colectivo desconocido, inactivo, sin agente o con varios códigos. También aparecen los agentes del maestro que siguen sin email.
           </p>
           {state.colectivos.length === 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -849,7 +856,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             </p>
           )}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Kpi label="Albaranes con incidencia" value={incidents.length} />
+            <Kpi label="Albaranes con incidencia" value={incidents.filter((item) => item.reason !== 'Agente sin email').length} />
+            <Kpi label="Agentes sin email" value={incidents.filter((item) => item.reason === 'Agente sin email').length} />
             <Kpi label="Colectivos activos sin agente" value={masterSinAgente.length} hint="En el maestro" />
             {incidentCounts.map((item) => (
               <Kpi key={item.reason} label={item.reason} value={item.count} />
@@ -898,7 +906,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             </button>
           </div>
           <p className="text-xs text-[var(--text-muted)]">
-            {formatInt(filteredIncidents.length)} albaranes a revisar
+            {formatInt(filteredIncidents.length)} incidencias
             {filteredIncidents.length !== incidents.length ? ` de ${formatInt(incidents.length)}` : ''}.
           </p>
           <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
@@ -916,7 +924,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 )}
                 {incidentsPage.map((row: DataIncident) => (
                   <tr key={row.key} className="border-t border-[var(--border)]">
-                    <td className="px-3 py-2 font-medium">{row.albaran}</td>
+                    <td className="px-3 py-2 font-medium">{displayDash(row.albaran)}</td>
                     <td className="px-3 py-2">{displayDash(row.serie)}</td>
                     <td className="px-3 py-2">{row.estado}</td>
                     <td className="px-3 py-2">{displayDash(row.agente)}</td>
