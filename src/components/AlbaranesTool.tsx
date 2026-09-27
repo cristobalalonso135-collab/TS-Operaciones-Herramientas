@@ -29,8 +29,6 @@ import {
   formatEuro,
   formatInt,
   formatShare,
-  colectivoAgenteIndex,
-  lookupAgenteColectivoFromIndex,
   ingestCarga,
   knownEstados,
   knownSeries,
@@ -56,8 +54,9 @@ const TABS = [
   { id: 'carga', label: 'Carga' },
   { id: 'reglas', label: 'Reglas' },
   { id: 'resumen', label: 'Resumen' },
-  { id: 'listado', label: 'Listado' },
   { id: 'incidencias', label: 'Incidencias' },
+  { id: 'listado', label: 'Listado' },
+  { id: 'acciones', label: 'Acciones' },
   { id: 'historico', label: 'Histórico' },
 ] as const;
 
@@ -131,6 +130,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [listAgente, setListAgente] = useState<string[]>([]);
   const [listQuery, setListQuery] = useState('');
   const [listPage, setListPage] = useState(0);
+  const [actPage, setActPage] = useState(0);
   const [vistaSerie, setVistaSerie] = useState<string[]>([]);
   const [vistaEstado, setVistaEstado] = useState<string[]>([]);
   const [vistaAgente, setVistaAgente] = useState<string[]>([]);
@@ -198,10 +198,6 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     [state],
   );
   const listing = useMemo(() => (state && tab === 'listado' ? currentListing(state) : []), [state, tab]);
-  const agenteColectivoMap = useMemo(
-    () => (state ? colectivoAgenteIndex(state.colectivos) : new Map<string, string>()),
-    [state],
-  );
   const filteredListing = useMemo(() => {
     return listing.filter((row) => {
       if (listSerie.length) {
@@ -271,6 +267,12 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       return true;
     });
   }, [actions, filterAge, filterEnvio, filterEstado, filterNuevo, filterResp, filterRule, filterSerie, query]);
+  const actPages = Math.max(1, Math.ceil(filteredActions.length / LIST_PAGE));
+  const actionsPage = filteredActions.slice(actPage * LIST_PAGE, actPage * LIST_PAGE + LIST_PAGE);
+
+  useEffect(() => {
+    setActPage(0);
+  }, [filterAge, filterEnvio, filterEstado, filterNuevo, filterResp, filterRule, filterSerie, query]);
 
   const ingestRows = async (rows: ReturnType<typeof parseAlbaranesSheet>, fileName: string, hash: string) => {
     if (!state) return;
@@ -290,18 +292,17 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     });
     setBusy('Guardando listado…');
     await persist(result.state, backend);
-    setTab('listado');
     setBusy(null);
     if (result.duplicate) {
       setAck({
-        title: 'Listado actualizado',
-        message: `Este archivo ya se subió hoy. No he duplicado el histórico. Hay ${formatInt(rows.length)} albaranes en el listado.`,
+        title: 'Carga actualizada',
+        message: `Este archivo ya se subió hoy. Hay ${formatInt(rows.length)} albaranes. Si falta, sube ahora Colectivos.csv.`,
       });
       return;
     }
     setAck({
       title: 'Carga guardada',
-      message: `${formatInt(rows.length)} albaranes. ${formatInt(result.carga?.newBreaches || 0)} incumplimientos nuevos, ${formatInt(result.carga?.continuingBreaches || 0)} que continúan.`,
+      message: `${formatInt(rows.length)} albaranes. Si falta, sube ahora Colectivos.csv. ${formatInt(result.carga?.newBreaches || 0)} incumplimientos nuevos, ${formatInt(result.carga?.continuingBreaches || 0)} que continúan.`,
     });
   };
 
@@ -531,7 +532,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'listado' && (
         <div className="space-y-3">
           <p className="text-sm text-[var(--text-secondary)]">
-            Todos los albaranes de la última subida, para revisar, descargar y preparar el correo. Los días se calculan a hoy.
+            Todos los albaranes de la última subida. Sin cruce con colectivos.
           </p>
           {listing.length === 0 && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -566,7 +567,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
               onClick={() => {
                 const hoy = todayIso();
-                const header = ['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente', 'Código colectivo', 'Agente colectivo'];
+                const header = ['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente'];
                 const rows = filteredListing.map((row) => [
                   row.albaran,
                   row.serie,
@@ -576,8 +577,6 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                   row.fechaAlbaran ? daysBetween(row.fechaAlbaran, hoy) : '',
                   row.fechaEstado ? daysBetween(row.fechaEstado, hoy) : '',
                   row.agente,
-                  row.colectivo,
-                  lookupAgenteColectivoFromIndex(row.colectivo, agenteColectivoMap),
                 ]);
                 downloadAoa({ Listado: [header, ...rows] }, `albaranes_listado_${last?.loadDate || todayIso()}.xlsx`);
               }}
@@ -593,14 +592,14 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
             <table className="min-w-full text-left text-xs">
               <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                 <tr>
-                  {['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente', 'Código colectivo', 'Agente colectivo'].map((col) => (
+                  {['Albarán', 'Serie', 'Estado', 'Fecha albarán', 'Fecha estado', 'Días creación', 'Días estado', 'Agente'].map((col) => (
                     <th key={col} className="whitespace-nowrap px-2 py-2 font-semibold">{col}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {listingPage.length === 0 && (
-                  <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={10}>Sin albaranes con este filtro.</td></tr>
+                  <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={8}>Sin albaranes con este filtro.</td></tr>
                 )}
                 {listingPage.map((row, index) => {
                   const hoy = todayIso();
@@ -614,8 +613,6 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                       <td className="px-2 py-2 tabular-nums">{row.fechaAlbaran ? formatInt(daysBetween(row.fechaAlbaran, hoy)) : '—'}</td>
                       <td className="px-2 py-2 tabular-nums">{row.fechaEstado ? formatInt(daysBetween(row.fechaEstado, hoy)) : '—'}</td>
                       <td className="px-2 py-2">{displayDash(row.agente)}</td>
-                      <td className="px-2 py-2">{displayDash(row.colectivo)}</td>
-                      <td className="px-2 py-2">{displayDash(lookupAgenteColectivoFromIndex(row.colectivo, agenteColectivoMap))}</td>
                     </tr>
                   );
                 })}
@@ -634,20 +631,62 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
 
       {tab === 'acciones' && (
         <div className="space-y-3">
+          <p className="text-sm text-[var(--text-secondary)]">
+            Albaranes de la última subida que cumplen una regla activa. Este es el listado que se exporta.
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             <SearchBox value={query} onChange={setQuery} />
-            <Select value={filterRule} onChange={setFilterRule} label="Regla" options={state.rules.map((rule) => [rule.id, rule.id])} />
+            <Select value={filterRule} onChange={setFilterRule} label="Regla" options={state.rules.map((rule) => [rule.id, `${rule.id} · ${rule.nombre}`])} />
             <Select value={filterSerie} onChange={setFilterSerie} label="Serie" options={series.map((item) => [item, item])} />
             <Select value={filterEstado} onChange={setFilterEstado} label="Estado" options={estados.map((item) => [item, item])} />
-            <Select value={filterResp} onChange={setFilterResp} label="Responsable" options={Array.from(new Set(actions.map((row) => row.agenteResuelto))).map((item) => [item, item])} />
-            <Select value={filterAge} onChange={setFilterAge} label="Antigüedad" options={[['7', '> 7 días'], ['14', '> 14 días'], ['30', '> 30 días']]} />
-            <Select value={filterEnvio} onChange={setFilterEnvio} label="Envío" options={[['enviado', 'Enviado'], ['no', 'No enviado']]} />
-            <Select value={filterNuevo} onChange={setFilterNuevo} label="Tipo" options={[['nuevo', 'Nuevo'], ['recurrente', 'Recurrente']]} />
-            <button type="button" onClick={() => void downloadExport()} className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white">
-              <Download className="h-3.5 w-3.5" /> Excel Power Automate
+            <Select value={filterResp} onChange={setFilterResp} label="Responsable" options={Array.from(new Set(actions.map((row) => row.agenteResuelto).filter(Boolean))).map((item) => [item, item])} />
+            {(filterRule || filterSerie || filterEstado || filterResp || query) ? (
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
+                onClick={() => {
+                  setFilterRule('');
+                  setFilterSerie('');
+                  setFilterEstado('');
+                  setFilterResp('');
+                  setQuery('');
+                }}
+              >
+                Quitar filtros
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="ml-auto flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
+              onClick={() => {
+                const header = ['Regla', 'Albarán', 'Serie', 'Estado', 'Fecha estado', 'Días estado', 'Agente'];
+                const rows = filteredActions.map((row) => [
+                  row.reglaId,
+                  row.albaran,
+                  row.serie,
+                  row.estado,
+                  formatIsoDate(row.fechaEstado),
+                  row.diasEstado,
+                  row.agenteOriginal,
+                ]);
+                downloadAoa({ Acciones: [header, ...rows] }, `albaranes_acciones_${last?.loadDate || todayIso()}.xlsx`);
+              }}
+            >
+              <Download className="h-3.5 w-3.5" /> Excel
             </button>
           </div>
-          <ActionTable rows={filteredActions} />
+          <p className="text-xs text-[var(--text-muted)]">
+            {formatInt(filteredActions.length)} albaranes
+            {filteredActions.length !== actions.length ? ` de ${formatInt(actions.length)}` : ''}.
+          </p>
+          <ActionTable rows={actionsPage} />
+          {actPages > 1 && (
+            <div className="flex items-center gap-2 text-xs">
+              <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={actPage === 0} onClick={() => setActPage((n) => Math.max(0, n - 1))}>Anterior</button>
+              <span className="text-[var(--text-muted)]">Página {actPage + 1} de {formatInt(actPages)}</span>
+              <button type="button" className="rounded-md border border-[var(--border)] px-2 py-1 disabled:opacity-40" disabled={actPage >= actPages - 1} onClick={() => setActPage((n) => Math.min(actPages - 1, n + 1))}>Siguiente</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1092,33 +1131,24 @@ function ActionTable({ rows }: { rows: Evaluacion[] }) {
       <table className="min-w-full text-left text-xs">
         <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
           <tr>
-            {['Regla', 'Id', 'Albarán', 'Serie', 'Estado', 'Fecha estado', 'Días', 'Agente', 'Colectivo', 'Resuelto', 'Email', '1ª fecha', 'Días incumple', 'Último aviso', 'Nº avisos', 'Envío'].map((col) => (
+            {['Regla', 'Albarán', 'Serie', 'Estado', 'Fecha estado', 'Días estado', 'Agente'].map((col) => (
               <th key={col} className="whitespace-nowrap px-2 py-2 font-semibold">{col}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={16}>Nadie cumple una regla activa con responsable válido.</td></tr>
+            <tr><td className="px-3 py-6 text-sm text-[var(--text-muted)]" colSpan={7}>Nadie cumple una regla activa.</td></tr>
           )}
           {rows.map((row) => (
             <tr key={row.key} className="border-t border-[var(--border)]">
               <td className="px-2 py-2">{row.reglaId}</td>
-              <td className="px-2 py-2">{row.albaranId}</td>
               <td className="px-2 py-2 font-medium">{row.albaran}</td>
               <td className="px-2 py-2">{row.serie}</td>
               <td className="px-2 py-2">{row.estado}</td>
               <td className="px-2 py-2">{formatIsoDate(row.fechaEstado)}</td>
-              <td className="px-2 py-2 tabular-nums">{row.diasEstado}</td>
+              <td className="px-2 py-2 tabular-nums">{formatInt(row.diasEstado)}</td>
               <td className="px-2 py-2">{displayDash(row.agenteOriginal)}</td>
-              <td className="px-2 py-2">{displayDash(row.codigoColectivo)}</td>
-              <td className="px-2 py-2">{row.agenteResuelto}</td>
-              <td className="px-2 py-2">{row.email}</td>
-              <td className="px-2 py-2">{formatIsoDate(row.primeraFechaIncumplimiento)}</td>
-              <td className="px-2 py-2 tabular-nums">{row.diasIncumpliendo}</td>
-              <td className="px-2 py-2">{formatIsoDate(row.ultimaNotificacion)}</td>
-              <td className="px-2 py-2 tabular-nums">{row.numeroNotificaciones}</td>
-              <td className="px-2 py-2">{row.envio === 'generado' ? 'Generado' : row.envio === 'omitido-duplicado' ? 'Ya enviado hoy' : row.envio}</td>
             </tr>
           ))}
         </tbody>

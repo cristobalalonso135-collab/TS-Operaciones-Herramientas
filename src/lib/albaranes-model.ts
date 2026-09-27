@@ -1118,7 +1118,7 @@ export function ingestCarga(state: AlbaranesState, input: {
 export function currentActions(state: AlbaranesState): Evaluacion[] {
   const last = latestCarga(state);
   if (!last) return [];
-  return state.evaluations.filter((item) => item.cargaId === last.id && item.assignmentOk);
+  return state.evaluations.filter((item) => item.cargaId === last.id);
 }
 
 export function currentIncidents(state: AlbaranesState): Evaluacion[] {
