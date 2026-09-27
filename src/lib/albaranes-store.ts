@@ -1,10 +1,9 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isMissingTableError } from '@/lib/seguimiento-db';
-import { seedAlbaranesState, type AlbaranesState, type Carga } from '@/lib/albaranes-model';
+import { photoCarga, seedAlbaranesState, type AlbaranesState } from '@/lib/albaranes-model';
 
 const LOCAL_KEY = 'ts-albaranes-v1';
 const STORE_ID = 'main';
-const CARGA_PREFIX = 'carga:';
 
 export const ALBARANES_SETUP_SQL = `CREATE TABLE IF NOT EXISTS albaranes_store (
   id TEXT PRIMARY KEY,
@@ -32,22 +31,37 @@ function isState(value: unknown): value is AlbaranesState {
   return Array.isArray(row.rules) && Array.isArray(row.agents) && Array.isArray(row.cargas);
 }
 
+function daysAgo(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function photoState(state: AlbaranesState): AlbaranesState {
+  const from = daysAgo(45);
+  return {
+    ...state,
+    cargas: state.cargas.map(photoCarga),
+    disappeared: [],
+    evaluations: state.evaluations.filter((item) => item.loadDate >= from),
+    communications: state.communications
+      .filter((item) => item.loadDate >= from)
+      .map((item) => ({ ...item, cuerpoHtml: item.cuerpoHtml })),
+  };
+}
+
 function normalize(state: AlbaranesState): AlbaranesState {
   const seeded = seedAlbaranesState();
   return {
     rules: state.rules.length > 0 ? state.rules : seeded.rules,
     agents: Array.isArray(state.agents) ? state.agents : [],
     colectivos: Array.isArray(state.colectivos) ? state.colectivos : [],
-    cargas: Array.isArray(state.cargas) ? state.cargas : [],
-    disappeared: Array.isArray(state.disappeared) ? state.disappeared : [],
+    cargas: (Array.isArray(state.cargas) ? state.cargas : []).map(photoCarga),
+    disappeared: [],
     evaluations: Array.isArray(state.evaluations) ? state.evaluations : [],
     lots: Array.isArray(state.lots) ? state.lots : [],
     communications: Array.isArray(state.communications) ? state.communications : [],
   };
-}
-
-function compactCarga(carga: Carga): Carga {
-  return carga;
 }
 
 function readLocal(): AlbaranesState {
@@ -62,9 +76,23 @@ function readLocal(): AlbaranesState {
   }
 }
 
+function clearLocal() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(LOCAL_KEY);
+  } catch {
+    /* quota */
+  }
+}
+
 function writeLocal(state: AlbaranesState) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
+  try {
+    clearLocal();
+    window.localStorage.setItem(LOCAL_KEY, JSON.stringify(photoState(state)));
+  } catch {
+    clearLocal();
+  }
 }
 
 function requireClient() {
@@ -76,50 +104,34 @@ type RemoteRead = { kind: 'ok'; payload: AlbaranesState | null } | { kind: 'miss
 
 async function readDedicated(): Promise<RemoteRead> {
   const client = requireClient();
-  const { data: mainRow, error: mainError } = await client.from('albaranes_store').select('payload').eq('id', STORE_ID).maybeSingle();
-  if (mainError) {
-    if (isMissingTableError(mainError.message)) return { kind: 'missing' };
-    throw new Error(mainError.message);
+  const { data, error } = await client.from('albaranes_store').select('payload').eq('id', STORE_ID).maybeSingle();
+  if (error) {
+    if (isMissingTableError(error.message)) return { kind: 'missing' };
+    throw new Error(error.message);
   }
-  if (!isState(mainRow?.payload)) return { kind: 'ok', payload: null };
-  const { data: cargaRows, error: cargaError } = await client.from('albaranes_store').select('payload').like('id', `${CARGA_PREFIX}%`);
-  if (cargaError) {
-    if (isMissingTableError(cargaError.message)) return { kind: 'missing' };
-    throw new Error(cargaError.message);
-  }
-  const cargas = (cargaRows || [])
-    .map((row) => row.payload as Carga)
-    .filter((row) => row && row.id && Array.isArray(row.rows))
-    .sort((a, b) => a.loadedAt.localeCompare(b.loadedAt));
-  return {
-    kind: 'ok',
-    payload: normalize({
-      ...mainRow.payload,
-      cargas: cargas.length > 0 ? cargas : mainRow.payload.cargas,
-    }),
-  };
+  if (!isState(data?.payload)) return { kind: 'ok', payload: null };
+  return { kind: 'ok', payload: normalize(data.payload) };
 }
 
 async function writeDedicated(state: AlbaranesState): Promise<void> {
   const client = requireClient();
-  const meta: AlbaranesState = { ...state, cargas: [] };
-  const rows = [
-    { id: STORE_ID, saved_at: new Date().toISOString(), payload: meta },
-    ...state.cargas.map((carga) => ({
-      id: `${CARGA_PREFIX}${carga.id}`,
-      saved_at: carga.loadedAt,
-      payload: compactCarga(carga),
-    })),
-  ];
-  const { error } = await client.from('albaranes_store').upsert(rows, { onConflict: 'id' });
+  const { error } = await client.from('albaranes_store').upsert({
+    id: STORE_ID,
+    saved_at: new Date().toISOString(),
+    payload: photoState(state),
+  }, { onConflict: 'id' });
   if (error) throw new Error(error.message);
+  await client.from('albaranes_store').delete().like('id', 'carga:%');
 }
 
 export async function loadAlbaranesState(): Promise<{ state: AlbaranesState; backend: AlbaranesBackend; setupSql?: string }> {
   try {
     const dedicated = await readDedicated();
     if (dedicated.kind === 'missing') return { state: readLocal(), backend: 'local', setupSql: ALBARANES_SETUP_SQL };
-    if (dedicated.kind === 'ok' && dedicated.payload) return { state: dedicated.payload, backend: 'supabase' };
+    if (dedicated.kind === 'ok' && dedicated.payload) {
+      clearLocal();
+      return { state: dedicated.payload, backend: 'supabase' };
+    }
     const seeded = seedAlbaranesState();
     if (dedicated.kind === 'ok') {
       await writeDedicated(seeded);
@@ -133,7 +145,10 @@ export async function loadAlbaranesState(): Promise<{ state: AlbaranesState; bac
 
 export async function saveAlbaranesState(state: AlbaranesState, backend: AlbaranesBackend): Promise<void> {
   const next = normalize(state);
+  if (backend === 'supabase') {
+    await writeDedicated(state);
+    clearLocal();
+    return;
+  }
   writeLocal(next);
-  if (backend !== 'supabase') return;
-  await writeDedicated(next);
 }

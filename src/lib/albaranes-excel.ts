@@ -1,6 +1,7 @@
 import {
   cellToIso,
   extractSerie,
+  parseAmount,
   type Agent,
   type AlbaranRow,
   type Colectivo,
@@ -25,11 +26,6 @@ function findCol(header: string[], aliases: string[]): number | null {
     const exact = header.findIndex((name) => name === alias);
     if (exact >= 0) return exact;
   }
-  for (const alias of aliases) {
-    if (alias.length < 3) continue;
-    const index = header.findIndex((name) => name.includes(alias));
-    if (index >= 0) return index;
-  }
   return null;
 }
 
@@ -46,16 +42,17 @@ export function parseAlbaranesSheet(rows: unknown[][]): AlbaranRow[] {
   const headerIndex = detectHeaderRow(rows, ['albar']);
   const header = (rows[headerIndex] || []).map(normalizeHeader);
   const col = {
-    id: findCol(header, ['id albarán', 'id albaran', 'idalbaran', 'id']),
-    albaran: findCol(header, ['albarán', 'albaran', 'nº albarán', 'num albaran', 'numero albaran']),
+    id: findCol(header, ['id']),
+    albaran: findCol(header, ['albarán', 'albaran']),
     serie: findCol(header, ['serie']),
     fechaAlbaran: findCol(header, ['fecha albarán', 'fecha albaran']),
-    almacen: findCol(header, ['almacén origen', 'almacen origen', 'almacén', 'almacen']),
-    agente: findCol(header, ['agente', 'comercial']),
+    almacen: findCol(header, ['almacén origen', 'almacen origen']),
+    agente: findCol(header, ['agente']),
     estado: findCol(header, ['estado']),
     idEstado: findCol(header, ['id_estado', 'id estado']),
-    fechaEstado: findCol(header, ['fecha estado', 'fecha_estado']),
-    colectivo: findCol(header, ['colectivo', 'código colectivo', 'codigo colectivo']),
+    fechaEstado: findCol(header, ['fecha estado']),
+    colectivo: findCol(header, ['colectivo']),
+    total: findCol(header, ['total']),
   };
   const seen = new Set<string>();
   const out: AlbaranRow[] = [];
@@ -77,6 +74,7 @@ export function parseAlbaranesSheet(rows: unknown[][]): AlbaranRow[] {
       idEstado: cellText(pick(row, col.idEstado)),
       fechaEstado: cellToIso(pick(row, col.fechaEstado)),
       colectivo: cellText(pick(row, col.colectivo)),
+      importe: parseAmount(pick(row, col.total)),
     });
   });
   return out;

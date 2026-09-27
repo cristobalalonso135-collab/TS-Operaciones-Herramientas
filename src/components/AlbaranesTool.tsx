@@ -12,7 +12,8 @@ import {
   pickSheet,
 } from '@/lib/albaranes-excel';
 import {
-  averageAge,
+  ALCANCE_ALBARANES,
+  DEFAULT_SERIES,
   countRuleHits,
   currentActions,
   currentAlbaranes,
@@ -20,10 +21,10 @@ import {
   displayDash,
   exportPayload,
   formatIsoDate,
-  historyByEstado,
-  historyBySerie,
+  formatIsoDateTime,
+  formatEuro,
+  formatInt,
   ingestCarga,
-  albaranTimeline,
   knownEstados,
   knownSeries,
   latestCarga,
@@ -32,6 +33,8 @@ import {
   nowIso,
   resumenKpis,
   todayIso,
+  trendByBucket,
+  STATE_EN_PROCESO,
   type Agent,
   type AlbaranesState,
   type Colectivo,
@@ -70,10 +73,11 @@ function downloadAoa(sheets: Record<string, unknown[][]>, fileName: string) {
 }
 
 function Kpi({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+  const shown = typeof value === 'number' ? formatInt(value) : value;
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
+    <div className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3">
       <p className="text-xs text-[var(--text-secondary)]">{label}</p>
-      <p className="mt-1 font-display text-xl font-semibold">{value}</p>
+      <p className="mt-1 font-display text-lg font-semibold tabular-nums leading-tight">{shown}</p>
       {hint ? <p className="mt-1 text-[11px] text-[var(--text-muted)]">{hint}</p> : null}
     </div>
   );
@@ -109,12 +113,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [filterEnvio, setFilterEnvio] = useState('');
   const [filterNuevo, setFilterNuevo] = useState('');
   const [filterAge, setFilterAge] = useState('');
-  const [selectedAlbaran, setSelectedAlbaran] = useState<string>('');
+  const [vistaSerie, setVistaSerie] = useState('');
+  const [vistaEstado, setVistaEstado] = useState('');
+  const [vistaAgente, setVistaAgente] = useState('');
+  const [trendEstado, setTrendEstado] = useState(STATE_EN_PROCESO);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
   const [dirTab, setDirTab] = useState<'agentes' | 'colectivos'>('agentes');
 
   const persist = useCallback(async (next: AlbaranesState, currentBackend: AlbaranesBackend) => {
     setState(next);
+    setError(null);
     try {
       await saveAlbaranesState(next, currentBackend);
     } catch (err) {
@@ -137,13 +145,25 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     return () => { cancelled = true; };
   }, []);
 
-  const kpis = useMemo(() => (state ? resumenKpis(state) : null), [state]);
+  const vistaFilters = useMemo(
+    () => ({ serie: vistaSerie, estado: vistaEstado, agente: vistaAgente }),
+    [vistaAgente, vistaEstado, vistaSerie],
+  );
+  const kpis = useMemo(() => (state ? resumenKpis(state, vistaFilters) : null), [state, vistaFilters]);
   const last = state ? latestCarga(state) : null;
   const actions = useMemo(() => (state ? currentActions(state) : []), [state]);
   const incidents = useMemo(() => (state ? currentIncidents(state) : []), [state]);
   const actuales = useMemo(() => (state ? currentAlbaranes(state) : []), [state]);
-  const series = state ? knownSeries(state) : [];
+  const series = state ? knownSeries(state) : [...DEFAULT_SERIES];
   const estados = state ? knownEstados(state) : [];
+  const agentesVista = useMemo(() => {
+    const names = new Set<string>();
+    actuales.forEach((row) => {
+      const name = row.agente.trim();
+      if (name) names.add(name);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [actuales]);
 
   const filteredActions = useMemo(() => {
     return actions.filter((row) => {
@@ -188,10 +208,10 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       return;
     }
     await persist(result.state, backend);
-    setAck({
-      title: 'Carga guardada',
-      message: `${rows.length} albaranes. ${result.carga?.newBreaches || 0} incumplimientos nuevos, ${result.carga?.continuingBreaches || 0} que continúan.`,
-    });
+      setAck({
+        title: 'Carga guardada',
+        message: `${formatInt(rows.length)} albaranes. ${formatInt(result.carga?.newBreaches || 0)} incumplimientos nuevos, ${formatInt(result.carga?.continuingBreaches || 0)} que continúan.`,
+      });
     setTab('resumen');
   };
 
@@ -281,24 +301,43 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           <FileUpload
             inputId="albaranes-erp"
             label="Excel / CSV diario del ERP"
-            hint="No facturados, almacén Equipaciones, sin filtrar estado ni antigüedad."
+            hint="CSV del ERP con punto y coma. Misma estructura cada día."
             keepDropzone
             onRawFile={(file) => { lastFileRef.current = file; }}
             onFileLoaded={handleAlbaranesFile}
           />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi label="Última carga" value={formatIsoDate(kpis?.lastLoadDate)} hint={kpis?.lastFileName || 'Aún no hay fichero'} />
-            <Kpi label="Albaranes activos" value={kpis?.activeCount || 0} />
+          <p className="text-sm text-[var(--text-secondary)]">{ALCANCE_ALBARANES}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={vistaSerie} onChange={setVistaSerie} label="Serie" options={series.map((item) => [item, item])} />
+            <Select value={vistaEstado} onChange={setVistaEstado} label="Estado" options={estados.map((item) => [item, item])} />
+            {agentesVista.length > 0 && (
+              <Select value={vistaAgente} onChange={setVistaAgente} label="Agente" options={agentesVista.map((item) => [item, item])} />
+            )}
+            {(vistaSerie || vistaEstado || vistaAgente) && (
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
+                onClick={() => {
+                  setVistaSerie('');
+                  setVistaEstado('');
+                  setVistaAgente('');
+                }}
+              >
+                Quitar filtros
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-6 gap-3">
+            <Kpi label="Última carga" value={formatIsoDateTime(kpis?.lastLoadedAt || kpis?.lastLoadDate)} hint={kpis?.lastFileName || 'Aún no hay fichero'} />
+            <Kpi label="Total albaranes" value={kpis?.activeCount || 0} hint={kpis?.totalImporte ? formatEuro(kpis.totalImporte) : undefined} />
             <Kpi label="Cumplen reglas" value={kpis?.actionCount || 0} />
-            <Kpi label="Responsables" value={kpis?.responsibleCount || 0} />
+            <Kpi label="Nº estados" value={kpis?.estadoCount || 0} />
+            <Kpi label="Nº series" value={kpis?.serieCount || 0} />
             <Kpi label="Incidencias" value={kpis?.incidentCount || 0} />
-            <Kpi label="Nuevos incumplimientos" value={kpis?.newBreaches || 0} />
-            <Kpi label="Siguen incumpliendo" value={kpis?.continuingBreaches || 0} />
-            <Kpi label="Dejaron de incumplir" value={kpis?.resolvedBreaches || 0} />
           </div>
           <div className="grid gap-3 lg:grid-cols-2">
-            <HistoryTable title="Por estado" rows={historyByEstado(state).filter((row) => row.loadDate === last?.loadDate).map((row) => [row.estado, String(row.count)])} />
-            <HistoryTable title="Por serie" rows={historyBySerie(state).filter((row) => row.loadDate === last?.loadDate).map((row) => [row.serie, String(row.count)])} />
+            <HistoryTable title="Por estado" rows={(kpis?.estadoCounts || []).map((row) => [row.name, formatInt(row.count), formatEuro(row.importe)])} />
+            <HistoryTable title="Por serie" rows={(kpis?.serieCounts || []).map((row) => [row.name, formatInt(row.count), formatEuro(row.importe)])} />
           </div>
         </div>
       )}
@@ -367,15 +406,47 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       {tab === 'historico' && (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Kpi label="Cargas" value={state.cargas.length} />
-            <Kpi label="Antigüedad media" value={last ? `${averageAge(actuales, last.loadDate)} días` : '—'} />
-            <Kpi label="Desaparecidos" value={state.disappeared.length} hint="Siguen en histórico, ya no salen en la bandeja" />
+            <Kpi label="Fotos guardadas" value={state.cargas.length} hint="Totales por estado y serie, sin albarán suelto" />
+            <Kpi label="Albaranes última foto" value={last?.recordCount || 0} hint={last?.totalImporte ? formatEuro(last.totalImporte) : undefined} />
+            <Kpi label="Antigüedad media" value={last?.averageAgeDays != null ? `${formatInt(last.averageAgeDays)} días` : '—'} />
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold">Tendencia por estado</p>
+              <select value={trendEstado} onChange={(e) => setTrendEstado(e.target.value)} className="rounded-md border border-[var(--border)] bg-white px-2 py-1.5 text-xs">
+                {estados.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </div>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Así ves si En proceso (u otro estado) sube o baja a lo largo de los años.</p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                  <tr>
+                    {['Fecha', 'Albaranes', 'Importe', 'Vs día anterior'].map((col) => (
+                      <th key={col} className="px-3 py-2 font-semibold">{col}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...trendByBucket(state, 'estado', trendEstado)].reverse().map((row) => (
+                    <tr key={row.loadDate} className="border-t border-[var(--border)]">
+                      <td className="px-3 py-2">{formatIsoDate(row.loadDate)}</td>
+                      <td className="px-3 py-2 tabular-nums">{formatInt(row.count)}</td>
+                      <td className="px-3 py-2 tabular-nums">{formatEuro(row.importe)}</td>
+                      <td className="px-3 py-2 tabular-nums">
+                        {row.delta == null ? '—' : `${row.delta > 0 ? '+' : ''}${formatInt(row.delta)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-wide text-[var(--text-muted)]">
                 <tr>
-                  {['Fecha', 'Archivo', 'Registros', 'Nuevos', 'Cambio estado', 'Cambio agente', 'Desaparecidos'].map((col) => (
+                  {['Fecha', 'Archivo', 'Albaranes', 'Importe'].map((col) => (
                     <th key={col} className="px-3 py-2 font-semibold">{col}</th>
                   ))}
                 </tr>
@@ -385,48 +456,12 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                   <tr key={carga.id} className="border-t border-[var(--border)]">
                     <td className="px-3 py-2">{formatIsoDate(carga.loadDate)}</td>
                     <td className="px-3 py-2">{carga.fileName}</td>
-                    <td className="px-3 py-2">{carga.recordCount}</td>
-                    <td className="px-3 py-2">{carga.newCount}</td>
-                    <td className="px-3 py-2">{carga.stateChangeCount}</td>
-                    <td className="px-3 py-2">{carga.agentChangeCount}</td>
-                    <td className="px-3 py-2">{carga.disappearedCount}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(carga.recordCount)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatEuro(carga.totalImporte || 0)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <p className="text-sm font-semibold">Historial de un albarán</p>
-            <input
-              value={selectedAlbaran}
-              onChange={(e) => setSelectedAlbaran(e.target.value)}
-              placeholder="Id o número de albarán"
-              className="mt-2 w-full max-w-md rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
-            />
-            <div className="mt-3 overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="text-xs uppercase text-[var(--text-muted)]">
-                  <tr>
-                    {['Carga', 'Estado', 'Agente', 'Fecha estado', 'Días'].map((col) => <th key={col} className="px-3 py-1">{col}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {albaranTimeline(state, selectedAlbaran.trim() || '__none__').concat(
-                    selectedAlbaran.trim()
-                      ? albaranTimeline(state, actuales.find((row) => row.albaran.toLocaleLowerCase('es') === selectedAlbaran.trim().toLocaleLowerCase('es'))?.id || selectedAlbaran.trim())
-                      : []
-                  ).filter((row, index, list) => list.findIndex((item) => item.loadDate === row.loadDate && item.estado === row.estado) === index).map((row) => (
-                    <tr key={`${row.loadDate}-${row.fileName}`} className="border-t border-[var(--border)]">
-                      <td className="px-3 py-2">{formatIsoDate(row.loadDate)}</td>
-                      <td className="px-3 py-2">{row.estado}</td>
-                      <td className="px-3 py-2">{row.agente}</td>
-                      <td className="px-3 py-2">{formatIsoDate(row.fechaEstado)}</td>
-                      <td className="px-3 py-2">{row.diasEstado}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </div>
         </div>
       )}
@@ -486,11 +521,11 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                   <tr key={lot.id} className="border-t border-[var(--border)]">
                     <td className="px-3 py-2">{formatIsoDate(lot.loadDate)}</td>
                     <td className="px-3 py-2">{lot.fileName}</td>
-                    <td className="px-3 py-2">{lot.destinatarios}</td>
-                    <td className="px-3 py-2">{lot.albaranes}</td>
-                    <td className="px-3 py-2">{lot.enviados}</td>
-                    <td className="px-3 py-2">{lot.omitidos}</td>
-                    <td className="px-3 py-2">{lot.incidencias}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(lot.destinatarios)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(lot.albaranes)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(lot.enviados)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(lot.omitidos)}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(lot.incidencias)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -511,7 +546,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                     <td className="px-3 py-2">{formatIsoDate(item.loadDate)}</td>
                     <td className="px-3 py-2">{item.agenteResuelto}</td>
                     <td className="px-3 py-2">{item.email}</td>
-                    <td className="px-3 py-2">{item.numeroAlbaranes}</td>
+                    <td className="px-3 py-2 tabular-nums">{formatInt(item.numeroAlbaranes)}</td>
                     <td className="px-3 py-2">{item.enviar ? 'Sí' : 'No'}</td>
                     <td className="px-3 py-2">{item.asunto}</td>
                   </tr>
@@ -553,10 +588,12 @@ function HistoryTable({ title, rows }: { title: string; rows: string[][] }) {
       <p className="text-sm font-semibold">{title}</p>
       <div className="mt-2 space-y-1 text-sm">
         {rows.length === 0 && <p className="text-[var(--text-muted)]">Sin datos de carga.</p>}
-        {rows.map(([name, count]) => (
-          <div key={name} className="flex items-center justify-between">
+        {rows.map(([name, count, importe]) => (
+          <div key={name} className="flex items-center justify-between gap-3">
             <span>{name}</span>
-            <span className="tabular-nums text-[var(--text-secondary)]">{count}</span>
+            <span className="tabular-nums text-[var(--text-secondary)] whitespace-nowrap">
+              {count}{importe ? ` (${importe})` : ''}
+            </span>
           </div>
         ))}
       </div>
@@ -626,7 +663,7 @@ function RulesPanel({
     id: nextRuleId(state.rules),
     nombre: '',
     activa: false,
-    series: ['EQI', 'EQK', 'WWW'],
+    series: [...DEFAULT_SERIES],
     estado: '',
     plazoDias: 5,
     metodo: 'agente-o-colectivo' as const,
@@ -669,7 +706,7 @@ function RulesPanel({
             id: nextRuleId(state.rules),
             nombre: '',
             activa: false,
-            series: ['EQI', 'EQK', 'WWW'],
+            series: [...DEFAULT_SERIES],
             estado: estadoOptions[0] || '',
             plazoDias: 5,
             metodo: 'agente-o-colectivo',

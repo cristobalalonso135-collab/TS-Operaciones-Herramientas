@@ -1,4 +1,6 @@
-export const DEFAULT_SERIES = ['EQI', 'EQK', 'WWW'] as const;
+export const DEFAULT_SERIES = ['WWW', 'EQI', 'EQK', 'B2B', 'DVC'] as const;
+export const ALCANCE_ALBARANES =
+  'Albaranes no facturados · Almacén origen Equipaciones · Series WWW, EQI, EQK, B2B y DVC';
 export const STATE_EN_PROCESO = 'En proceso';
 export const STATE_PTE_PAGO = 'Pte. pago transferencia';
 export const INTERNET_AGENT = 'internet';
@@ -28,6 +30,7 @@ export interface AlbaranRow {
   idEstado: string;
   fechaEstado: string | null;
   colectivo: string;
+  importe?: number;
 }
 
 export interface Carga {
@@ -37,7 +40,11 @@ export interface Carga {
   fileName: string;
   fileHash: string;
   recordCount: number;
+  totalImporte?: number;
   rows: AlbaranRow[];
+  estadoCounts?: Array<{ name: string; count: number; importe: number }>;
+  serieCounts?: Array<{ name: string; count: number; importe: number }>;
+  buckets?: Array<{ serie: string; estado: string; count: number; importe: number }>;
   newCount: number;
   sameCount: number;
   stateChangeCount: number;
@@ -46,6 +53,7 @@ export interface Carga {
   newBreaches: number;
   continuingBreaches: number;
   resolvedBreaches: number;
+  averageAgeDays?: number;
 }
 
 export interface DisappearedAlbaran {
@@ -187,6 +195,18 @@ export function formatIsoDate(value: string | null | undefined): string {
   return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
+export function formatIsoDateTime(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return formatIsoDate(value);
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+}
+
 export function cellToIso(value: unknown): string | null {
   if (!value && value !== 0) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -197,11 +217,170 @@ export function cellToIso(value: unknown): string | null {
     return toIsoDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
   }
   const text = String(value).trim();
-  const spanish = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const spanish = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?/);
   if (spanish) return toIsoDate(Number(spanish[3]), Number(spanish[2]), Number(spanish[1]));
   const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (iso) return toIsoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   return null;
+}
+
+export function formatInt(value: number): string {
+  return value.toLocaleString('de-DE', { maximumFractionDigits: 0 });
+}
+
+export function formatEuro(value: number): string {
+  return `${value.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} €`;
+}
+
+export function parseAmount(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value ?? '').replace(/\u00a0/g, ' ').trim();
+  if (!text) return 0;
+  const normalized = text.includes(',')
+    ? text.replace(/\./g, '').replace(',', '.')
+    : text.replace(/ /g, '');
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function sortCounts(rows: Array<{ name: string; count: number; importe: number }>) {
+  return [...rows].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'es'));
+}
+
+function tally(rows: AlbaranRow[], pick: (row: AlbaranRow) => string): Array<{ name: string; count: number; importe: number }> {
+  const counts = new Map<string, { count: number; importe: number }>();
+  rows.forEach((row) => {
+    const name = pick(row);
+    const current = counts.get(name) || { count: 0, importe: 0 };
+    current.count += 1;
+    current.importe += row.importe || 0;
+    counts.set(name, current);
+  });
+  return sortCounts(Array.from(counts.entries()).map(([name, item]) => ({ name, count: item.count, importe: item.importe })));
+}
+
+function tallyNamed(items: Array<{ name: string; count: number; importe: number }>) {
+  const counts = new Map<string, { count: number; importe: number }>();
+  items.forEach((item) => {
+    const current = counts.get(item.name) || { count: 0, importe: 0 };
+    current.count += item.count;
+    current.importe += item.importe;
+    counts.set(item.name, current);
+  });
+  return sortCounts(Array.from(counts.entries()).map(([name, item]) => ({ name, count: item.count, importe: item.importe })));
+}
+
+export function tallyBuckets(rows: AlbaranRow[]): Array<{ serie: string; estado: string; count: number; importe: number }> {
+  const counts = new Map<string, { serie: string; estado: string; count: number; importe: number }>();
+  rows.forEach((row) => {
+    const serie = row.serie || '(sin serie)';
+    const estado = row.estado || '(sin estado)';
+    const key = `${serie}\0${estado}`;
+    const current = counts.get(key) || { serie, estado, count: 0, importe: 0 };
+    current.count += 1;
+    current.importe += row.importe || 0;
+    counts.set(key, current);
+  });
+  return Array.from(counts.values()).sort(
+    (a, b) => b.count - a.count || a.serie.localeCompare(b.serie, 'es') || a.estado.localeCompare(b.estado, 'es'),
+  );
+}
+
+export function cargaBuckets(carga: Carga): Array<{ serie: string; estado: string; count: number; importe: number }> {
+  if (carga.buckets && carga.buckets.length > 0) return carga.buckets;
+  if (carga.rows && carga.rows.length > 0) return tallyBuckets(carga.rows);
+  return [];
+}
+
+export interface CargaFilters {
+  serie?: string;
+  estado?: string;
+  agente?: string;
+  almacen?: string;
+}
+
+export interface CargaSummary {
+  total: number;
+  importe: number;
+  estadoCounts: Array<{ name: string; count: number; importe: number }>;
+  serieCounts: Array<{ name: string; count: number; importe: number }>;
+  estadoCount: number;
+  serieCount: number;
+}
+
+export function summarizeCarga(carga: Carga | null, filters: CargaFilters = {}): CargaSummary {
+  const empty: CargaSummary = {
+    total: 0,
+    importe: 0,
+    estadoCounts: [],
+    serieCounts: [],
+    estadoCount: 0,
+    serieCount: 0,
+  };
+  if (!carga) return empty;
+
+  const serieFilter = (filters.serie || '').trim().toUpperCase();
+  const estadoFilter = (filters.estado || '').trim();
+  const agenteFilter = (filters.agente || '').trim();
+  const almacenFilter = (filters.almacen || '').trim();
+  const rowFilters = Boolean(agenteFilter || almacenFilter);
+
+  const rows = carga.rows || [];
+  if (rowFilters && rows.length > 0) {
+    const filteredRows = rows.filter((row) => {
+      if (serieFilter && row.serie.toUpperCase() !== serieFilter) return false;
+      if (estadoFilter && normKey(row.estado) !== normKey(estadoFilter)) return false;
+      if (agenteFilter && normKey(row.agente) !== normKey(agenteFilter)) return false;
+      if (almacenFilter && normKey(row.almacenOrigen) !== normKey(almacenFilter)) return false;
+      return true;
+    });
+    const estadoCounts = tally(filteredRows, (row) => row.estado || '(sin estado)');
+    const serieCounts = tally(filteredRows, (row) => row.serie || '(sin serie)');
+    return {
+      total: filteredRows.length,
+      importe: filteredRows.reduce((sum, row) => sum + (row.importe || 0), 0),
+      estadoCounts,
+      serieCounts,
+      estadoCount: estadoCounts.length,
+      serieCount: serieCounts.length,
+    };
+  }
+
+  const buckets = cargaBuckets(carga).filter((item) => {
+    if (serieFilter && item.serie.toUpperCase() !== serieFilter) return false;
+    if (estadoFilter && normKey(item.estado) !== normKey(estadoFilter)) return false;
+    return true;
+  });
+
+  if (buckets.length > 0) {
+    const estadoCounts = tallyNamed(buckets.map((item) => ({ name: item.estado, count: item.count, importe: item.importe })));
+    const serieCounts = tallyNamed(buckets.map((item) => ({ name: item.serie, count: item.count, importe: item.importe })));
+    return {
+      total: buckets.reduce((sum, item) => sum + item.count, 0),
+      importe: buckets.reduce((sum, item) => sum + item.importe, 0),
+      estadoCounts,
+      serieCounts,
+      estadoCount: estadoCounts.length,
+      serieCount: serieCounts.length,
+    };
+  }
+
+  let estadoCounts = sortCounts(carga.estadoCounts || []);
+  let serieCounts = sortCounts(carga.serieCounts || []);
+  if (estadoFilter) estadoCounts = estadoCounts.filter((item) => normKey(item.name) === normKey(estadoFilter));
+  if (serieFilter) serieCounts = serieCounts.filter((item) => item.name.toUpperCase() === serieFilter);
+  const fromEstados = estadoCounts.reduce((sum, item) => sum + item.count, 0);
+  const fromSeries = serieCounts.reduce((sum, item) => sum + item.count, 0);
+  const fromEstadoImporte = estadoCounts.reduce((sum, item) => sum + item.importe, 0);
+  const fromSerieImporte = serieCounts.reduce((sum, item) => sum + item.importe, 0);
+  return {
+    total: serieFilter && !estadoFilter ? fromSeries : fromEstados || fromSeries,
+    importe: serieFilter && !estadoFilter ? fromSerieImporte : fromEstadoImporte || fromSerieImporte,
+    estadoCounts,
+    serieCounts,
+    estadoCount: estadoCounts.length,
+    serieCount: serieCounts.length,
+  };
 }
 
 export function daysBetween(fromIso: string, toIso: string): number {
@@ -292,6 +471,7 @@ export function knownEstados(state: AlbaranesState): string[] {
   push(STATE_EN_PROCESO);
   push(STATE_PTE_PAGO);
   state.rules.forEach((rule) => push(rule.estado));
+  state.cargas.forEach((carga) => (carga.estadoCounts || []).forEach((item) => push(item.name)));
   latestCarga(state)?.rows.forEach((row) => push(row.estado));
   return out;
 }
@@ -306,6 +486,7 @@ export function knownSeries(state: AlbaranesState): string[] {
     out.push(text);
   };
   state.rules.forEach((rule) => rule.series.forEach(push));
+  state.cargas.forEach((carga) => (carga.serieCounts || []).forEach((item) => push(item.name)));
   latestCarga(state)?.rows.forEach((row) => push(row.serie));
   return out;
 }
@@ -443,40 +624,31 @@ export function ingestCarga(state: AlbaranesState, input: {
   }
 
   const previous = latestCarga(state);
-  const prevById = new Map((previous?.rows || []).map((row) => [row.id, row]));
+  const prevRows = previous?.rows || [];
+  const canDiff = prevRows.length > 0;
+  const prevById = new Map(canDiff ? prevRows.map((row) => [row.id, row]) : []);
   const nextById = new Map(input.rows.map((row) => [row.id, row]));
 
   let newCount = 0;
   let sameCount = 0;
   let stateChangeCount = 0;
   let agentChangeCount = 0;
-  input.rows.forEach((row) => {
-    const prev = prevById.get(row.id);
-    if (!prev) {
-      newCount += 1;
-      return;
-    }
-    const estadoChanged = normKey(prev.estado) !== normKey(row.estado);
-    const agenteChanged = normKey(prev.agente) !== normKey(row.agente);
-    if (estadoChanged) stateChangeCount += 1;
-    if (agenteChanged) agentChangeCount += 1;
-    if (!estadoChanged && !agenteChanged) sameCount += 1;
-  });
+  if (canDiff) {
+    input.rows.forEach((row) => {
+      const prev = prevById.get(row.id);
+      if (!prev) {
+        newCount += 1;
+        return;
+      }
+      const estadoChanged = normKey(prev.estado) !== normKey(row.estado);
+      const agenteChanged = normKey(prev.agente) !== normKey(row.agente);
+      if (estadoChanged) stateChangeCount += 1;
+      if (agenteChanged) agentChangeCount += 1;
+      if (!estadoChanged && !agenteChanged) sameCount += 1;
+    });
+  }
 
-  const disappearedRows = (previous?.rows || []).filter((row) => !nextById.has(row.id));
-  const disappeared: DisappearedAlbaran[] = [
-    ...state.disappeared.filter((item) => nextById.has(item.id) ? false : true).map((item) => (
-      nextById.has(item.id) ? item : item
-    )),
-    ...disappearedRows.map((row) => ({
-      id: row.id,
-      albaran: row.albaran,
-      serie: row.serie,
-      estado: row.estado,
-      lastSeenDate: previous?.loadDate || input.loadDate,
-      reason: 'Ya no activo · facturado, cerrado o fuera del filtro',
-    })),
-  ].filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index && !nextById.has(item.id));
+  const disappearedCount = canDiff ? prevRows.filter((row) => !nextById.has(row.id)).length : 0;
 
   const previousKeys = new Set(
     state.evaluations
@@ -538,15 +710,20 @@ export function ingestCarga(state: AlbaranesState, input: {
     fileName: input.fileName,
     fileHash: input.fileHash,
     recordCount: input.rows.length,
+    totalImporte: input.rows.reduce((sum, row) => sum + (row.importe || 0), 0),
     rows: input.rows,
+    estadoCounts: tally(input.rows, (row) => row.estado || '(sin estado)'),
+    serieCounts: tally(input.rows, (row) => row.serie || '(sin serie)'),
+    buckets: tallyBuckets(input.rows),
     newCount,
     sameCount,
     stateChangeCount,
     agentChangeCount,
-    disappearedCount: disappearedRows.length,
+    disappearedCount,
     newBreaches,
     continuingBreaches,
     resolvedBreaches,
+    averageAgeDays: averageAge(input.rows, input.loadDate),
   };
 
   const mailable = nextEvaluations.filter((item) => item.assignmentOk);
@@ -604,7 +781,7 @@ export function ingestCarga(state: AlbaranesState, input: {
     state: {
       ...state,
       cargas: [...state.cargas, carga],
-      disappeared,
+      disappeared: [],
       evaluations: [...state.evaluations, ...marked],
       lots: [...state.lots, lot],
       communications,
@@ -652,24 +829,53 @@ export function albaranTimeline(state: AlbaranesState, albaranId: string): Array
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
-export function historyByEstado(state: AlbaranesState): Array<{ loadDate: string; estado: string; count: number }> {
-  const out: Array<{ loadDate: string; estado: string; count: number }> = [];
+export function historyByEstado(state: AlbaranesState): Array<{ loadDate: string; estado: string; count: number; importe: number }> {
+  const out: Array<{ loadDate: string; estado: string; count: number; importe: number }> = [];
   state.cargas.forEach((carga) => {
-    const counts = new Map<string, number>();
-    carga.rows.forEach((row) => counts.set(row.estado || '(sin estado)', (counts.get(row.estado || '(sin estado)') || 0) + 1));
-    counts.forEach((count, estado) => out.push({ loadDate: carga.loadDate, estado, count }));
+    const source = carga.estadoCounts?.length
+      ? carga.estadoCounts
+      : tally(carga.rows || [], (row) => row.estado || '(sin estado)');
+    source.forEach((item) => out.push({ loadDate: carga.loadDate, estado: item.name, count: item.count, importe: item.importe || 0 }));
   });
   return out;
 }
 
-export function historyBySerie(state: AlbaranesState): Array<{ loadDate: string; serie: string; count: number }> {
-  const out: Array<{ loadDate: string; serie: string; count: number }> = [];
+export function historyBySerie(state: AlbaranesState): Array<{ loadDate: string; serie: string; count: number; importe: number }> {
+  const out: Array<{ loadDate: string; serie: string; count: number; importe: number }> = [];
   state.cargas.forEach((carga) => {
-    const counts = new Map<string, number>();
-    carga.rows.forEach((row) => counts.set(row.serie || '(sin serie)', (counts.get(row.serie || '(sin serie)') || 0) + 1));
-    counts.forEach((count, serie) => out.push({ loadDate: carga.loadDate, serie, count }));
+    const source = carga.serieCounts?.length
+      ? carga.serieCounts
+      : tally(carga.rows || [], (row) => row.serie || '(sin serie)');
+    source.forEach((item) => out.push({ loadDate: carga.loadDate, serie: item.name, count: item.count, importe: item.importe || 0 }));
   });
   return out;
+}
+
+export function trendByBucket(
+  state: AlbaranesState,
+  kind: 'estado' | 'serie',
+  name: string,
+): Array<{ loadDate: string; count: number; importe: number; delta: number | null }> {
+  const key = kind === 'serie' ? name.trim().toUpperCase() : normKey(name);
+  const points = state.cargas.map((carga) => {
+    const source = kind === 'serie' ? carga.serieCounts : carga.estadoCounts;
+    const hit = (source || []).find((item) => (
+      kind === 'serie' ? item.name.toUpperCase() === key : normKey(item.name) === key
+    ));
+    return {
+      loadDate: carga.loadDate,
+      count: hit?.count || 0,
+      importe: hit?.importe || 0,
+    };
+  });
+  return points.map((point, index) => ({
+    ...point,
+    delta: index === 0 ? null : point.count - points[index - 1].count,
+  }));
+}
+
+export function photoCarga(carga: Carga): Carga {
+  return { ...carga, rows: [] };
 }
 
 export function averageAge(rows: AlbaranRow[], loadDate: string): number {
@@ -680,26 +886,32 @@ export function averageAge(rows: AlbaranRow[], loadDate: string): number {
   return Math.round(ages.reduce((sum, n) => sum + n, 0) / ages.length);
 }
 
-export function resumenKpis(state: AlbaranesState) {
+export function resumenKpis(state: AlbaranesState, filters: CargaFilters = {}) {
   const last = latestCarga(state);
-  const actions = currentActions(state);
-  const incidents = currentIncidents(state);
-  const responsables = new Set(actions.map((item) => item.email));
+  const summary = summarizeCarga(last, filters);
+  const matchEval = (item: Evaluacion) => {
+    if (filters.serie && item.serie.toUpperCase() !== filters.serie.trim().toUpperCase()) return false;
+    if (filters.estado && normKey(item.estado) !== normKey(filters.estado)) return false;
+    if (filters.agente && normKey(item.agenteOriginal) !== normKey(filters.agente)) return false;
+    return true;
+  };
+  const actions = currentActions(state).filter(matchEval);
+  const incidents = currentIncidents(state).filter(matchEval);
   return {
     lastLoadDate: last?.loadDate || null,
     lastLoadedAt: last?.loadedAt || null,
     lastFileName: last?.fileName || null,
-    activeCount: last?.recordCount || 0,
+    activeCount: summary.total,
+    totalImporte: summary.importe,
     actionCount: actions.length,
-    responsibleCount: responsables.size,
     incidentCount: incidents.length,
+    estadoCount: summary.estadoCount,
+    serieCount: summary.serieCount,
+    estadoCounts: summary.estadoCounts,
+    serieCounts: summary.serieCounts,
     newBreaches: last?.newBreaches || 0,
     continuingBreaches: last?.continuingBreaches || 0,
     resolvedBreaches: last?.resolvedBreaches || 0,
-    disappearedCount: last?.disappearedCount || 0,
-    newCount: last?.newCount || 0,
-    stateChangeCount: last?.stateChangeCount || 0,
-    agentChangeCount: last?.agentChangeCount || 0,
   };
 }
 
