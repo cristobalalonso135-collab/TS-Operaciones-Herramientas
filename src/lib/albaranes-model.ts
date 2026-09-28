@@ -1069,6 +1069,134 @@ export function alreadyMailed(state: AlbaranesState, loadDate: string, email: st
   return state.communications.some((item) => item.clave === clave && item.enviar);
 }
 
+function evaluateRules(
+  state: AlbaranesState,
+  input: { cargaId: string; loadDate: string; rows: AlbaranRow[] },
+  options: { bumpMail: boolean; previousCargaId?: string | null },
+): Evaluacion[] {
+  const previousKeys = new Set(
+    state.evaluations
+      .filter((item) => item.cargaId === options.previousCargaId)
+      .map((item) => `${item.albaranId}|${item.reglaId}`),
+  );
+  const prevEvalByKey = new Map<string, Evaluacion>();
+  for (let i = state.evaluations.length - 1; i >= 0; i -= 1) {
+    const row = state.evaluations[i];
+    const key = `${row.albaranId}|${row.reglaId}`;
+    if (!prevEvalByKey.has(key)) prevEvalByKey.set(key, row);
+  }
+  const mailedToday = new Set(
+    state.communications
+      .filter((item) => item.loadDate === input.loadDate && item.enviar)
+      .map((item) => item.clave),
+  );
+  const colectivoIndex = indexColectivos(state.colectivos);
+  const nextEvaluations: Evaluacion[] = [];
+  state.rules.filter((rule) => rule.activa).forEach((rule) => {
+    input.rows.forEach((row) => {
+      if (!ruleMatches(rule, row, input.loadDate)) return;
+      const assignment = resolveAssignment(row, state.agents, state.colectivos, colectivoIndex);
+      const evalKey = `${row.id}|${rule.id}`;
+      const priorEval = prevEvalByKey.get(evalKey);
+      const first = priorEval?.primeraFechaIncumplimiento || input.loadDate;
+      const prior = priorEval
+        ? { count: priorEval.numeroNotificaciones, last: priorEval.ultimaNotificacion }
+        : { count: 0, last: null as string | null };
+      const mailKey = `${input.loadDate}|${normKey(assignment.email)}`;
+      const mailed = mailedToday.has(mailKey);
+      const willMail = options.bumpMail && assignment.ok && !mailed;
+      const envio: MailStatus = !assignment.ok
+        ? 'incidencia'
+        : mailed
+          ? 'omitido-duplicado'
+          : options.bumpMail
+            ? 'pendiente'
+            : (priorEval?.envio || 'pendiente');
+      nextEvaluations.push({
+        key: `${input.cargaId}|${evalKey}`,
+        cargaId: input.cargaId,
+        loadDate: input.loadDate,
+        reglaId: rule.id,
+        albaranId: row.id,
+        albaran: row.albaran,
+        serie: row.serie,
+        estado: row.estado,
+        fechaAlbaran: row.fechaAlbaran,
+        fechaEstado: row.fechaEstado,
+        diasEstado: row.fechaEstado ? daysBetween(row.fechaEstado, input.loadDate) : 0,
+        plazoDias: rule.plazoDias,
+        agenteOriginal: row.agente,
+        codigoColectivo: row.colectivo,
+        agenteResuelto: assignment.agenteResuelto,
+        email: assignment.email,
+        primeraFechaIncumplimiento: first,
+        diasIncumpliendo: daysBetween(first, input.loadDate),
+        ultimaNotificacion: willMail ? input.loadDate : prior.last,
+        numeroNotificaciones: willMail ? prior.count + 1 : prior.count,
+        envio,
+        assignmentOk: assignment.ok,
+        assignmentReason: assignment.reason,
+        assignmentAction: assignment.action,
+        nuevo: !previousKeys.has(evalKey),
+      });
+    });
+  });
+  return nextEvaluations;
+}
+
+function replaceCargaEvaluations(
+  state: AlbaranesState,
+  carga: Carga,
+  evaluations: Evaluacion[],
+  previousCargaId?: string | null,
+): AlbaranesState {
+  const previousKeys = new Set(
+    state.evaluations
+      .filter((item) => item.cargaId === previousCargaId)
+      .map((item) => `${item.albaranId}|${item.reglaId}`),
+  );
+  const currentKeys = new Set(evaluations.map((item) => `${item.albaranId}|${item.reglaId}`));
+  const resolvedBreaches = Array.from(previousKeys).filter((key) => !currentKeys.has(key)).length;
+  const newBreaches = evaluations.filter((item) => item.nuevo).length;
+  const continuingBreaches = evaluations.filter((item) => !item.nuevo).length;
+  return {
+    ...state,
+    cargas: state.cargas.map((item) => (
+      item.id === carga.id
+        ? { ...item, newBreaches, continuingBreaches, resolvedBreaches }
+        : item
+    )),
+    evaluations: [
+      ...state.evaluations.filter((item) => item.cargaId !== carga.id),
+      ...evaluations,
+    ],
+  };
+}
+
+export function reapplyRulesToLatestCarga(state: AlbaranesState): AlbaranesState {
+  const last = latestCarga(state);
+  if (!last) return state;
+  const rows = last.rows?.length ? last.rows : listingAsRows(last.listing || []);
+  if (rows.length === 0) {
+    return {
+      ...state,
+      evaluations: state.evaluations.flatMap((item) => {
+        if (item.cargaId !== last.id) return [item];
+        const rule = state.rules.find((row) => row.id === item.reglaId);
+        if (!rule?.activa) return [];
+        return [{ ...item, plazoDias: rule.plazoDias }];
+      }),
+    };
+  }
+  const previous = state.cargas[state.cargas.length - 2];
+  const evaluations = evaluateRules(state, {
+    cargaId: last.id,
+    loadDate: last.loadDate,
+    rows,
+  }, { bumpMail: false, previousCargaId: previous?.id });
+  return replaceCargaEvaluations(state, last, evaluations, previous?.id);
+}
+
 export function ingestCarga(state: AlbaranesState, input: {
   id: string;
   loadedAt: string;
@@ -1131,68 +1259,11 @@ export function ingestCarga(state: AlbaranesState, input: {
       .filter((item) => item.cargaId === previous?.id)
       .map((item) => `${item.albaranId}|${item.reglaId}`)
   );
-  const prevEvalByKey = new Map<string, Evaluacion>();
-  for (let i = state.evaluations.length - 1; i >= 0; i -= 1) {
-    const row = state.evaluations[i];
-    const key = `${row.albaranId}|${row.reglaId}`;
-    if (!prevEvalByKey.has(key)) prevEvalByKey.set(key, row);
-  }
-  const mailedToday = new Set(
-    state.communications
-      .filter((item) => item.loadDate === input.loadDate && item.enviar)
-      .map((item) => item.clave),
-  );
-  const colectivoIndex = indexColectivos(state.colectivos);
-
-  const nextEvaluations: Evaluacion[] = [];
-  const activeRules = state.rules.filter((rule) => rule.activa);
-  activeRules.forEach((rule) => {
-    input.rows.forEach((row) => {
-      if (!ruleMatches(rule, row, input.loadDate)) return;
-      const assignment = resolveAssignment(row, state.agents, state.colectivos, colectivoIndex);
-      const evalKey = `${row.id}|${rule.id}`;
-      const priorEval = prevEvalByKey.get(evalKey);
-      const first = priorEval?.primeraFechaIncumplimiento || input.loadDate;
-      const prior = priorEval
-        ? { count: priorEval.numeroNotificaciones, last: priorEval.ultimaNotificacion }
-        : { count: 0, last: null as string | null };
-      const mailKey = `${input.loadDate}|${normKey(assignment.email)}`;
-      const mailed = mailedToday.has(mailKey);
-      const willMail = assignment.ok && !mailed;
-      const envio: MailStatus = !assignment.ok
-        ? 'incidencia'
-        : mailed
-          ? 'omitido-duplicado'
-          : 'pendiente';
-      nextEvaluations.push({
-        key: `${input.id}|${evalKey}`,
-        cargaId: input.id,
-        loadDate: input.loadDate,
-        reglaId: rule.id,
-        albaranId: row.id,
-        albaran: row.albaran,
-        serie: row.serie,
-        estado: row.estado,
-        fechaAlbaran: row.fechaAlbaran,
-        fechaEstado: row.fechaEstado,
-        diasEstado: row.fechaEstado ? daysBetween(row.fechaEstado, input.loadDate) : 0,
-        plazoDias: rule.plazoDias,
-        agenteOriginal: row.agente,
-        codigoColectivo: row.colectivo,
-        agenteResuelto: assignment.agenteResuelto,
-        email: assignment.email,
-        primeraFechaIncumplimiento: first,
-        diasIncumpliendo: daysBetween(first, input.loadDate),
-        ultimaNotificacion: willMail ? input.loadDate : prior.last,
-        numeroNotificaciones: willMail ? prior.count + 1 : prior.count,
-        envio,
-        assignmentOk: assignment.ok,
-        assignmentReason: assignment.reason,
-        assignmentAction: assignment.action,
-        nuevo: !previousKeys.has(evalKey),
-      });
-    });
-  });
+  const nextEvaluations = evaluateRules(state, {
+    cargaId: input.id,
+    loadDate: input.loadDate,
+    rows: input.rows,
+  }, { bumpMail: true, previousCargaId: previous?.id });
 
   const currentKeys = new Set(nextEvaluations.map((item) => `${item.albaranId}|${item.reglaId}`));
   const resolvedBreaches = Array.from(previousKeys).filter((key) => !currentKeys.has(key)).length;
@@ -1337,7 +1408,7 @@ export function presentActions(state: AlbaranesState, today: string): AccionRow[
       fechaEstado: item.fechaEstado,
       diasCreacion: fechaAlbaran ? daysBetween(fechaAlbaran, today) : null,
       diasEstado: item.diasEstado,
-      plazoDias: item.plazoDias ?? rules.get(item.reglaId)?.plazoDias ?? 0,
+      plazoDias: rules.get(item.reglaId)?.plazoDias ?? item.plazoDias ?? 0,
       agente,
       email: item.email || agent?.email || '',
       idioma: agent?.idioma || '',

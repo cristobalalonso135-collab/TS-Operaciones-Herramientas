@@ -33,6 +33,7 @@ import {
   formatShare,
   monthsBetween,
   ingestCarga,
+  reapplyRulesToLatestCarga,
   knownEstados,
   knownSeries,
   historyEstadoMatrix,
@@ -230,7 +231,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     loadAlbaranesState()
       .then((result) => {
         if (cancelled) return;
-        setState(result.state);
+        setState(reapplyRulesToLatestCarga(result.state));
         setBackend(result.backend);
         setSetupSql(result.setupSql || null);
       })
@@ -509,8 +510,12 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     const rules = exists
       ? state.rules.map((item) => (item.id === rule.id ? { ...rule, updatedAt: nowIso() } : item))
       : [...state.rules, { ...rule, createdAt: nowIso(), updatedAt: nowIso() }];
-    void persist({ ...state, rules }, backend);
+    void persist(reapplyRulesToLatestCarga({ ...state, rules }), backend);
     setEditingRule(null);
+    setAck({
+      title: 'Regla guardada',
+      message: 'He vuelto a calcular Acciones con el máximo de días actual. No hace falta subir otra vez el CSV.',
+    });
   };
 
   const downloadExport = async () => {
