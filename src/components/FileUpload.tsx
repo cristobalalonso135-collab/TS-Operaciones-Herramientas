@@ -111,7 +111,7 @@ export default function FileUpload({
 
   return (
     <div className="space-y-2">
-      <label className={`text-sm font-medium ${isLoaded ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}>{label}</label>
+      <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>
       <div
         className={`relative cursor-pointer rounded-lg border border-dashed text-center transition ${
           compact ? 'p-5' : 'p-8'

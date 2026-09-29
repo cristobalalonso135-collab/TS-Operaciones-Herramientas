@@ -158,7 +158,7 @@ async function downloadNamedExcelTable(input: {
 function Kpi({ label, value, hint, amount }: { label: string; value: string | number; hint?: string; amount?: string }) {
   const shown = typeof value === 'number' ? formatInt(value) : value;
   return (
-    <div className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3">
+    <div className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3 text-[var(--text-primary)]">
       <p className="text-xs text-[var(--text-secondary)]">{label}</p>
       <p className="mt-1 font-display text-lg font-semibold tabular-nums leading-tight">{shown}</p>
       {hint ? <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{hint}</p> : null}
@@ -592,60 +592,64 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           </p>
           <p className="text-xs text-[var(--text-muted)]">{ALCANCE_ALBARANES}</p>
           <div className="grid gap-4 lg:grid-cols-3">
-            <FileUpload
-              inputId="albaranes-erp"
-              label="Albaranes no facturados"
-              hint="CSV del ERP con punto y coma. Misma estructura cada día."
-              keepDropzone
-              compact
-              loaded={Boolean(last?.recordCount)}
-              loadedName={last?.fileName}
-              onRawFile={(file) => {
-                lastFileRef.current = file;
-                setBusy('Leyendo archivo…');
-              }}
-              onFileLoaded={handleAlbaranesFile}
-            />
-            <FileUpload
-              inputId="albaranes-colectivos"
-              label="Maestro de colectivos"
-              hint="CSV del ERP: Nombre, Código, Agente, Comercial, Act."
-              keepDropzone
-              compact
-              loaded={state.colectivos.length > 0}
-              loadedName={state.colectivosFileName}
-              onFileLoaded={handleColectivosFile}
-            />
-            <FileUpload
-              inputId="albaranes-emails"
-              label="Correos del grupo"
-              hint="Excel/CSV con Nombre, Email e Idioma (vale el de Outlook, Teams admin o Entra)."
-              keepDropzone
-              compact
-              loaded={Boolean(state.emailsFileName) || state.agents.some((item) => item.email.includes('@'))}
-              loadedName={state.emailsFileName}
-              onFileLoaded={handleEmailsFile}
-            />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Kpi
-              label="Albaranes cargados"
-              value={last?.recordCount || 0}
-              hint={last?.fileName || 'Aún no hay fichero'}
-              amount={last ? formatIsoDateTime(last.loadedAt) : undefined}
-            />
-            <Kpi
-              label="Colectivos cargados"
-              value={state.colectivos.length}
-              hint={state.colectivosFileName || 'Aún no hay fichero'}
-              amount={state.colectivosLoadedAt ? formatIsoDateTime(state.colectivosLoadedAt) : undefined}
-            />
-            <Kpi
-              label="Agentes con email"
-              value={`${formatInt(state.agents.filter((item) => item.email.includes('@')).length)} / ${formatInt(uniqueAgentes(state).length)}`}
-              hint={state.emailsFileName || (uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero')}
-              amount={state.emailsLoadedAt ? formatIsoDateTime(state.emailsLoadedAt) : undefined}
-            />
+            <div className="space-y-3">
+              <FileUpload
+                inputId="albaranes-erp"
+                label="Albaranes no facturados"
+                hint="CSV del ERP con punto y coma. Misma estructura cada día."
+                keepDropzone
+                compact
+                loaded={Boolean(last?.recordCount)}
+                loadedName={last?.fileName}
+                onRawFile={(file) => {
+                  lastFileRef.current = file;
+                  setBusy('Leyendo archivo…');
+                }}
+                onFileLoaded={handleAlbaranesFile}
+              />
+              <Kpi
+                label="Albaranes cargados"
+                value={last?.recordCount || 0}
+                hint={last?.fileName || 'Aún no hay fichero'}
+                amount={last ? formatIsoDateTime(last.loadedAt) : undefined}
+              />
+            </div>
+            <div className="space-y-3">
+              <FileUpload
+                inputId="albaranes-colectivos"
+                label="Maestro de colectivos"
+                hint="CSV del ERP: Nombre, Código, Agente, Comercial, Act."
+                keepDropzone
+                compact
+                loaded={state.colectivos.length > 0}
+                loadedName={state.colectivosFileName}
+                onFileLoaded={handleColectivosFile}
+              />
+              <Kpi
+                label="Colectivos cargados"
+                value={state.colectivos.length}
+                hint={state.colectivosFileName || 'Aún no hay fichero'}
+                amount={state.colectivosLoadedAt ? formatIsoDateTime(state.colectivosLoadedAt) : undefined}
+              />
+            </div>
+            <div className="space-y-3">
+              <FileUpload
+                inputId="albaranes-emails"
+                label="Correos del grupo"
+                hint="Excel/CSV con Nombre, Email e Idioma (vale el de Outlook, Teams admin o Entra)."
+                keepDropzone
+                compact
+                loaded={Boolean(state.emailsFileName) || state.agents.some((item) => item.email.includes('@'))}
+                loadedName={state.emailsFileName}
+                onFileLoaded={handleEmailsFile}
+              />
+              <Kpi
+                label="Agentes con email"
+                value={`${formatInt(state.agents.filter((item) => item.email.includes('@')).length)} / ${formatInt(uniqueAgentes(state).length)}`}
+                hint={state.emailsFileName || (uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero')}
+                amount={state.emailsLoadedAt ? formatIsoDateTime(state.emailsLoadedAt) : undefined}
+              />
+            </div>
           </div>
         </div>
       )}
