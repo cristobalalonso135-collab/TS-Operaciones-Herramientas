@@ -152,14 +152,14 @@ async function downloadNamedExcelTable(input: {
   URL.revokeObjectURL(url);
 }
 
-function Kpi({ label, value, hint, amount }: { label: string; value: string | number; hint?: string; amount?: string }) {
+function Kpi({ label, value, hint, amount, ok }: { label: string; value: string | number; hint?: string; amount?: string; ok?: boolean }) {
   const shown = typeof value === 'number' ? formatInt(value) : value;
   return (
-    <div className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-3">
-      <p className="text-xs text-[var(--text-secondary)]">{label}</p>
-      <p className="mt-1 font-display text-lg font-semibold tabular-nums leading-tight">{shown}</p>
-      {hint ? <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{hint}</p> : null}
-      {amount ? <p className="mt-0.5 text-[10px] leading-tight text-[var(--text-muted)]">{amount}</p> : null}
+    <div className={`min-w-0 rounded-lg border p-3 ${ok ? 'border-[var(--success)] bg-[var(--success-soft)]' : 'border-[var(--border)] bg-[var(--bg-card)]'}`}>
+      <p className={`text-xs ${ok ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}>{label}</p>
+      <p className={`mt-1 font-display text-lg font-semibold tabular-nums leading-tight ${ok ? 'text-[var(--success)]' : ''}`}>{shown}</p>
+      {hint ? <p className={`mt-1 text-[11px] ${ok ? 'text-[var(--success)]/80' : 'text-[var(--text-secondary)]'}`}>{hint}</p> : null}
+      {amount ? <p className={`mt-0.5 text-[10px] leading-tight ${ok ? 'text-[var(--success)]/70' : 'text-[var(--text-muted)]'}`}>{amount}</p> : null}
     </div>
   );
 }
@@ -576,6 +576,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               hint="CSV del ERP con punto y coma. Misma estructura cada día."
               keepDropzone
               compact
+              loaded={Boolean(last?.recordCount)}
+              loadedName={last?.fileName}
               onRawFile={(file) => {
                 lastFileRef.current = file;
                 setBusy('Leyendo archivo…');
@@ -588,6 +590,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               hint="CSV del ERP: Nombre, Código, Agente, Comercial, Act."
               keepDropzone
               compact
+              loaded={state.colectivos.length > 0}
+              loadedName={state.colectivosFileName}
               onFileLoaded={handleColectivosFile}
             />
             <FileUpload
@@ -596,6 +600,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               hint="Excel/CSV con Nombre, Email e Idioma (vale el de Outlook, Teams admin o Entra)."
               keepDropzone
               compact
+              loaded={Boolean(state.emailsFileName) || state.agents.some((item) => item.email.includes('@'))}
+              loadedName={state.emailsFileName}
               onFileLoaded={handleEmailsFile}
             />
           </div>
@@ -605,34 +611,23 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               value={last?.recordCount || 0}
               hint={last?.fileName || 'Aún no hay fichero'}
               amount={last ? formatIsoDateTime(last.loadedAt) : undefined}
+              ok={Boolean(last?.recordCount)}
             />
             <Kpi
               label="Colectivos cargados"
               value={state.colectivos.length}
               hint={state.colectivosFileName || 'Aún no hay fichero'}
               amount={state.colectivosLoadedAt ? formatIsoDateTime(state.colectivosLoadedAt) : undefined}
+              ok={state.colectivos.length > 0}
             />
             <Kpi
               label="Agentes con email"
               value={`${formatInt(state.agents.filter((item) => item.email.includes('@')).length)} / ${formatInt(uniqueAgentes(state).length)}`}
               hint={state.emailsFileName || (uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero')}
               amount={state.emailsLoadedAt ? formatIsoDateTime(state.emailsLoadedAt) : undefined}
+              ok={Boolean(state.emailsFileName) || state.agents.some((item) => item.email.includes('@'))}
             />
           </div>
-          <button
-            type="button"
-            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs"
-            onClick={() => {
-              const header = ['Agente', 'Email', 'Idioma'];
-              const rows = uniqueAgentes(state).map((name) => {
-                const hit = state.agents.find((item) => item.agenteErp === name || item.nombre === name);
-                return [name, hit?.email || '', hit?.idioma || ''];
-              });
-              downloadAoa({ Correos: [header, ...rows] }, 'agentes_emails.xlsx');
-            }}
-          >
-            Descargar agentes (para pedir el Excel de correos)
-          </button>
         </div>
       )}
 

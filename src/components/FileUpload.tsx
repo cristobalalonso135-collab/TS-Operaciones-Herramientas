@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { Upload, FileSpreadsheet, X } from 'lucide-react';
+import { CheckCircle2, Upload, FileSpreadsheet, X } from 'lucide-react';
 import { isCsvFile, parseDelimitedText } from '@/lib/delimited-text';
 
 interface FileUploadProps {
@@ -15,6 +15,8 @@ interface FileUploadProps {
   keepDropzone?: boolean;
   hint?: string;
   compact?: boolean;
+  loaded?: boolean;
+  loadedName?: string;
 }
 
 export default function FileUpload({
@@ -28,6 +30,8 @@ export default function FileUpload({
   keepDropzone = false,
   hint,
   compact = false,
+  loaded = false,
+  loadedName,
 }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -102,16 +106,21 @@ export default function FileUpload({
     [multiple, processFiles]
   );
 
+  const isLoaded = loaded || Boolean(fileName);
+  const shownName = fileName || loadedName;
+
   return (
     <div className="space-y-2">
-      <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>
+      <label className={`text-sm font-medium ${isLoaded ? 'text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}>{label}</label>
       <div
         className={`relative cursor-pointer rounded-lg border border-dashed text-center transition ${
           compact ? 'p-5' : 'p-8'
         } ${
           dragActive
             ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
-            : 'border-[var(--border-strong)] bg-[var(--bg-secondary)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]'
+            : isLoaded
+              ? 'border-[var(--success)] bg-[var(--success-soft)] hover:border-[var(--success)]'
+              : 'border-[var(--border-strong)] bg-[var(--bg-secondary)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]'
         }`}
         onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
         onDragLeave={() => setDragActive(false)}
@@ -145,14 +154,19 @@ export default function FileUpload({
           </div>
         ) : (
           <div className="space-y-2">
-            <Upload className={`mx-auto ${compact ? 'h-7 w-7' : 'h-9 w-9'} text-[var(--text-secondary)]`} />
-            <p className="text-sm text-[var(--text-secondary)]">
-              Arrastra {multiple ? 'los archivos' : 'el archivo'} aquí o <span className="font-medium text-[var(--accent)]">selecciónalo</span>
-            </p>
-            <p className="text-xs text-[var(--text-muted)]">{hint || '.xlsx, .xls o .csv'}</p>
-            {keepDropzone && fileName && (
-              <p className="text-xs text-[var(--text-secondary)]">Último: {fileName}</p>
+            {isLoaded ? (
+              <CheckCircle2 className={`mx-auto ${compact ? 'h-7 w-7' : 'h-9 w-9'} text-[var(--success)]`} />
+            ) : (
+              <Upload className={`mx-auto ${compact ? 'h-7 w-7' : 'h-9 w-9'} text-[var(--text-secondary)]`} />
             )}
+            <p className={`text-sm ${isLoaded ? 'font-medium text-[var(--success)]' : 'text-[var(--text-secondary)]'}`}>
+              {isLoaded
+                ? `Cargado${shownName ? `: ${shownName}` : ''}`
+                : <>Arrastra {multiple ? 'los archivos' : 'el archivo'} aquí o <span className="font-medium text-[var(--accent)]">selecciónalo</span></>}
+            </p>
+            <p className={`text-xs ${isLoaded ? 'text-[var(--success)]/80' : 'text-[var(--text-muted)]'}`}>
+              {isLoaded ? 'Puedes soltar otro para sustituirlo.' : (hint || '.xlsx, .xls o .csv')}
+            </p>
           </div>
         )}
       </div>
