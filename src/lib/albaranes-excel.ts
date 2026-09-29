@@ -3,9 +3,11 @@ import {
   extractSerie,
   parseAmount,
   normKey,
+  DEFAULT_SERIES,
   type Agent,
   type AlbaranRow,
   type Colectivo,
+  type Regla,
   newId,
 } from '@/lib/albaranes-model';
 
@@ -186,6 +188,66 @@ export function pickSheet(sheets: Record<string, unknown[][]>, aliases: string[]
   const names = Object.keys(sheets);
   const found = names.find((name) => aliases.some((alias) => normalizeHeader(name).includes(alias)));
   return found ? sheets[found] : null;
+}
+
+export type ImportedRule = {
+  id: string;
+  nombre: string;
+  series: string[];
+  estado: string;
+  plazoDias: number;
+  activa: boolean;
+};
+
+export function parseRulesSheet(rows: unknown[][]): ImportedRule[] {
+  if (!rows.length) return [];
+  const headerIndex = rows.findIndex((row) => {
+    const joined = (row || []).map(normalizeHeader).join(' | ');
+    return (joined.includes('nombre') || joined.includes('regla')) && (joined.includes('estado') || joined.includes('plazo'));
+  });
+  const start = headerIndex >= 0 ? headerIndex : 0;
+  const header = (rows[start] || []).map(normalizeHeader);
+  const col = {
+    id: findCol(header, ['id', 'idregla', 'id regla', 'codigo', 'código']),
+    nombre: findCol(header, ['nombre', 'regla', 'descripcion', 'descripción']),
+    series: findCol(header, ['series', 'serie']),
+    estado: findCol(header, ['estado']),
+    plazo: findCol(header, ['plazodias', 'plazo dias', 'plazo en días', 'plazo en dias', 'plazo días', 'plazo dias', 'máximos días', 'maximos dias', 'días', 'dias']),
+    activa: findCol(header, ['activa', 'activo', 'act.']),
+  };
+  return rows.slice(start + 1).flatMap((row) => {
+    const nombre = cellText(pick(row, col.nombre));
+    const estado = cellText(pick(row, col.estado));
+    const plazoDias = Number(cellText(pick(row, col.plazo)).replace(',', '.'));
+    if (!nombre && !estado) return [];
+    if (!nombre || !estado || !Number.isFinite(plazoDias) || plazoDias < 1) return [];
+    const series = cellText(pick(row, col.series))
+      .split(/[;,|/]/)
+      .map((item) => item.trim().toUpperCase())
+      .filter(Boolean);
+    return [{
+      id: cellText(pick(row, col.id)),
+      nombre,
+      series: series.length ? series : [...DEFAULT_SERIES],
+      estado,
+      plazoDias: Math.round(plazoDias),
+      activa: truthy(pick(row, col.activa)),
+    }];
+  });
+}
+
+export function rulesToAoa(rules: Regla[]): unknown[][] {
+  return [
+    ['Id', 'Nombre', 'Series', 'Estado', 'PlazoDias', 'Activa'],
+    ...rules.map((rule) => [
+      rule.id,
+      rule.nombre,
+      rule.series.join(', '),
+      rule.estado,
+      rule.plazoDias,
+      rule.activa ? 'Sí' : 'No',
+    ]),
+  ];
 }
 
 export const AGENTES_TEMPLATE: unknown[][] = [

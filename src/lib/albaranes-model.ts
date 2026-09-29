@@ -571,6 +571,56 @@ export function nextRuleId(rules: Regla[]): string {
   return `R${String(max + 1).padStart(3, '0')}`;
 }
 
+export function mergeImportedRules(
+  state: AlbaranesState,
+  incoming: Array<{ id: string; nombre: string; series: string[]; estado: string; plazoDias: number; activa: boolean }>,
+): { state: AlbaranesState; added: number; updated: number } {
+  let rules = [...state.rules];
+  let added = 0;
+  let updated = 0;
+  const now = nowIso();
+  incoming.forEach((item) => {
+    const wanted = item.id.trim();
+    const existing = wanted
+      ? rules.find((rule) => rule.id.toLocaleLowerCase('es') === wanted.toLocaleLowerCase('es'))
+      : undefined;
+    if (existing) {
+      updated += 1;
+      rules = rules.map((rule) => (
+        rule.id === existing.id
+          ? {
+            ...rule,
+            nombre: item.nombre,
+            series: item.series,
+            estado: item.estado,
+            plazoDias: item.plazoDias,
+            activa: item.activa,
+            updatedAt: now,
+          }
+          : rule
+      ));
+      return;
+    }
+    added += 1;
+    rules = [
+      ...rules,
+      {
+        id: wanted || nextRuleId(rules),
+        nombre: item.nombre,
+        activa: item.activa,
+        series: item.series,
+        estado: item.estado,
+        plazoDias: item.plazoDias,
+        metodo: 'agente-o-colectivo',
+        frecuencia: 'diaria',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+  });
+  return { state: { ...state, rules }, added, updated };
+}
+
 export function defaultRules(now = nowIso()): Regla[] {
   return [
     {

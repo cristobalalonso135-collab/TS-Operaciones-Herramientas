@@ -10,7 +10,9 @@ import {
   parseAlbaranesSheet,
   parseColectivosSheet,
   parseEmailsSheet,
+  parseRulesSheet,
   pickSheet,
+  rulesToAoa,
 } from '@/lib/albaranes-excel';
 import {
   ALCANCE_ALBARANES,
@@ -39,6 +41,7 @@ import {
   historyEstadoMatrix,
   latestCarga,
   mergeAgentEmails,
+  mergeImportedRules,
   uniqueAgentes,
   agentEmailIncidents,
   newId,
@@ -518,6 +521,25 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     });
   };
 
+  const importRules = (data: unknown[][]) => {
+    if (!state) return;
+    const incoming = parseRulesSheet(data);
+    if (incoming.length === 0) {
+      setAck({
+        title: 'Sin reglas',
+        message: 'Usa columnas Id, Nombre, Series, Estado, PlazoDias y Activa. Las series van separadas por coma.',
+      });
+      return;
+    }
+    const result = mergeImportedRules(state, incoming);
+    void persist(reapplyRulesToLatestCarga(result.state), backend);
+    setEditingRule(null);
+    setAck({
+      title: 'Reglas importadas',
+      message: `${formatInt(result.added)} nuevas y ${formatInt(result.updated)} actualizadas. Acciones ya está recalculado.`,
+    });
+  };
+
   const downloadExport = async () => {
     if (!state || !last) return;
     const payload = exportPayload(state, last);
@@ -993,6 +1015,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           onEdit={setEditingRule}
           onSave={saveRule}
           onToggle={(rule) => saveRule({ ...rule, activa: !rule.activa })}
+          onImport={importRules}
         />
       )}
 
@@ -1449,6 +1472,7 @@ function RulesPanel({
   onEdit,
   onSave,
   onToggle,
+  onImport,
 }: {
   state: AlbaranesState;
   actuales: ReturnType<typeof currentAlbaranes>;
@@ -1457,6 +1481,7 @@ function RulesPanel({
   onEdit: (rule: Regla | null) => void;
   onSave: (rule: Regla) => void;
   onToggle: (rule: Regla) => void;
+  onImport: (data: unknown[][]) => void;
 }) {
   const draft = editing || {
     id: nextRuleId(state.rules),
@@ -1475,7 +1500,27 @@ function RulesPanel({
   const estadoOptions = knownEstados(state);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <FileUpload
+          inputId="albaranes-reglas"
+          label="Importar reglas"
+          hint="Excel/CSV: Id, Nombre, Series, Estado, PlazoDias, Activa. Si el Id existe, se actualiza; si no, se crea."
+          keepDropzone
+          compact
+          onFileLoaded={onImport}
+        />
+        <div className="flex items-end">
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 py-2 text-xs font-semibold text-white"
+            onClick={() => downloadAoa({ Reglas: rulesToAoa(state.rules) }, 'albaranes_reglas.xlsx')}
+          >
+            <Download className="h-3.5 w-3.5" /> Excel
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
       <div className="space-y-2">
         {state.rules.map((rule) => (
           <div key={rule.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
@@ -1571,6 +1616,7 @@ function RulesPanel({
         </div>
       </form>
       )}
+      </div>
     </div>
   );
 }
