@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Upload, FileSpreadsheet, X } from 'lucide-react';
 import { isCsvFile, parseDelimitedText } from '@/lib/delimited-text';
 
@@ -36,6 +36,10 @@ export default function FileUpload({
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loaded) setFileName(null);
+  }, [loaded]);
 
   const processFile = useCallback(
     async (file: File) => {

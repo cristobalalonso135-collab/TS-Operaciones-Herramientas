@@ -605,7 +605,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 hint="CSV del ERP con punto y coma. Misma estructura cada día."
                 keepDropzone
                 compact
-                loaded={Boolean(last?.recordCount)}
+                loaded={Boolean(last?.recordCount) && last.loadDate === todayIso()}
                 loadedName={last?.fileName}
                 onRawFile={(file) => {
                   lastFileRef.current = file;
