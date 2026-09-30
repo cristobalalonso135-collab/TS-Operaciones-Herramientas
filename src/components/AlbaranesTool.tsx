@@ -155,6 +155,14 @@ async function downloadNamedExcelTable(input: {
   URL.revokeObjectURL(url);
 }
 
+function isTodayStamp(value?: string): boolean {
+  if (!value) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value === todayIso();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10) === todayIso();
+  return todayIso(date) === todayIso();
+}
+
 function Kpi({ label, value, hint, amount }: { label: string; value: string | number; hint?: string; amount?: string }) {
   const shown = typeof value === 'number' ? formatInt(value) : value;
   return (
@@ -605,7 +613,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 hint="CSV del ERP con punto y coma. Misma estructura cada día."
                 keepDropzone
                 compact
-                loaded={Boolean(last?.recordCount) && last.loadDate === todayIso()}
+                loaded={Boolean(last?.recordCount) && isTodayStamp(last?.loadedAt || last?.loadDate)}
                 loadedName={last?.fileName}
                 onRawFile={(file) => {
                   lastFileRef.current = file;
@@ -627,7 +635,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 hint="CSV del ERP: Nombre, Código, Agente, Comercial, Act."
                 keepDropzone
                 compact
-                loaded={state.colectivos.length > 0}
+                loaded={state.colectivos.length > 0 && isTodayStamp(state.colectivosLoadedAt)}
                 loadedName={state.colectivosFileName}
                 onFileLoaded={handleColectivosFile}
               />
@@ -645,7 +653,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 hint="Excel/CSV con Nombre, Email e Idioma (vale el de Outlook, Teams admin o Entra)."
                 keepDropzone
                 compact
-                loaded={Boolean(state.emailsFileName) || state.agents.some((item) => item.email.includes('@'))}
+                loaded={Boolean(state.emailsFileName) && isTodayStamp(state.emailsLoadedAt)}
                 loadedName={state.emailsFileName}
                 onFileLoaded={handleEmailsFile}
               />

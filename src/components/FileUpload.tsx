@@ -38,8 +38,8 @@ export default function FileUpload({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loaded) setFileName(null);
-  }, [loaded]);
+    if (loadedName !== undefined && !loaded) setFileName(null);
+  }, [loaded, loadedName]);
 
   const processFile = useCallback(
     async (file: File) => {
