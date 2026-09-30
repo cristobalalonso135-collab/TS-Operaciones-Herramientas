@@ -13,6 +13,14 @@ const STORE_ID = 'main';
 const LISTING_ID = 'listing';
 const LISTING_CHUNK = 'listing:';
 const LISTING_CHUNK_SIZE = 4000;
+let writtenListingKey = '';
+
+function listingWriteKey(state: AlbaranesState): string {
+  const last = state.cargas[state.cargas.length - 1];
+  if (!last) return '';
+  const count = last.listing?.length || last.rows?.length || last.recordCount || 0;
+  return `${last.id}|${last.loadDate}|${count}`;
+}
 
 export const ALBARANES_SETUP_SQL = `CREATE TABLE IF NOT EXISTS albaranes_store (
   id TEXT PRIMARY KEY,
@@ -147,6 +155,8 @@ async function clearListingRows(): Promise<void> {
 async function writeListing(state: AlbaranesState): Promise<void> {
   const snap = listingSnapshot(state);
   if (!snap) return;
+  const key = listingWriteKey(state);
+  if (key && key === writtenListingKey) return;
   const client = requireClient();
   await clearListingRows();
   const packed = snap.listing;
@@ -158,6 +168,7 @@ async function writeListing(state: AlbaranesState): Promise<void> {
       payload: snap,
     }, { onConflict: 'id' });
     if (error) throw new Error(error.message);
+    writtenListingKey = key;
     return;
   }
   const chunks: typeof packed[] = [];
@@ -179,6 +190,7 @@ async function writeListing(state: AlbaranesState): Promise<void> {
     if (error) throw new Error(error.message);
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
+  writtenListingKey = key;
 }
 
 async function readListing(): Promise<{ listing?: unknown; incidents?: unknown } | null> {
@@ -222,7 +234,9 @@ export async function loadAlbaranesState(): Promise<{ state: AlbaranesState; bac
     if (dedicated.kind === 'ok' && dedicated.payload) {
       clearLocal();
       const listing = await readListing();
-      return { state: attachListing(dedicated.payload, listing), backend: 'supabase' };
+      const state = attachListing(dedicated.payload, listing);
+      writtenListingKey = listingWriteKey(state);
+      return { state, backend: 'supabase' };
     }
     const seeded = seedAlbaranesState();
     if (dedicated.kind === 'ok') {

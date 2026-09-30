@@ -219,12 +219,11 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const persist = useCallback(async (next: AlbaranesState, currentBackend: AlbaranesBackend) => {
+    setState(next);
     setError(null);
     try {
       await saveAlbaranesState(next, currentBackend);
-      setState(next);
     } catch (err) {
-      setState(next);
       setError(err instanceof Error ? err.message : 'No he podido guardar.');
     }
   }, []);
@@ -513,12 +512,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     const rules = exists
       ? state.rules.map((item) => (item.id === rule.id ? { ...rule, updatedAt: nowIso() } : item))
       : [...state.rules, { ...rule, createdAt: nowIso(), updatedAt: nowIso() }];
-    void persist(reapplyRulesToLatestCarga({ ...state, rules }), backend);
+    const withRules = { ...state, rules };
+    setState(withRules);
     setEditingRule(null);
     setAck({
       title: 'Regla guardada',
       message: 'He vuelto a calcular Acciones con el máximo de días actual. No hace falta subir otra vez el CSV.',
     });
+    window.setTimeout(() => {
+      void persist(reapplyRulesToLatestCarga(withRules), backend);
+    }, 0);
   };
 
   const importRules = (data: unknown[][]) => {
@@ -532,12 +535,15 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       return;
     }
     const result = mergeImportedRules(state, incoming);
-    void persist(reapplyRulesToLatestCarga(result.state), backend);
+    setState(result.state);
     setEditingRule(null);
     setAck({
       title: 'Reglas importadas',
       message: `${formatInt(result.added)} nuevas y ${formatInt(result.updated)} actualizadas. Acciones ya está recalculado.`,
     });
+    window.setTimeout(() => {
+      void persist(reapplyRulesToLatestCarga(result.state), backend);
+    }, 0);
   };
 
   const downloadExport = async () => {
