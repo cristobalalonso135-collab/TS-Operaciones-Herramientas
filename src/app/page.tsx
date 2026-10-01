@@ -14,6 +14,7 @@ import OperationsDashboard from '@/components/OperationsDashboard';
 import StockTool from '@/components/StockTool';
 import AbonosTool from '@/components/AbonosTool';
 import AlbaranesTool from '@/components/AlbaranesTool';
+import ChecklistTool from '@/components/ChecklistTool';
 import MejorasTool from '@/components/MejorasTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -415,7 +416,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -667,6 +668,10 @@ export default function Home() {
     return <AlbaranesTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'checklist') {
+    return <ChecklistTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -725,6 +730,14 @@ export default function Home() {
         tone: 'bg-[#ece7f6] text-[#5b3d91]',
         link: 'text-[#5b3d91]',
       },
+      {
+        id: 'checklist' as const,
+        number: '08',
+        title: 'Checklist',
+        description: 'Cuenta atrás y tareas de la convención (o de lo que toque). Completar, añadir, quitar, importar y descargar Excel.',
+        tone: 'bg-[#f4e6da] text-[#8a4b2a]',
+        link: 'text-[#8a4b2a]',
+      },
     ];
 
     return (
@@ -740,7 +753,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Siete entradas: comercial, almacén, abonos, mejoras IT y albaranes. El resto vive en pestañas dentro de cada herramienta.
+              Ocho entradas: comercial, almacén, abonos, mejoras IT, albaranes y checklist. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
