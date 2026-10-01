@@ -22,7 +22,7 @@ import {
 } from '@/lib/checklist-model';
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
 import { loadChecklistState, saveChecklistState, type ChecklistBackend } from '@/lib/checklist-store';
-import { Check, ChevronDown, ChevronUp, Clock, Download, Plus, Search, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Clock, Download, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'tablero', label: 'Tablero' },
@@ -128,20 +128,24 @@ function FilterSelect({
 function StatusSelect({
   value,
   onChange,
+  full,
 }: {
   value: ChecklistStatus;
   onChange: (value: ChecklistStatus) => void;
+  full?: boolean;
 }) {
   return (
-    <label className="relative inline-flex">
+    <label className={`relative inline-flex ${full ? 'w-full' : ''}`}>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as ChecklistStatus)}
-        className="h-7 appearance-none rounded border border-[var(--border)] bg-white py-0 pl-1.5 pr-7 text-xs"
+        className={full
+          ? 'h-10 w-full appearance-none rounded-md border border-[var(--border)] bg-white py-0 pl-3 pr-10 text-sm'
+          : 'h-7 appearance-none rounded border border-[var(--border)] bg-white py-0 pl-1.5 pr-7 text-xs'}
       >
         {CHECKLIST_STATUSES.map((item) => <option key={item} value={item}>{item}</option>)}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
+      <ChevronDown className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-[var(--text-muted)] ${full ? 'right-3.5 h-4 w-4' : 'right-1.5 h-3 w-3'}`} />
     </label>
   );
 }
@@ -156,11 +160,12 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [filterArea, setFilterArea] = useState('');
   const [filterOwner, setFilterOwner] = useState('');
   const [filterStatus, setFilterStatus] = useState<ChecklistStatus | ''>('');
-  const [draft, setDraft] = useState<ChecklistTask>(() => emptyTask());
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
   const [deadlineDir, setDeadlineDir] = useState<'asc' | 'desc'>('asc');
+  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
+  const [form, setForm] = useState<ChecklistTask>(() => emptyTask());
   const today = todayIso();
   const stateRef = useRef<ChecklistState | null>(null);
 
@@ -231,6 +236,66 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     if (stateRef.current) void persist(stateRef.current, backend);
   };
 
+  const openTask = (task: ChecklistTask) => {
+    setForm({ ...task });
+    setEditingId(task.id);
+  };
+
+  const openNew = () => {
+    setForm(emptyTask());
+    setEditingId('new');
+  };
+
+  const closePanel = () => {
+    setEditingId(null);
+  };
+
+  const saveForm = () => {
+    const titulo = form.titulo.trim();
+    if (!titulo) return;
+    const current = stateRef.current;
+    if (!current) return;
+    const nextTask: ChecklistTask = {
+      ...form,
+      titulo,
+      area: form.area.trim(),
+      responsable: form.responsable.trim(),
+      comentarios: form.comentarios.trim(),
+      deadline: form.deadline || null,
+      completedAt: form.estado === 'Completado' ? (form.completedAt || new Date().toISOString()) : null,
+    };
+    if (editingId === 'new') {
+      void persist({ ...current, tasks: [...current.tasks, nextTask] }, backend);
+    } else if (editingId) {
+      void persist({
+        ...current,
+        tasks: current.tasks.map((item) => (item.id === editingId ? { ...item, ...nextTask, id: item.id } : item)),
+      }, backend);
+    }
+    closePanel();
+  };
+
+  const removeEditing = () => {
+    if (editingId === 'new' || !editingId) {
+      closePanel();
+      return;
+    }
+    if (!window.confirm('¿Quitar esta tarea?')) return;
+    const current = stateRef.current;
+    if (!current) return;
+    void persist({ ...current, tasks: current.tasks.filter((item) => item.id !== editingId) }, backend);
+    closePanel();
+  };
+
+  useEffect(() => {
+    if (!editingId) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePanel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editingId]);
+
   if (!state) {
     return <p className="p-6 text-sm text-[var(--text-secondary)]">Cargando checklist…</p>;
   }
@@ -289,13 +354,18 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 {upcoming.map((item) => {
                   const days = daysUntil(item.deadline, today);
                   return (
-                    <div key={item.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2">
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => openTask(item)}
+                      className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-left hover:border-[var(--border-strong)]"
+                    >
                       <p className="truncate text-xs font-medium">{item.titulo}</p>
                       <p className={`mt-1 text-[11px] ${deadlineTone(item, today)}`}>
                         {formatIsoDate(item.deadline)}
                         {days != null ? ` · ${days === 0 ? 'hoy' : days > 0 ? `${days}d` : `${Math.abs(days)}d tarde`}` : ''}
                       </p>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -323,36 +393,23 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             {(query || filterArea || filterOwner || filterStatus || onlyOverdue) ? (
               <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => { setQuery(''); setFilterArea(''); setFilterOwner(''); setFilterStatus(''); setOnlyOverdue(false); }}>Quitar filtros</button>
             ) : null}
-            <button
-              type="button"
-              className="ml-auto flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
-              onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), 'checklist.xlsx')}
-            >
-              <Download className="h-3.5 w-3.5" /> Excel
-            </button>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
+                onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), 'checklist.xlsx')}
+              >
+                <Download className="h-3.5 w-3.5" /> Excel
+              </button>
+              <button
+                type="button"
+                className="flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
+                onClick={openNew}
+              >
+                <Plus className="h-3.5 w-3.5" /> Nueva tarea
+              </button>
+            </div>
           </div>
-
-          <form
-            className="grid gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg-card)] p-3 sm:grid-cols-[7rem_1fr_8.5rem_8rem_auto]"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!draft.titulo.trim()) return;
-              const current = stateRef.current;
-              if (!current) return;
-              void persist({ ...current, tasks: [...current.tasks, { ...draft, titulo: draft.titulo.trim() }] }, backend);
-              setDraft(emptyTask());
-            }}
-          >
-            <input list="ck-areas" placeholder="Área" value={draft.area} onChange={(e) => setDraft({ ...draft, area: e.target.value })} className="h-9 rounded-md border border-[var(--border)] px-2 text-sm" />
-            <input required placeholder="Nueva tarea" value={draft.titulo} onChange={(e) => setDraft({ ...draft, titulo: e.target.value })} className="h-9 rounded-md border border-[var(--border)] px-2 text-sm" />
-            <input type="date" value={draft.deadline || ''} onChange={(e) => setDraft({ ...draft, deadline: e.target.value || null })} className="h-9 rounded-md border border-[var(--border)] px-2 text-sm" />
-            <input list="ck-owners" placeholder="Responsable" value={draft.responsable} onChange={(e) => setDraft({ ...draft, responsable: e.target.value })} className="h-9 rounded-md border border-[var(--border)] px-2 text-sm" />
-            <button type="submit" className="flex h-9 items-center justify-center gap-1 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white">
-              <Plus className="h-3.5 w-3.5" /> Añadir
-            </button>
-            <datalist id="ck-areas">{areas.map((item) => <option key={item} value={item} />)}</datalist>
-            <datalist id="ck-owners">{owners.map((item) => <option key={item} value={item} />)}</datalist>
-          </form>
 
           {tab === 'tablero' && (
           <div className="space-y-4">
@@ -371,7 +428,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   {group.tasks.map((task) => {
                     const due = dueLabel(task, today);
                     return (
-                      <li key={task.id} className="grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_1fr_auto] sm:items-start">
+                      <li key={task.id} className="grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_1fr] sm:items-start">
                         <button
                           type="button"
                           onClick={() => patchTask(task.id, toggleTask(task))}
@@ -380,58 +437,17 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                         >
                           {task.estado === 'Completado' ? <Check className="h-3.5 w-3.5" /> : null}
                         </button>
-                        <div className="min-w-0 space-y-1">
-                          <input
-                            value={task.titulo}
-                            onChange={(e) => patchTask(task.id, { titulo: e.target.value }, false)}
-                            onBlur={flush}
-                            className={`w-full bg-transparent text-sm outline-none ${task.estado === 'Completado' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}
-                          />
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
-                            <label className={`flex items-center gap-1 ${deadlineTone(task, today)}`}>
-                              <Clock className="h-3 w-3" />
-                              <input
-                                type="date"
-                                value={task.deadline || ''}
-                                onChange={(e) => patchTask(task.id, { deadline: e.target.value || null })}
-                                className="rounded border border-[var(--border)] bg-white px-1 py-0.5 text-xs"
-                              />
-                              {due ? <span>{due}</span> : null}
-                            </label>
-                            <input
-                              value={task.responsable}
-                              onChange={(e) => patchTask(task.id, { responsable: e.target.value }, false)}
-                              onBlur={flush}
-                              className="w-36 rounded border border-transparent bg-transparent px-1 py-0.5 hover:border-[var(--border)]"
-                              placeholder="Responsable"
-                            />
-                            <StatusSelect
-                              value={task.estado}
-                              onChange={(estado) => patchTask(task.id, {
-                                estado,
-                                completedAt: estado === 'Completado' ? (task.completedAt || new Date().toISOString()) : null,
-                              })}
-                            />
+                        <button type="button" onClick={() => openTask(task)} className="min-w-0 space-y-1 text-left">
+                          <p className={`text-sm ${task.estado === 'Completado' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</p>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-secondary)]">
+                            <span className={deadlineTone(task, today)}>
+                              <Clock className="mr-1 inline h-3 w-3" />
+                              {formatIsoDate(task.deadline)}{due ? ` · ${due}` : ''}
+                            </span>
+                            {task.responsable ? <span>{task.responsable}</span> : null}
+                            <span>{task.estado}</span>
                           </div>
-                          <input
-                            value={task.comentarios}
-                            onChange={(e) => patchTask(task.id, { comentarios: e.target.value }, false)}
-                            onBlur={flush}
-                            placeholder="Comentario"
-                            className="w-full rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs text-[var(--text-secondary)] hover:border-[var(--border)]"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!window.confirm('¿Quitar esta tarea?')) return;
-                            const current = stateRef.current;
-                            if (!current) return;
-                            void persist({ ...current, tasks: current.tasks.filter((item) => item.id !== task.id) }, backend);
-                          }}
-                          className="justify-self-end p-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                        >
-                          <Trash2 className="h-4 w-4" />
+                          {task.comentarios ? <p className="text-xs text-[var(--text-muted)]">{task.comentarios}</p> : null}
                         </button>
                       </li>
                     );
@@ -466,15 +482,18 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                       <th className="px-2 py-2 font-semibold">Responsable</th>
                       <th className="px-2 py-2 font-semibold">Estado</th>
                       <th className="px-2 py-2 font-semibold">Comentarios</th>
-                      <th className="w-10 px-2 py-2" />
                     </tr>
                   </thead>
                   <tbody>
                     {tableRows.map((task) => {
                       const due = dueLabel(task, today);
                       return (
-                        <tr key={task.id} className={`border-t border-[var(--border)] ${task.estado === 'Completado' ? 'bg-[var(--bg-secondary)]' : ''}`}>
-                          <td className="px-3 py-2 align-middle">
+                        <tr
+                          key={task.id}
+                          className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${task.estado === 'Completado' ? 'bg-[var(--bg-secondary)]' : ''}`}
+                          onClick={() => openTask(task)}
+                        >
+                          <td className="px-3 py-2 align-middle" onClick={(event) => event.stopPropagation()}>
                             <button
                               type="button"
                               onClick={() => patchTask(task.id, toggleTask(task))}
@@ -484,75 +503,14 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               {task.estado === 'Completado' ? <Check className="h-3 w-3" /> : null}
                             </button>
                           </td>
-                          <td className="px-2 py-1.5 align-middle">
-                            <input
-                              list="ck-areas"
-                              value={task.area}
-                              onChange={(e) => patchTask(task.id, { area: e.target.value }, false)}
-                              onBlur={flush}
-                              className="w-28 bg-transparent outline-none"
-                            />
+                          <td className="px-2 py-2 align-middle text-[var(--text-secondary)]">{task.area || '—'}</td>
+                          <td className={`px-2 py-2 align-middle ${task.estado === 'Completado' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
+                          <td className={`px-2 py-2 align-middle ${deadlineTone(task, today)}`}>
+                            {formatIsoDate(task.deadline)}{due ? ` · ${due}` : ''}
                           </td>
-                          <td className="px-2 py-1.5 align-middle">
-                            <input
-                              value={task.titulo}
-                              onChange={(e) => patchTask(task.id, { titulo: e.target.value }, false)}
-                              onBlur={flush}
-                              className={`w-full min-w-[12rem] bg-transparent outline-none ${task.estado === 'Completado' ? 'text-[var(--text-muted)] line-through' : ''}`}
-                            />
-                          </td>
-                          <td className={`px-2 py-1.5 align-middle ${deadlineTone(task, today)}`}>
-                            <div className="flex items-center gap-1.5">
-                              <input
-                                type="date"
-                                value={task.deadline || ''}
-                                onChange={(e) => patchTask(task.id, { deadline: e.target.value || null })}
-                                className="rounded border border-[var(--border)] bg-white px-1 py-0.5 text-xs"
-                              />
-                              {due ? <span className="whitespace-nowrap text-[11px]">{due}</span> : null}
-                            </div>
-                          </td>
-                          <td className="px-2 py-1.5 align-middle">
-                            <input
-                              list="ck-owners"
-                              value={task.responsable}
-                              onChange={(e) => patchTask(task.id, { responsable: e.target.value }, false)}
-                              onBlur={flush}
-                              className="w-32 bg-transparent outline-none"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5 align-middle">
-                            <StatusSelect
-                              value={task.estado}
-                              onChange={(estado) => patchTask(task.id, {
-                                estado,
-                                completedAt: estado === 'Completado' ? (task.completedAt || new Date().toISOString()) : null,
-                              })}
-                            />
-                          </td>
-                          <td className="px-2 py-1.5 align-middle">
-                            <input
-                              value={task.comentarios}
-                              onChange={(e) => patchTask(task.id, { comentarios: e.target.value }, false)}
-                              onBlur={flush}
-                              placeholder="—"
-                              className="w-full min-w-[8rem] bg-transparent text-xs text-[var(--text-secondary)] outline-none"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5 align-middle">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!window.confirm('¿Quitar esta tarea?')) return;
-                                const current = stateRef.current;
-                                if (!current) return;
-                                void persist({ ...current, tasks: current.tasks.filter((item) => item.id !== task.id) }, backend);
-                              }}
-                              className="p-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </td>
+                          <td className="px-2 py-2 align-middle">{task.responsable || '—'}</td>
+                          <td className="px-2 py-2 align-middle">{task.estado}</td>
+                          <td className="max-w-[16rem] truncate px-2 py-2 align-middle text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
                         </tr>
                       );
                     })}
@@ -601,6 +559,118 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               setTab('tablero');
             }}
           />
+        </div>
+      )}
+
+      {editingId && (
+        <div className="abonos-modal-backdrop" onClick={closePanel}>
+          <div
+            className="abonos-modal"
+            style={{ width: 'min(560px, 100%)' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="checklist-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+              <div className="min-w-0">
+                <p id="checklist-modal-title" className="font-display text-lg font-semibold tracking-tight">
+                  {editingId === 'new' ? 'Nueva tarea' : (form.titulo || 'Editar tarea')}
+                </p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  {form.area || 'Sin área'}{form.responsable ? ` · ${form.responsable}` : ''}
+                </p>
+              </div>
+              <button type="button" onClick={closePanel} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 p-5">
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Tarea</span>
+                <input
+                  autoFocus
+                  value={form.titulo}
+                  onChange={(e) => setForm({ ...form, titulo: e.target.value })}
+                  className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  placeholder="Qué hay que hacer"
+                />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Área</span>
+                  <input
+                    list="ck-areas"
+                    value={form.area}
+                    onChange={(e) => setForm({ ...form, area: e.target.value })}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    placeholder="Organización, Logística…"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable</span>
+                  <input
+                    list="ck-owners"
+                    value={form.responsable}
+                    onChange={(e) => setForm({ ...form, responsable: e.target.value })}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    placeholder="Quién lo lleva"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Deadline</span>
+                  <input
+                    type="date"
+                    value={form.deadline || ''}
+                    onChange={(e) => setForm({ ...form, deadline: e.target.value || null })}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  />
+                </label>
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
+                  <StatusSelect
+                    full
+                    value={form.estado}
+                    onChange={(estado) => setForm({
+                      ...form,
+                      estado,
+                      completedAt: estado === 'Completado' ? (form.completedAt || new Date().toISOString()) : null,
+                    })}
+                  />
+                </div>
+              </div>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Comentarios</span>
+                <textarea
+                  value={form.comentarios}
+                  onChange={(e) => setForm({ ...form, comentarios: e.target.value })}
+                  rows={3}
+                  className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  placeholder="Notas, menús, alergias, lo que falte…"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={saveForm}
+                  disabled={!form.titulo.trim()}
+                  className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                >
+                  Guardar
+                </button>
+                <button type="button" onClick={closePanel} className="rounded-md px-4 py-2 text-sm text-[var(--text-secondary)]">
+                  Cancelar
+                </button>
+                {editingId !== 'new' && (
+                  <button type="button" onClick={removeEditing} className="ml-auto inline-flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-[var(--danger)]">
+                    <Trash2 className="h-4 w-4" /> Quitar
+                  </button>
+                )}
+              </div>
+            </div>
+            <datalist id="ck-areas">{areas.map((item) => <option key={item} value={item} />)}</datalist>
+            <datalist id="ck-owners">{owners.map((item) => <option key={item} value={item} />)}</datalist>
+          </div>
         </div>
       )}
     </div>
