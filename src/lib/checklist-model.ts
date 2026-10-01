@@ -183,6 +183,26 @@ export function upcomingTasks(tasks: ChecklistTask[], today = todayIso(), limit 
     .slice(0, limit);
 }
 
+export function sortByDeadline(
+  tasks: ChecklistTask[],
+  dir: 'asc' | 'desc' = 'asc',
+  completedLast = false,
+): ChecklistTask[] {
+  const sign = dir === 'desc' ? -1 : 1;
+  return tasks.slice().sort((a, b) => {
+    if (completedLast) {
+      if (a.estado === 'Completado' && b.estado !== 'Completado') return 1;
+      if (a.estado !== 'Completado' && b.estado === 'Completado') return -1;
+    }
+    if (!a.deadline && !b.deadline) return a.titulo.localeCompare(b.titulo, 'es');
+    if (!a.deadline) return 1;
+    if (!b.deadline) return -1;
+    const cmp = a.deadline.localeCompare(b.deadline);
+    if (cmp) return cmp * sign;
+    return a.titulo.localeCompare(b.titulo, 'es');
+  });
+}
+
 export function groupByArea(tasks: ChecklistTask[]): Array<{ area: string; tasks: ChecklistTask[] }> {
   const order: string[] = [];
   const map = new Map<string, ChecklistTask[]>();
@@ -196,13 +216,7 @@ export function groupByArea(tasks: ChecklistTask[]): Array<{ area: string; tasks
   });
   return order.map((area) => ({
     area,
-    tasks: (map.get(area) || []).slice().sort((a, b) => {
-      if (a.estado === 'Completado' && b.estado !== 'Completado') return 1;
-      if (a.estado !== 'Completado' && b.estado === 'Completado') return -1;
-      const da = a.deadline || '9999';
-      const db = b.deadline || '9999';
-      return da.localeCompare(db) || a.titulo.localeCompare(b.titulo, 'es');
-    }),
+    tasks: sortByDeadline(map.get(area) || [], 'asc', true),
   }));
 }
 

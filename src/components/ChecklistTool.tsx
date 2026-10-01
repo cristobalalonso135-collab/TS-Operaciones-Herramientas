@@ -11,6 +11,7 @@ import {
   formatIsoDate,
   groupByArea,
   mergeImportedTasks,
+  sortByDeadline,
   todayIso,
   toggleTask,
   uniqueValues,
@@ -21,10 +22,11 @@ import {
 } from '@/lib/checklist-model';
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
 import { loadChecklistState, saveChecklistState, type ChecklistBackend } from '@/lib/checklist-store';
-import { Check, Clock, Download, Plus, Search, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Clock, Download, Plus, Search, Trash2 } from 'lucide-react';
 
 const TABS = [
   { id: 'tablero', label: 'Tablero' },
+  { id: 'tabla', label: 'Tabla' },
   { id: 'importar', label: 'Importar' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
@@ -88,6 +90,62 @@ function deadlineTone(task: ChecklistTask, today: string): string {
   return 'text-[var(--text-secondary)]';
 }
 
+function dueLabel(task: ChecklistTask, today: string): string {
+  if (task.estado === 'Completado' || !task.deadline) return '';
+  const days = daysUntil(task.deadline, today);
+  if (days == null) return '';
+  if (days === 0) return 'hoy';
+  if (days > 0) return `${days}d`;
+  return `${Math.abs(days)}d tarde`;
+}
+
+function FilterSelect({
+  value,
+  onChange,
+  label,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  options: string[];
+}) {
+  return (
+    <label className="relative inline-flex">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 appearance-none rounded-md border border-[var(--border)] bg-white py-0 pl-2.5 pr-10 text-sm"
+      >
+        <option value="">{label}</option>
+        {options.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
+    </label>
+  );
+}
+
+function StatusSelect({
+  value,
+  onChange,
+}: {
+  value: ChecklistStatus;
+  onChange: (value: ChecklistStatus) => void;
+}) {
+  return (
+    <label className="relative inline-flex">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as ChecklistStatus)}
+        className="h-7 appearance-none rounded border border-[var(--border)] bg-white py-0 pl-1.5 pr-7 text-xs"
+      >
+        {CHECKLIST_STATUSES.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
+    </label>
+  );
+}
+
 export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<TabId>('tablero');
   const [state, setState] = useState<ChecklistState | null>(null);
@@ -102,6 +160,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
+  const [deadlineDir, setDeadlineDir] = useState<'asc' | 'desc'>('asc');
   const today = todayIso();
   const stateRef = useRef<ChecklistState | null>(null);
 
@@ -153,6 +212,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     });
   }, [filterArea, filterOwner, filterStatus, onlyOverdue, query, tasks, today]);
   const groups = useMemo(() => groupByArea(filtered), [filtered]);
+  const tableRows = useMemo(() => sortByDeadline(filtered, deadlineDir), [deadlineDir, filtered]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
 
   const patchTask = (id: string, update: Partial<ChecklistTask>, save = true) => {
@@ -192,7 +252,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {tab === 'tablero' && (
+      {(tab === 'tablero' || tab === 'tabla') && (
         <div className="space-y-4">
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">08 Checklist</p>
@@ -257,18 +317,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               <Search className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-[var(--text-muted)]" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar" className="h-9 w-48 rounded-md border border-[var(--border)] bg-white pl-8 pr-3 text-sm" />
             </div>
-            <select value={filterArea} onChange={(e) => setFilterArea(e.target.value)} className="h-9 rounded-md border border-[var(--border)] bg-white px-2 text-sm">
-              <option value="">Área</option>
-              {areas.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-            <select value={filterOwner} onChange={(e) => setFilterOwner(e.target.value)} className="h-9 rounded-md border border-[var(--border)] bg-white px-2 text-sm">
-              <option value="">Responsable</option>
-              {owners.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as ChecklistStatus | '')} className="h-9 rounded-md border border-[var(--border)] bg-white px-2 text-sm">
-              <option value="">Estado</option>
-              {CHECKLIST_STATUSES.map((item) => <option key={item} value={item}>{item}</option>)}
-            </select>
+            <FilterSelect value={filterArea} onChange={setFilterArea} label="Área" options={areas} />
+            <FilterSelect value={filterOwner} onChange={setFilterOwner} label="Responsable" options={owners} />
+            <FilterSelect value={filterStatus} onChange={(value) => setFilterStatus(value as ChecklistStatus | '')} label="Estado" options={[...CHECKLIST_STATUSES]} />
             {(query || filterArea || filterOwner || filterStatus || onlyOverdue) ? (
               <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => { setQuery(''); setFilterArea(''); setFilterOwner(''); setFilterStatus(''); setOnlyOverdue(false); }}>Quitar filtros</button>
             ) : null}
@@ -303,6 +354,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             <datalist id="ck-owners">{owners.map((item) => <option key={item} value={item} />)}</datalist>
           </form>
 
+          {tab === 'tablero' && (
           <div className="space-y-4">
             {groups.length === 0 && (
               <p className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
@@ -312,12 +364,12 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-2">
                   <p className="text-sm font-semibold">{group.area}</p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    {group.tasks.filter((item) => item.estado === 'Completado').length}/{group.tasks.length}
+                    {group.tasks.filter((item) => item.estado === 'Completado').length}/{group.tasks.length} · por deadline
                   </p>
                 </div>
                 <ul>
                   {group.tasks.map((task) => {
-                    const days = daysUntil(task.deadline, today);
+                    const due = dueLabel(task, today);
                     return (
                       <li key={task.id} className="grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_1fr_auto] sm:items-start">
                         <button
@@ -344,9 +396,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                                 onChange={(e) => patchTask(task.id, { deadline: e.target.value || null })}
                                 className="rounded border border-[var(--border)] bg-white px-1 py-0.5 text-xs"
                               />
-                              {days != null && task.estado !== 'Completado' ? (
-                                <span>{days === 0 ? 'hoy' : days > 0 ? `${days}d` : `${Math.abs(days)}d tarde`}</span>
-                              ) : null}
+                              {due ? <span>{due}</span> : null}
                             </label>
                             <input
                               value={task.responsable}
@@ -355,16 +405,13 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               className="w-36 rounded border border-transparent bg-transparent px-1 py-0.5 hover:border-[var(--border)]"
                               placeholder="Responsable"
                             />
-                            <select
+                            <StatusSelect
                               value={task.estado}
-                              onChange={(e) => patchTask(task.id, {
-                                estado: e.target.value as ChecklistStatus,
-                                completedAt: e.target.value === 'Completado' ? (task.completedAt || new Date().toISOString()) : null,
+                              onChange={(estado) => patchTask(task.id, {
+                                estado,
+                                completedAt: estado === 'Completado' ? (task.completedAt || new Date().toISOString()) : null,
                               })}
-                              className="rounded border border-[var(--border)] bg-white px-1 py-0.5"
-                            >
-                              {CHECKLIST_STATUSES.map((item) => <option key={item} value={item}>{item}</option>)}
-                            </select>
+                            />
                           </div>
                           <input
                             value={task.comentarios}
@@ -393,6 +440,127 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               </section>
             ))}
           </div>
+          )}
+
+          {tab === 'tabla' && (
+            <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+              {tableRows.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
+              ) : (
+                <table className="min-w-[860px] w-full text-left text-sm">
+                  <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    <tr>
+                      <th className="w-10 px-3 py-2" />
+                      <th className="px-2 py-2 font-semibold">Área</th>
+                      <th className="px-2 py-2 font-semibold">Tarea</th>
+                      <th className="px-2 py-2 font-semibold">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => setDeadlineDir((value) => (value === 'asc' ? 'desc' : 'asc'))}
+                        >
+                          Deadline
+                          {deadlineDir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                        </button>
+                      </th>
+                      <th className="px-2 py-2 font-semibold">Responsable</th>
+                      <th className="px-2 py-2 font-semibold">Estado</th>
+                      <th className="px-2 py-2 font-semibold">Comentarios</th>
+                      <th className="w-10 px-2 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableRows.map((task) => {
+                      const due = dueLabel(task, today);
+                      return (
+                        <tr key={task.id} className={`border-t border-[var(--border)] ${task.estado === 'Completado' ? 'bg-[var(--bg-secondary)]' : ''}`}>
+                          <td className="px-3 py-2 align-middle">
+                            <button
+                              type="button"
+                              onClick={() => patchTask(task.id, toggleTask(task))}
+                              className={`flex h-5 w-5 items-center justify-center rounded-full border ${task.estado === 'Completado' ? 'border-[var(--success)] bg-[var(--success)] text-white' : 'border-[var(--border-strong)]'}`}
+                              aria-label={task.estado === 'Completado' ? 'Marcar pendiente' : 'Completar'}
+                            >
+                              {task.estado === 'Completado' ? <Check className="h-3 w-3" /> : null}
+                            </button>
+                          </td>
+                          <td className="px-2 py-1.5 align-middle">
+                            <input
+                              list="ck-areas"
+                              value={task.area}
+                              onChange={(e) => patchTask(task.id, { area: e.target.value }, false)}
+                              onBlur={flush}
+                              className="w-28 bg-transparent outline-none"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 align-middle">
+                            <input
+                              value={task.titulo}
+                              onChange={(e) => patchTask(task.id, { titulo: e.target.value }, false)}
+                              onBlur={flush}
+                              className={`w-full min-w-[12rem] bg-transparent outline-none ${task.estado === 'Completado' ? 'text-[var(--text-muted)] line-through' : ''}`}
+                            />
+                          </td>
+                          <td className={`px-2 py-1.5 align-middle ${deadlineTone(task, today)}`}>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="date"
+                                value={task.deadline || ''}
+                                onChange={(e) => patchTask(task.id, { deadline: e.target.value || null })}
+                                className="rounded border border-[var(--border)] bg-white px-1 py-0.5 text-xs"
+                              />
+                              {due ? <span className="whitespace-nowrap text-[11px]">{due}</span> : null}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5 align-middle">
+                            <input
+                              list="ck-owners"
+                              value={task.responsable}
+                              onChange={(e) => patchTask(task.id, { responsable: e.target.value }, false)}
+                              onBlur={flush}
+                              className="w-32 bg-transparent outline-none"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 align-middle">
+                            <StatusSelect
+                              value={task.estado}
+                              onChange={(estado) => patchTask(task.id, {
+                                estado,
+                                completedAt: estado === 'Completado' ? (task.completedAt || new Date().toISOString()) : null,
+                              })}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 align-middle">
+                            <input
+                              value={task.comentarios}
+                              onChange={(e) => patchTask(task.id, { comentarios: e.target.value }, false)}
+                              onBlur={flush}
+                              placeholder="—"
+                              className="w-full min-w-[8rem] bg-transparent text-xs text-[var(--text-secondary)] outline-none"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 align-middle">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!window.confirm('¿Quitar esta tarea?')) return;
+                                const current = stateRef.current;
+                                if (!current) return;
+                                void persist({ ...current, tasks: current.tasks.filter((item) => item.id !== task.id) }, backend);
+                              }}
+                              className="p-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
         </div>
       )}
 
