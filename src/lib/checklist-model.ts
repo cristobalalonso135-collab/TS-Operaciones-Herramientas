@@ -397,6 +397,16 @@ export function sortByDeadline(
   });
 }
 
+export function moveById<T extends { id: string }>(items: T[], fromId: string, toId: string): T[] {
+  const from = items.findIndex((item) => item.id === fromId);
+  const to = items.findIndex((item) => item.id === toId);
+  if (from < 0 || to < 0 || from === to) return items;
+  const next = items.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
 export function groupByArea(tasks: ChecklistTask[]): Array<{ area: string; tasks: ChecklistTask[] }> {
   const order: string[] = [];
   const map = new Map<string, ChecklistTask[]>();
@@ -410,7 +420,7 @@ export function groupByArea(tasks: ChecklistTask[]): Array<{ area: string; tasks
   });
   return order.map((area) => ({
     area,
-    tasks: sortByDeadline(map.get(area) || [], 'asc', true),
+    tasks: map.get(area) || [],
   }));
 }
 

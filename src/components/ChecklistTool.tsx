@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -21,6 +21,7 @@ import {
   groupByArea,
   isTaskOverdue,
   mergeImportedTasks,
+  moveById,
   nextOccurrence,
   repeatLabel,
   sortByDeadline,
@@ -40,7 +41,7 @@ import {
 } from '@/lib/checklist-model';
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
 import { loadChecklistState, saveChecklistState, type ChecklistBackend } from '@/lib/checklist-store';
-import { Check, ChevronDown, ChevronUp, Clock, Download, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Clock, Download, GripVertical, Plus, Search, Trash2, X } from 'lucide-react';
 
 type RepeatFor = 'onComplete' | 'week' | 'month' | '2months' | 'quarter' | 'until';
 
@@ -59,6 +60,40 @@ const TABS = [
   { id: 'importar', label: 'Importar' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
+type ColKey = 'area' | 'titulo' | 'deadline' | 'responsable' | 'estado' | 'comentarios';
+
+const COLUMN_DEFS: Array<{ key: ColKey; label: string; width: number }> = [
+  { key: 'area', label: 'Área', width: 110 },
+  { key: 'titulo', label: 'Tarea', width: 260 },
+  { key: 'deadline', label: 'Deadline', width: 130 },
+  { key: 'responsable', label: 'Responsable', width: 140 },
+  { key: 'estado', label: 'Estado', width: 110 },
+  { key: 'comentarios', label: 'Comentarios', width: 180 },
+];
+const COL_STORAGE = 'ts-checklist-cols-v1';
+const DEFAULT_ORDER = COLUMN_DEFS.map((col) => col.key);
+const DEFAULT_WIDTHS = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col.width])) as Record<ColKey, number>;
+const COLUMN_BY_KEY = Object.fromEntries(COLUMN_DEFS.map((col) => [col.key, col])) as Record<ColKey, (typeof COLUMN_DEFS)[number]>;
+
+function loadColLayout(): { order: ColKey[]; widths: Record<ColKey, number> } {
+  if (typeof window === 'undefined') return { order: DEFAULT_ORDER, widths: DEFAULT_WIDTHS };
+  try {
+    const raw = window.localStorage.getItem(COL_STORAGE);
+    if (!raw) return { order: [...DEFAULT_ORDER], widths: { ...DEFAULT_WIDTHS } };
+    const parsed = JSON.parse(raw) as { order?: ColKey[]; widths?: Partial<Record<ColKey, number>> };
+    const saved = (parsed.order || []).filter((key): key is ColKey => DEFAULT_ORDER.includes(key as ColKey));
+    const missing = DEFAULT_ORDER.filter((key) => !saved.includes(key));
+    const order = saved.length > 0 ? [...saved, ...missing] : [...DEFAULT_ORDER];
+    const widths = { ...DEFAULT_WIDTHS };
+    DEFAULT_ORDER.forEach((key) => {
+      const width = parsed.widths?.[key];
+      if (typeof width === 'number' && width >= 48) widths[key] = width;
+    });
+    return { order, widths };
+  } catch {
+    return { order: [...DEFAULT_ORDER], widths: { ...DEFAULT_WIDTHS } };
+  }
+}
 
 function downloadAoa(rows: unknown[][], fileName: string) {
   void import('xlsx').then((XLSX) => {
@@ -209,7 +244,15 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
-  const [deadlineDir, setDeadlineDir] = useState<'asc' | 'desc'>('asc');
+  const [sort, setSort] = useState<{ key: ColKey | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'asc' });
+  const [columnOrder, setColumnOrder] = useState<ColKey[]>(DEFAULT_ORDER);
+  const [columnWidths, setColumnWidths] = useState<Record<ColKey, number>>(DEFAULT_WIDTHS);
+  const [colsReady, setColsReady] = useState(false);
+  const dragCol = useRef<ColKey | null>(null);
+  const dragRow = useRef<string | null>(null);
+  const dragStep = useRef<string | null>(null);
+  const resizeRef = useRef<{ key: ColKey; startX: number; startW: number } | null>(null);
+  const [dropRow, setDropRow] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState<ChecklistTask>(() => emptyTask());
   const [repeatFor, setRepeatFor] = useState<RepeatFor>('onComplete');
@@ -262,6 +305,36 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    const layout = loadColLayout();
+    setColumnOrder(layout.order);
+    setColumnWidths(layout.widths);
+    setColsReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!colsReady || typeof window === 'undefined') return;
+    window.localStorage.setItem(COL_STORAGE, JSON.stringify({ order: columnOrder, widths: columnWidths }));
+  }, [colsReady, columnOrder, columnWidths]);
+
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      const session = resizeRef.current;
+      if (!session) return;
+      const next = Math.max(48, session.startW + (event.clientX - session.startX));
+      setColumnWidths((widths) => ({ ...widths, [session.key]: next }));
+    };
+    const onUp = () => {
+      resizeRef.current = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, []);
+
   const tasks = state?.tasks || [];
   const kpis = useMemo(() => checklistKpis(tasks, today), [tasks, today]);
   const areas = useMemo(() => uniqueValues(tasks, 'area'), [tasks]);
@@ -283,7 +356,26 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     });
   }, [filterArea, filterOwner, filterStatus, onlyOverdue, query, tasks, today]);
   const groups = useMemo(() => groupByArea(filtered), [filtered]);
-  const tableRows = useMemo(() => sortByDeadline(filtered, deadlineDir), [deadlineDir, filtered]);
+  const tableRows = useMemo(() => {
+    if (!sort.key) return filtered;
+    if (sort.key === 'deadline') return sortByDeadline(filtered, sort.dir);
+    const sign = sort.dir === 'desc' ? -1 : 1;
+    return filtered.slice().sort((a, b) => {
+      const va = sort.key === 'titulo' ? a.titulo
+        : sort.key === 'area' ? a.area
+        : sort.key === 'responsable' ? a.responsable
+        : sort.key === 'estado' ? a.estado
+        : a.comentarios;
+      const vb = sort.key === 'titulo' ? b.titulo
+        : sort.key === 'area' ? b.area
+        : sort.key === 'responsable' ? b.responsable
+        : sort.key === 'estado' ? b.estado
+        : b.comentarios;
+      const cmp = va.localeCompare(vb, 'es');
+      if (cmp) return cmp * sign;
+      return a.titulo.localeCompare(b.titulo, 'es');
+    });
+  }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
 
   const patchTask = (id: string, update: Partial<ChecklistTask>, save = true) => {
@@ -348,6 +440,40 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       subtasks: (form.subtasks || []).map((item) => (item.id === id ? { ...item, ...update } : item)),
     });
   };
+
+  const moveTask = (fromId: string, toId: string) => {
+    const current = stateRef.current;
+    if (!current) return;
+    const tasks = moveById(current.tasks, fromId, toId);
+    if (tasks === current.tasks) return;
+    setSort({ key: null, dir: 'asc' });
+    void persist({ ...current, tasks }, backend);
+  };
+
+  const moveFormStep = (fromId: string, toId: string) => {
+    setForm({ ...form, subtasks: moveById(form.subtasks || [], fromId, toId) });
+  };
+
+  const toggleSort = (key: ColKey) => {
+    setSort((current) => current.key === key
+      ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' });
+  };
+
+  const moveColumn = (from: ColKey, to: ColKey) => {
+    if (from === to) return;
+    setColumnOrder((order) => {
+      const next = [...order];
+      const fromIdx = next.indexOf(from);
+      const toIdx = next.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0) return order;
+      next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, from);
+      return next;
+    });
+  };
+
+  const tableWidth = 52 + columnOrder.reduce((sum, key) => sum + columnWidths[key], 0);
 
   const confirmSpawn = (yes: boolean) => {
     const source = spawnAsk;
@@ -590,7 +716,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-2">
                   <p className="text-sm font-semibold">{group.area}</p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    {group.tasks.filter((item) => item.estado === 'Completado').length}/{group.tasks.length} · por deadline
+                    {group.tasks.filter((item) => item.estado === 'Completado').length}/{group.tasks.length}
                   </p>
                 </div>
                 <ul>
@@ -598,7 +724,40 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     const due = dueLabel(task, today);
                     const progress = subtaskProgress(task);
                     return (
-                      <li key={task.id} className="grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_1fr] sm:items-start">
+                      <li
+                        key={task.id}
+                        className={`grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-start ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : ''}`}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          setDropRow(task.id);
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          const from = dragRow.current;
+                          dragRow.current = null;
+                          setDropRow(null);
+                          if (from) moveTask(from, task.id);
+                        }}
+                        onDragLeave={() => {
+                          if (dropRow === task.id) setDropRow(null);
+                        }}
+                      >
+                        <span
+                          draggable
+                          onDragStart={(event) => {
+                            dragRow.current = task.id;
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', task.id);
+                          }}
+                          onDragEnd={() => {
+                            dragRow.current = null;
+                            setDropRow(null);
+                          }}
+                          className="mt-1 inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                          aria-label="Mover tarea"
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </span>
                         <button
                           type="button"
                           onClick={() => markDone(task)}
@@ -661,67 +820,158 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           )}
 
           {tab === 'tabla' && (
-            <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+            <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
               {tableRows.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
               ) : (
-                <table className="min-w-[860px] w-full text-left text-sm">
-                  <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: tableWidth }}>
+                  <colgroup>
+                    <col style={{ width: 52 }} />
+                    {columnOrder.map((key) => (
+                      <col key={key} style={{ width: columnWidths[key] }} />
+                    ))}
+                  </colgroup>
+                  <thead className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
                     <tr>
-                      <th className="w-10 px-3 py-2" />
-                      <th className="px-2 py-2 font-semibold">Área</th>
-                      <th className="px-2 py-2 font-semibold">Tarea</th>
-                      <th className="px-2 py-2 font-semibold">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1"
-                          onClick={() => setDeadlineDir((value) => (value === 'asc' ? 'desc' : 'asc'))}
-                        >
-                          Deadline
-                          {deadlineDir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                        </button>
-                      </th>
-                      <th className="px-2 py-2 font-semibold">Responsable</th>
-                      <th className="px-2 py-2 font-semibold">Estado</th>
-                      <th className="px-2 py-2 font-semibold">Comentarios</th>
+                      <th className="abonos-th border-b border-[var(--border)] px-1.5 py-1.5" />
+                      {columnOrder.map((key) => {
+                        const col = COLUMN_BY_KEY[key];
+                        return (
+                          <th
+                            key={key}
+                            className="abonos-th border-b border-[var(--border)] px-1.5 py-1.5"
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const from = dragCol.current;
+                              dragCol.current = null;
+                              if (from) moveColumn(from, key);
+                            }}
+                          >
+                            <div className="flex min-w-0 items-start justify-center gap-0.5 pr-1.5">
+                              <span
+                                draggable
+                                onDragStart={(event) => {
+                                  dragCol.current = key;
+                                  event.dataTransfer.effectAllowed = 'move';
+                                  event.dataTransfer.setData('text/plain', key);
+                                }}
+                                onDragEnd={() => {
+                                  dragCol.current = null;
+                                }}
+                                className="mt-0.5 inline-flex shrink-0 cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                                aria-label={`Mover columna ${col.label}`}
+                              >
+                                <GripVertical className="h-3 w-3" />
+                              </span>
+                              <button type="button" onClick={() => toggleSort(key)} className="abonos-th-label hover:text-[var(--text-primary)]">
+                                {col.label}
+                                {sort.key === key ? (sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}
+                              </button>
+                            </div>
+                            <span
+                              className="abonos-col-resizer"
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                resizeRef.current = { key, startX: event.clientX, startW: columnWidths[key] };
+                              }}
+                            />
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
                     {tableRows.map((task) => {
                       const due = dueLabel(task, today);
+                      const progress = subtaskProgress(task);
                       return (
                         <tr
                           key={task.id}
-                          className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'bg-[var(--bg-secondary)]' : ''}`}
+                          className={`cursor-pointer ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : ''} ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'bg-[var(--bg-secondary)]' : ''}`}
                           onClick={() => openTask(task)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            setDropRow(task.id);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const from = dragRow.current;
+                            dragRow.current = null;
+                            setDropRow(null);
+                            if (from) moveTask(from, task.id);
+                          }}
+                          onDragLeave={() => {
+                            if (dropRow === task.id) setDropRow(null);
+                          }}
                         >
-                          <td className="px-3 py-2 align-middle" onClick={(event) => event.stopPropagation()}>
-                            <button
-                              type="button"
-                              onClick={() => markDone(task)}
-                              disabled={task.estado === 'Caducada'}
-                              className={`flex h-5 w-5 items-center justify-center rounded-full border ${task.estado === 'Completado' ? 'border-[var(--success)] bg-[var(--success)] text-white' : task.estado === 'Caducada' ? 'border-[var(--border)] bg-[var(--bg-soft)]' : 'border-[var(--border-strong)]'}`}
-                              aria-label={task.estado === 'Completado' ? 'Marcar pendiente' : 'Completar'}
-                            >
-                              {task.estado === 'Completado' ? <Check className="h-3 w-3" /> : null}
-                            </button>
-                          </td>
-                          <td className="px-2 py-2 align-middle text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className={`px-2 py-2 align-middle ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
-                            {task.titulo}
-                            {subtaskProgress(task).total > 0 ? (
-                              <span className="mt-0.5 block text-[11px] font-normal text-[var(--text-muted)] no-underline">
-                                {subtaskProgress(task).done}/{subtaskProgress(task).total} pasos
+                          <td className="border-b border-[var(--border)] px-1.5 py-1.5" onClick={(event) => event.stopPropagation()}>
+                            <div className="flex items-center justify-center gap-1">
+                              <span
+                                draggable
+                                onDragStart={(event) => {
+                                  dragRow.current = task.id;
+                                  event.dataTransfer.effectAllowed = 'move';
+                                  event.dataTransfer.setData('text/plain', task.id);
+                                }}
+                                onDragEnd={() => {
+                                  dragRow.current = null;
+                                  setDropRow(null);
+                                }}
+                                className="inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                                aria-label="Mover tarea"
+                              >
+                                <GripVertical className="h-3.5 w-3.5" />
                               </span>
-                            ) : null}
+                              <button
+                                type="button"
+                                onClick={() => markDone(task)}
+                                disabled={task.estado === 'Caducada'}
+                                className={`flex h-5 w-5 items-center justify-center rounded-full border ${task.estado === 'Completado' ? 'border-[var(--success)] bg-[var(--success)] text-white' : task.estado === 'Caducada' ? 'border-[var(--border)] bg-[var(--bg-soft)]' : 'border-[var(--border-strong)]'}`}
+                                aria-label={task.estado === 'Completado' ? 'Marcar pendiente' : 'Completar'}
+                              >
+                                {task.estado === 'Completado' ? <Check className="h-3 w-3" /> : null}
+                              </button>
+                            </div>
                           </td>
-                          <td className={`px-2 py-2 align-middle ${deadlineTone(task, today)}`}>
-                            {formatIsoDate(task.deadline || effectiveDeadline(task))}{due ? ` · ${due}` : ''}
-                            {repeatLabel(task) ? <span className="block text-[11px] text-[var(--text-muted)]">{repeatLabel(task)}</span> : null}
-                          </td>
-                          <td className="px-2 py-2 align-middle">{task.responsable || '—'}</td>
-                          <td className="px-2 py-2 align-middle">{task.estado}</td>
-                          <td className="max-w-[16rem] truncate px-2 py-2 align-middle text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
+                          {columnOrder.map((key) => {
+                            const closed = task.estado === 'Completado' || task.estado === 'Caducada';
+                            let content: ReactNode = '—';
+                            if (key === 'area') content = task.area || '—';
+                            if (key === 'titulo') {
+                              content = (
+                                <>
+                                  <span className={closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}>{task.titulo}</span>
+                                  {progress.total > 0 ? (
+                                    <span className="mt-0.5 block text-[10px] font-normal text-[var(--text-muted)] no-underline">
+                                      {progress.done}/{progress.total} pasos
+                                    </span>
+                                  ) : null}
+                                </>
+                              );
+                            }
+                            if (key === 'deadline') {
+                              content = (
+                                <span className={deadlineTone(task, today)}>
+                                  {formatIsoDate(task.deadline || effectiveDeadline(task))}{due ? ` · ${due}` : ''}
+                                  {repeatLabel(task) ? <span className="block text-[10px] text-[var(--text-muted)]">{repeatLabel(task)}</span> : null}
+                                </span>
+                              );
+                            }
+                            if (key === 'responsable') content = task.responsable || '—';
+                            if (key === 'estado') content = task.estado;
+                            if (key === 'comentarios') content = task.comentarios || '—';
+                            return (
+                              <td key={key} className="border-b border-[var(--border)] px-1.5 py-1.5">
+                                <div className="abonos-cell">{content}</div>
+                              </td>
+                            );
+                          })}
                         </tr>
                       );
                     })}
@@ -807,6 +1057,90 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   placeholder="Qué hay que hacer"
                 />
               </label>
+              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Pasos</span>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, subtasks: [...(form.subtasks || []), emptySubtask()] })}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--text-primary)]"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Añadir paso
+                  </button>
+                </div>
+                {(form.subtasks || []).length === 0 ? (
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Opcional. Ej: solicitar previsión de asistencia, hablar con el hotel…
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {(form.subtasks || []).map((step, index) => (
+                      <li
+                        key={step.id}
+                        className="flex items-start gap-2"
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          const from = dragStep.current;
+                          dragStep.current = null;
+                          if (from) moveFormStep(from, step.id);
+                        }}
+                      >
+                        <span
+                          draggable
+                          onDragStart={(event) => {
+                            dragStep.current = step.id;
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', step.id);
+                          }}
+                          onDragEnd={() => {
+                            dragStep.current = null;
+                          }}
+                          className="mt-2 inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                          aria-label="Mover paso"
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setFormSub(step.id, {
+                            done: !step.done,
+                            completedAt: !step.done ? (step.completedAt || new Date().toISOString()) : null,
+                          })}
+                          className={`mt-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${step.done ? 'border-[var(--success)] bg-[var(--success)] text-white' : 'border-[var(--border-strong)] bg-white'}`}
+                          aria-label={step.done ? 'Marcar paso pendiente' : 'Completar paso'}
+                        >
+                          {step.done ? <Check className="h-2.5 w-2.5" /> : null}
+                        </button>
+                        <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[1fr_auto]">
+                          <input
+                            value={step.titulo}
+                            onChange={(e) => setFormSub(step.id, { titulo: e.target.value })}
+                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm"
+                            placeholder={`${index + 1}. Qué hay que hacer`}
+                          />
+                          <input
+                            type="date"
+                            value={step.deadline || ''}
+                            onChange={(e) => setFormSub(step.id, { deadline: e.target.value || null })}
+                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm sm:w-40"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, subtasks: (form.subtasks || []).filter((item) => item.id !== step.id) })}
+                          className="mt-1.5 rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                          aria-label="Quitar paso"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-[var(--text-secondary)]">Área</span>
@@ -849,63 +1183,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     })}
                   />
                 </div>
-              </div>
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Pasos</span>
-                  <button
-                    type="button"
-                    onClick={() => setForm({ ...form, subtasks: [...(form.subtasks || []), emptySubtask()] })}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--text-primary)]"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Añadir paso
-                  </button>
-                </div>
-                {(form.subtasks || []).length === 0 ? (
-                  <p className="text-[11px] text-[var(--text-muted)]">
-                    Opcional. Ej: solicitar previsión de asistencia, hablar con el hotel…
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {(form.subtasks || []).map((step, index) => (
-                      <li key={step.id} className="flex items-start gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setFormSub(step.id, {
-                            done: !step.done,
-                            completedAt: !step.done ? (step.completedAt || new Date().toISOString()) : null,
-                          })}
-                          className={`mt-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${step.done ? 'border-[var(--success)] bg-[var(--success)] text-white' : 'border-[var(--border-strong)] bg-white'}`}
-                          aria-label={step.done ? 'Marcar paso pendiente' : 'Completar paso'}
-                        >
-                          {step.done ? <Check className="h-2.5 w-2.5" /> : null}
-                        </button>
-                        <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[1fr_auto]">
-                          <input
-                            value={step.titulo}
-                            onChange={(e) => setFormSub(step.id, { titulo: e.target.value })}
-                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm"
-                            placeholder={`${index + 1}. Qué hay que hacer`}
-                          />
-                          <input
-                            type="date"
-                            value={step.deadline || ''}
-                            onChange={(e) => setFormSub(step.id, { deadline: e.target.value || null })}
-                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm sm:w-40"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setForm({ ...form, subtasks: (form.subtasks || []).filter((item) => item.id !== step.id) })}
-                          className="mt-1.5 rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                          aria-label="Quitar paso"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
               <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
                 <label className="block space-y-1">
