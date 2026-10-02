@@ -19,6 +19,7 @@ export interface ChecklistTask {
   repeat: ChecklistRepeat;
   repeatUntil: string | null;
   seriesId: string | null;
+  askOnComplete: boolean;
 }
 
 export interface ChecklistState {
@@ -98,6 +99,35 @@ export function nextWorkingDayAfter(fromIso: string): string {
   return firstWorkingDayOnOrAfter(addDaysIso(fromIso, 1));
 }
 
+export function workingDaysInclusive(fromIso: string, untilIso: string): string[] {
+  const holidays = holidaysAround(fromIso);
+  const out: string[] = [];
+  let iso = fromIso;
+  for (let i = 0; i < 400; i += 1) {
+    if (iso > untilIso) break;
+    if (isWorkingDay(parseLocalIso(iso), holidays)) out.push(iso);
+    iso = addDaysIso(iso, 1);
+  }
+  return out;
+}
+
+export function weeklyOccurrences(fromIso: string, untilIso: string): string[] {
+  const out: string[] = [];
+  let iso = fromIso;
+  for (let i = 0; i < 80; i += 1) {
+    if (iso > untilIso) break;
+    const day = firstWorkingDayOnOrAfter(iso);
+    if (day <= untilIso && !out.includes(day)) out.push(day);
+    iso = addDaysIso(iso, 7);
+  }
+  return out;
+}
+
+export function occurrenceDates(repeat: ChecklistRepeat, fromIso: string, untilIso: string): string[] {
+  if (repeat === 'weekly') return weeklyOccurrences(fromIso, untilIso);
+  return workingDaysInclusive(fromIso, untilIso);
+}
+
 export function isClosed(task: ChecklistTask): boolean {
   return task.estado === 'Completado' || task.estado === 'Caducada';
 }
@@ -116,6 +146,7 @@ export function emptyTask(): ChecklistTask {
     repeat: 'none',
     repeatUntil: null,
     seriesId: null,
+    askOnComplete: false,
   };
 }
 
@@ -140,6 +171,7 @@ export function seedChecklistState(): ChecklistState {
     repeat: 'none',
     repeatUntil: null,
     seriesId: null,
+    askOnComplete: false,
   });
   return {
     nombre: 'I Convención Teamsports GS 27/28',
@@ -175,6 +207,8 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
     ? state.tasks.map((item) => {
       const repeat = asRepeat(item.repeat);
       const id = item.id || newId('ck');
+      const repeatUntil = item.repeatUntil || null;
+      const askOnComplete = repeat !== 'none' && (item.askOnComplete === true || !repeatUntil);
       return {
         id,
         area: String(item.area || '').trim(),
@@ -186,8 +220,9 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
         completedAt: item.completedAt || (asStatus(item.estado || '') === 'Completado' ? nowIso() : null),
         createdAt: item.createdAt || nowIso(),
         repeat,
-        repeatUntil: item.repeatUntil || null,
+        repeatUntil,
         seriesId: item.seriesId || (repeat === 'none' ? null : id),
+        askOnComplete,
       };
     }).filter((item) => item.titulo)
     : seeded.tasks;
@@ -215,7 +250,8 @@ export function formatIsoDate(value: string | null | undefined): string {
 
 export function repeatLabel(task: ChecklistTask): string {
   if (!task.repeat || task.repeat === 'none') return '';
-  const kind = task.repeat === 'weekly' ? 'cada semana' : 'días laborables';
+  const kind = task.repeat === 'weekly' ? 'cada semana' : 'días laborables Zaragoza';
+  if (task.askOnComplete) return `${kind} · al completar`;
   if (task.repeatUntil) return `${kind} · hasta ${formatIsoDate(task.repeatUntil)}`;
   return kind;
 }
@@ -317,6 +353,73 @@ function nextDeadlineFor(task: ChecklistTask, today: string): string {
   return nextWorkingDayAfter(from);
 }
 
+export function nextOccurrence(task: ChecklistTask, today = todayIso()): string | null {
+  if (!task.repeat || task.repeat === 'none') return null;
+  const nextDeadline = nextDeadlineFor(task, today);
+  if (task.repeatUntil && nextDeadline > task.repeatUntil) return null;
+  return nextDeadline;
+}
+
+function siblingExists(tasks: ChecklistTask[], seriesId: string, deadline: string): boolean {
+  return tasks.some((item) => (
+    (item.seriesId || item.id) === seriesId
+    && item.deadline === deadline
+  ));
+}
+
+function seriesTaskFrom(task: ChecklistTask, deadline: string): ChecklistTask {
+  return {
+    ...emptyTask(),
+    area: task.area,
+    titulo: task.titulo,
+    responsable: task.responsable,
+    deadline,
+    estado: 'Pendiente',
+    repeat: task.repeat,
+    repeatUntil: task.repeatUntil,
+    seriesId: task.seriesId || task.id,
+    askOnComplete: task.askOnComplete,
+  };
+}
+
+export function expandRepeatingTask(task: ChecklistTask, today = todayIso()): ChecklistTask[] {
+  if (!task.repeat || task.repeat === 'none' || task.askOnComplete || !task.repeatUntil) {
+    return [task];
+  }
+  const start = task.deadline || firstWorkingDayOnOrAfter(today);
+  const days = occurrenceDates(task.repeat, start, task.repeatUntil);
+  const seriesId = task.seriesId || task.id;
+  if (!days.length) return [{ ...task, deadline: start, seriesId, askOnComplete: false }];
+  return days.map((deadline, index) => ({
+    ...task,
+    id: index === 0 ? task.id : newId('ck'),
+    deadline,
+    seriesId,
+    askOnComplete: false,
+    estado: index === 0 ? task.estado : 'Pendiente',
+    completedAt: index === 0 ? task.completedAt : null,
+  }));
+}
+
+export function ensureWindowSeries(tasks: ChecklistTask[], today = todayIso()): ChecklistTask[] {
+  const seen = new Set<string>();
+  let extra: ChecklistTask[] = [];
+  tasks.forEach((task) => {
+    if (!task.repeat || task.repeat === 'none' || task.askOnComplete || !task.repeatUntil) return;
+    const seriesId = task.seriesId || task.id;
+    if (seen.has(seriesId)) return;
+    seen.add(seriesId);
+    const siblings = tasks.filter((item) => (item.seriesId || item.id) === seriesId);
+    const start = siblings.map((item) => item.deadline).filter(Boolean).sort()[0]
+      || firstWorkingDayOnOrAfter(today);
+    occurrenceDates(task.repeat, start, task.repeatUntil).forEach((deadline) => {
+      if (siblingExists(tasks, seriesId, deadline)) return;
+      extra = [...extra, seriesTaskFrom(task, deadline)];
+    });
+  });
+  return extra.length ? [...tasks, ...extra] : tasks;
+}
+
 export function completeChecklistTask(
   task: ChecklistTask,
   tasks: ChecklistTask[],
@@ -324,32 +427,22 @@ export function completeChecklistTask(
 ): { tasks: ChecklistTask[]; spawned: boolean; ended: boolean } {
   const done: ChecklistTask = { ...task, estado: 'Completado', completedAt: nowIso() };
   const nextTasks = tasks.map((item) => (item.id === task.id ? done : item));
-  if (!task.repeat || task.repeat === 'none') {
-    return { tasks: nextTasks, spawned: false, ended: false };
+  return { tasks: nextTasks, spawned: false, ended: !nextOccurrence(done, today) };
+}
+
+export function spawnNextOccurrence(
+  task: ChecklistTask,
+  tasks: ChecklistTask[],
+  today = todayIso(),
+): { tasks: ChecklistTask[]; spawned: boolean } {
+  if (!task.askOnComplete || !task.repeat || task.repeat === 'none') {
+    return { tasks, spawned: false };
   }
   const seriesId = task.seriesId || task.id;
-  const nextDeadline = nextDeadlineFor(task, today);
-  if (task.repeatUntil && nextDeadline > task.repeatUntil) {
-    return { tasks: nextTasks, spawned: false, ended: true };
-  }
-  const exists = nextTasks.some((item) => (
-    (item.seriesId || item.id) === seriesId
-    && item.deadline === nextDeadline
-    && !isClosed(item)
-  ));
-  if (exists) return { tasks: nextTasks, spawned: false, ended: false };
-  const next: ChecklistTask = {
-    ...emptyTask(),
-    area: task.area,
-    titulo: task.titulo,
-    responsable: task.responsable,
-    deadline: nextDeadline,
-    estado: 'Pendiente',
-    repeat: task.repeat,
-    repeatUntil: task.repeatUntil,
-    seriesId,
-  };
-  return { tasks: [...nextTasks, next], spawned: true, ended: false };
+  const nextDeadline = nextOccurrence(task, today);
+  if (!nextDeadline) return { tasks, spawned: false };
+  if (siblingExists(tasks, seriesId, nextDeadline)) return { tasks, spawned: false };
+  return { tasks: [...tasks, seriesTaskFrom({ ...task, seriesId }, nextDeadline)], spawned: true };
 }
 
 export function expireOverdueSeries(
@@ -391,6 +484,7 @@ export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTas
         repeat: item.repeat || row.repeat,
         repeatUntil: item.repeatUntil ?? row.repeatUntil,
         seriesId: item.seriesId || row.seriesId,
+        askOnComplete: item.askOnComplete ?? row.askOnComplete,
       } : row));
       return;
     }
