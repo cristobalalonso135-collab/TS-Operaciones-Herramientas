@@ -1,4 +1,4 @@
-import { asStatus, newId, nowIso, type ChecklistTask } from '@/lib/checklist-model';
+import { asRepeat, asStatus, newId, nowIso, type ChecklistTask } from '@/lib/checklist-model';
 
 function cellText(value: unknown): string {
   return String(value ?? '').replace(/\u00a0/g, ' ').trim();
@@ -82,13 +82,17 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; tasks
     responsable: findCol(header, ['responsable', 'owner', 'dueño']),
     estado: findCol(header, ['estado', 'status']),
     comentarios: findCol(header, ['comentarios', 'comentario', 'notas', 'nota']),
+    repeat: findCol(header, ['repetición', 'repeticion', 'repeat']),
+    until: findCol(header, ['hasta', 'repeat until', 'fin']),
   };
   const tasks = rows.slice(start + 1).flatMap((row) => {
     const titulo = cellText(col.tarea == null ? '' : row[col.tarea]);
     if (!titulo) return [];
     const estado = asStatus(cellText(col.estado == null ? '' : row[col.estado]));
+    const id = newId('ck');
+    const repeat = asRepeat(col.repeat == null ? '' : row[col.repeat]);
     return [{
-      id: newId('ck'),
+      id,
       area: cellText(col.area == null ? '' : row[col.area]),
       titulo,
       deadline: parseDate(col.deadline == null ? '' : row[col.deadline]),
@@ -97,6 +101,9 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; tasks
       comentarios: cellText(col.comentarios == null ? '' : row[col.comentarios]),
       completedAt: estado === 'Completado' ? nowIso() : null,
       createdAt: nowIso(),
+      repeat,
+      repeatUntil: parseDate(col.until == null ? '' : row[col.until]),
+      seriesId: repeat === 'none' ? null : id,
     }];
   });
   return { nombre: nombre || undefined, tasks };
@@ -107,7 +114,7 @@ export function checklistToAoa(nombre: string, fechaEvento: string, tasks: Check
     [nombre],
     [`Fecha evento: ${fechaEvento || '—'}`],
     [],
-    ['Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios'],
+    ['Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios', 'Repetición', 'Hasta'],
     ...tasks.map((item) => [
       item.area,
       item.titulo,
@@ -115,6 +122,8 @@ export function checklistToAoa(nombre: string, fechaEvento: string, tasks: Check
       item.responsable,
       item.estado,
       item.comentarios,
+      item.repeat === 'weekdays' ? 'días laborables' : item.repeat === 'weekly' ? 'cada semana' : '',
+      item.repeatUntil || '',
     ]),
   ];
 }

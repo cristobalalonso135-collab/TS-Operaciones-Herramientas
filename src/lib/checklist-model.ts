@@ -1,6 +1,10 @@
-export type ChecklistStatus = 'Pendiente' | 'En curso' | 'Completado' | 'Bloqueado';
+import { getHolidays } from './holidays';
+import { isWorkingDay } from './working-days';
 
-export const CHECKLIST_STATUSES: ChecklistStatus[] = ['Pendiente', 'En curso', 'Completado', 'Bloqueado'];
+export type ChecklistStatus = 'Pendiente' | 'En curso' | 'Completado' | 'Bloqueado' | 'Caducada';
+export type ChecklistRepeat = 'none' | 'weekdays' | 'weekly';
+
+export const CHECKLIST_STATUSES: ChecklistStatus[] = ['Pendiente', 'En curso', 'Completado', 'Bloqueado', 'Caducada'];
 
 export interface ChecklistTask {
   id: string;
@@ -12,6 +16,9 @@ export interface ChecklistTask {
   comentarios: string;
   completedAt: string | null;
   createdAt: string;
+  repeat: ChecklistRepeat;
+  repeatUntil: string | null;
+  seriesId: string | null;
 }
 
 export interface ChecklistState {
@@ -38,7 +45,61 @@ export function asStatus(value: string): ChecklistStatus {
   if (['completado', 'completa', 'hecho', 'done', 'ok', 'sí', 'si'].includes(text)) return 'Completado';
   if (['en curso', 'curso', 'progreso', 'doing'].includes(text)) return 'En curso';
   if (['bloqueado', 'blocked', 'parado'].includes(text)) return 'Bloqueado';
+  if (['caducada', 'caducado', 'expired', 'expirada'].includes(text)) return 'Caducada';
   return 'Pendiente';
+}
+
+export function asRepeat(value: unknown): ChecklistRepeat {
+  const text = String(value || '').trim().toLocaleLowerCase('es');
+  if (['weekdays', 'laborable', 'laborables', 'días laborables', 'dias laborables', 'diario', 'cada día', 'cada dia'].includes(text)) {
+    return 'weekdays';
+  }
+  if (['weekly', 'semanal', 'semana', 'cada semana'].includes(text)) return 'weekly';
+  return 'none';
+}
+
+function parseLocalIso(iso: string): Date {
+  const [year, month, day] = iso.slice(0, 10).split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+export function addDaysIso(iso: string, days: number): string {
+  const date = parseLocalIso(iso);
+  date.setDate(date.getDate() + days);
+  return todayIso(date);
+}
+
+export function addMonthsIso(iso: string, months: number): string {
+  const date = parseLocalIso(iso);
+  date.setMonth(date.getMonth() + months);
+  return todayIso(date);
+}
+
+function holidaysAround(iso: string): Set<string> {
+  const year = Number(iso.slice(0, 4)) || new Date().getFullYear();
+  const out = new Set<string>();
+  getHolidays(year - 1).forEach((day) => out.add(day));
+  getHolidays(year).forEach((day) => out.add(day));
+  getHolidays(year + 1).forEach((day) => out.add(day));
+  return out;
+}
+
+export function firstWorkingDayOnOrAfter(fromIso: string): string {
+  const holidays = holidaysAround(fromIso);
+  let iso = fromIso;
+  for (let i = 0; i < 21; i += 1) {
+    if (isWorkingDay(parseLocalIso(iso), holidays)) return iso;
+    iso = addDaysIso(iso, 1);
+  }
+  return iso;
+}
+
+export function nextWorkingDayAfter(fromIso: string): string {
+  return firstWorkingDayOnOrAfter(addDaysIso(fromIso, 1));
+}
+
+export function isClosed(task: ChecklistTask): boolean {
+  return task.estado === 'Completado' || task.estado === 'Caducada';
 }
 
 export function emptyTask(): ChecklistTask {
@@ -52,6 +113,9 @@ export function emptyTask(): ChecklistTask {
     comentarios: '',
     completedAt: null,
     createdAt: nowIso(),
+    repeat: 'none',
+    repeatUntil: null,
+    seriesId: null,
   };
 }
 
@@ -73,6 +137,9 @@ export function seedChecklistState(): ChecklistState {
     comentarios: '',
     completedAt: estado === 'Completado' ? now : null,
     createdAt: now,
+    repeat: 'none',
+    repeatUntil: null,
+    seriesId: null,
   });
   return {
     nombre: 'I Convención Teamsports GS 27/28',
@@ -105,17 +172,24 @@ export function seedChecklistState(): ChecklistState {
 export function normalizeChecklist(state: Partial<ChecklistState> | null | undefined): ChecklistState {
   const seeded = seedChecklistState();
   const tasks = Array.isArray(state?.tasks)
-    ? state.tasks.map((item) => ({
-      id: item.id || newId('ck'),
-      area: String(item.area || '').trim(),
-      titulo: String(item.titulo || '').trim(),
-      deadline: item.deadline || null,
-      responsable: String(item.responsable || '').trim(),
-      estado: asStatus(item.estado || 'Pendiente'),
-      comentarios: String(item.comentarios || '').trim(),
-      completedAt: item.completedAt || (asStatus(item.estado || '') === 'Completado' ? nowIso() : null),
-      createdAt: item.createdAt || nowIso(),
-    })).filter((item) => item.titulo)
+    ? state.tasks.map((item) => {
+      const repeat = asRepeat(item.repeat);
+      const id = item.id || newId('ck');
+      return {
+        id,
+        area: String(item.area || '').trim(),
+        titulo: String(item.titulo || '').trim(),
+        deadline: item.deadline || null,
+        responsable: String(item.responsable || '').trim(),
+        estado: asStatus(item.estado || 'Pendiente'),
+        comentarios: String(item.comentarios || '').trim(),
+        completedAt: item.completedAt || (asStatus(item.estado || '') === 'Completado' ? nowIso() : null),
+        createdAt: item.createdAt || nowIso(),
+        repeat,
+        repeatUntil: item.repeatUntil || null,
+        seriesId: item.seriesId || (repeat === 'none' ? null : id),
+      };
+    }).filter((item) => item.titulo)
     : seeded.tasks;
   return {
     nombre: String(state?.nombre || '').trim() || seeded.nombre,
@@ -139,6 +213,13 @@ export function formatIsoDate(value: string | null | undefined): string {
   return `${day}/${month}/${year}`;
 }
 
+export function repeatLabel(task: ChecklistTask): string {
+  if (!task.repeat || task.repeat === 'none') return '';
+  const kind = task.repeat === 'weekly' ? 'cada semana' : 'días laborables';
+  if (task.repeatUntil) return `${kind} · hasta ${formatIsoDate(task.repeatUntil)}`;
+  return kind;
+}
+
 export function uniqueValues(tasks: ChecklistTask[], key: 'area' | 'responsable'): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -156,24 +237,26 @@ export function uniqueValues(tasks: ChecklistTask[], key: 'area' | 'responsable'
 export function checklistKpis(tasks: ChecklistTask[], today = todayIso()) {
   const done = tasks.filter((item) => item.estado === 'Completado').length;
   const blocked = tasks.filter((item) => item.estado === 'Bloqueado').length;
+  const expired = tasks.filter((item) => item.estado === 'Caducada').length;
   const overdue = tasks.filter((item) => {
-    if (item.estado === 'Completado' || !item.deadline) return false;
+    if (isClosed(item) || !item.deadline) return false;
     return item.deadline < today;
   }).length;
-  const open = tasks.length - done;
+  const open = tasks.length - done - expired;
   return {
     total: tasks.length,
     done,
     open,
     blocked,
     overdue,
+    expired,
     share: tasks.length ? done / tasks.length : 0,
   };
 }
 
 export function upcomingTasks(tasks: ChecklistTask[], today = todayIso(), limit = 4): ChecklistTask[] {
   return tasks
-    .filter((item) => item.estado !== 'Completado' && item.deadline)
+    .filter((item) => !isClosed(item) && item.deadline)
     .sort((a, b) => {
       const da = a.deadline || '9999';
       const db = b.deadline || '9999';
@@ -191,8 +274,8 @@ export function sortByDeadline(
   const sign = dir === 'desc' ? -1 : 1;
   return tasks.slice().sort((a, b) => {
     if (completedLast) {
-      if (a.estado === 'Completado' && b.estado !== 'Completado') return 1;
-      if (a.estado !== 'Completado' && b.estado === 'Completado') return -1;
+      if (isClosed(a) && !isClosed(b)) return 1;
+      if (!isClosed(a) && isClosed(b)) return -1;
     }
     if (!a.deadline && !b.deadline) return a.titulo.localeCompare(b.titulo, 'es');
     if (!a.deadline) return 1;
@@ -221,10 +304,67 @@ export function groupByArea(tasks: ChecklistTask[]): Array<{ area: string; tasks
 }
 
 export function toggleTask(task: ChecklistTask): ChecklistTask {
+  if (task.estado === 'Caducada') return task;
   if (task.estado === 'Completado') {
     return { ...task, estado: 'Pendiente', completedAt: null };
   }
   return { ...task, estado: 'Completado', completedAt: nowIso() };
+}
+
+function nextDeadlineFor(task: ChecklistTask, today: string): string {
+  const from = task.deadline && task.deadline > today ? task.deadline : today;
+  if (task.repeat === 'weekly') return firstWorkingDayOnOrAfter(addDaysIso(from, 7));
+  return nextWorkingDayAfter(from);
+}
+
+export function completeChecklistTask(
+  task: ChecklistTask,
+  tasks: ChecklistTask[],
+  today = todayIso(),
+): { tasks: ChecklistTask[]; spawned: boolean; ended: boolean } {
+  const done: ChecklistTask = { ...task, estado: 'Completado', completedAt: nowIso() };
+  const nextTasks = tasks.map((item) => (item.id === task.id ? done : item));
+  if (!task.repeat || task.repeat === 'none') {
+    return { tasks: nextTasks, spawned: false, ended: false };
+  }
+  const seriesId = task.seriesId || task.id;
+  const nextDeadline = nextDeadlineFor(task, today);
+  if (task.repeatUntil && nextDeadline > task.repeatUntil) {
+    return { tasks: nextTasks, spawned: false, ended: true };
+  }
+  const exists = nextTasks.some((item) => (
+    (item.seriesId || item.id) === seriesId
+    && item.deadline === nextDeadline
+    && !isClosed(item)
+  ));
+  if (exists) return { tasks: nextTasks, spawned: false, ended: false };
+  const next: ChecklistTask = {
+    ...emptyTask(),
+    area: task.area,
+    titulo: task.titulo,
+    responsable: task.responsable,
+    deadline: nextDeadline,
+    estado: 'Pendiente',
+    repeat: task.repeat,
+    repeatUntil: task.repeatUntil,
+    seriesId,
+  };
+  return { tasks: [...nextTasks, next], spawned: true, ended: false };
+}
+
+export function expireOverdueSeries(
+  tasks: ChecklistTask[],
+  today = todayIso(),
+): { tasks: ChecklistTask[]; expired: number } {
+  let expired = 0;
+  const next = tasks.map((task) => {
+    if (isClosed(task)) return task;
+    if (!task.repeat || task.repeat === 'none' || !task.repeatUntil) return task;
+    if (task.repeatUntil >= today) return task;
+    expired += 1;
+    return { ...task, estado: 'Caducada' as const };
+  });
+  return { tasks: next, expired };
 }
 
 export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTask[]): { state: ChecklistState; added: number; updated: number } {
@@ -248,6 +388,9 @@ export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTas
         estado: item.estado,
         comentarios: item.comentarios || row.comentarios,
         completedAt: item.estado === 'Completado' ? (row.completedAt || nowIso()) : null,
+        repeat: item.repeat || row.repeat,
+        repeatUntil: item.repeatUntil ?? row.repeatUntil,
+        seriesId: item.seriesId || row.seriesId,
       } : row));
       return;
     }
