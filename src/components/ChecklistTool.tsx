@@ -782,21 +782,27 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 </label>
                 {form.repeat !== 'none' && (
                   <>
-                    <label className="block space-y-1">
+                    <div className="space-y-1">
                       <span className="text-xs font-medium text-[var(--text-secondary)]">Hasta cuándo</span>
-                      <select
-                        value={repeatFor}
-                        onChange={(e) => applyRepeatFor(e.target.value as RepeatFor)}
-                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                      >
-                        <option value="onComplete">Al completar</option>
-                        <option value="week">1 semana</option>
-                        <option value="month">1 mes</option>
-                        <option value="2months">2 meses</option>
-                        <option value="quarter">3 meses</option>
-                        <option value="until">Hasta una fecha</option>
-                      </select>
-                    </label>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          ['onComplete', 'Al completar'],
+                          ['week', '1 semana'],
+                          ['month', '1 mes'],
+                          ['2months', '2 meses'],
+                          ['quarter', '3 meses'],
+                        ] as Array<[RepeatFor, string]>).map(([kind, label]) => (
+                          <button
+                            key={kind}
+                            type="button"
+                            onClick={() => applyRepeatFor(kind)}
+                            className={`rounded-md border px-2.5 py-1 text-xs ${repeatFor === kind ? 'border-[var(--text-primary)] bg-white font-semibold' : 'border-[var(--border)] bg-white'}`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     {repeatFor === 'onComplete' ? (
                       <p className="text-[11px] text-[var(--text-muted)]">
                         Al marcarla hecha te preguntará si quieres la siguiente.
