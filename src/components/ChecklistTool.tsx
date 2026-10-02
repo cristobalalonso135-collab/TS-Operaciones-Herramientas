@@ -11,6 +11,7 @@ import {
   completeChecklistTask,
   daysUntil,
   emptyTask,
+  emptySubtask,
   ensureWindowSeries,
   occurrenceDates,
   expandRepeatingTask,
@@ -18,18 +19,23 @@ import {
   firstWorkingDayOnOrAfter,
   formatIsoDate,
   groupByArea,
+  isTaskOverdue,
   mergeImportedTasks,
   nextOccurrence,
   repeatLabel,
   sortByDeadline,
   spawnNextOccurrence,
+  subtaskProgress,
   todayIso,
+  toggleSubtask,
   toggleTask,
   uniqueValues,
   upcomingTasks,
+  effectiveDeadline,
   type ChecklistRepeat,
   type ChecklistState,
   type ChecklistStatus,
+  type ChecklistSubtask,
   type ChecklistTask,
 } from '@/lib/checklist-model';
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
@@ -106,20 +112,37 @@ function Kpi({ label, value, hint, danger }: { label: string; value: string | nu
 }
 
 function deadlineTone(task: ChecklistTask, today: string): string {
-  if (task.estado === 'Completado' || task.estado === 'Caducada' || !task.deadline) return 'text-[var(--text-muted)]';
-  if (task.deadline < today) return 'text-[var(--danger)]';
-  const days = daysUntil(task.deadline, today);
+  if (task.estado === 'Completado' || task.estado === 'Caducada') return 'text-[var(--text-muted)]';
+  if (isTaskOverdue(task, today)) return 'text-[var(--danger)]';
+  const days = daysUntil(effectiveDeadline(task), today);
   if (days != null && days <= 3) return 'text-[var(--warning)]';
   return 'text-[var(--text-secondary)]';
 }
 
 function dueLabel(task: ChecklistTask, today: string): string {
-  if (task.estado === 'Completado' || task.estado === 'Caducada' || !task.deadline) return '';
-  const days = daysUntil(task.deadline, today);
+  if (task.estado === 'Completado' || task.estado === 'Caducada') return '';
+  const days = daysUntil(task.deadline || effectiveDeadline(task), today);
   if (days == null) return '';
   if (days === 0) return 'hoy';
   if (days > 0) return `${days}d`;
   return `${Math.abs(days)}d tarde`;
+}
+
+function subDueLabel(item: ChecklistSubtask, today: string): string {
+  if (item.done || !item.deadline) return '';
+  const days = daysUntil(item.deadline, today);
+  if (days == null) return '';
+  if (days === 0) return 'hoy';
+  if (days > 0) return `${days}d`;
+  return `${Math.abs(days)}d tarde`;
+}
+
+function subDeadlineTone(item: ChecklistSubtask, today: string): string {
+  if (item.done || !item.deadline) return 'text-[var(--text-muted)]';
+  if (item.deadline < today) return 'text-[var(--danger)]';
+  const days = daysUntil(item.deadline, today);
+  if (days != null && days <= 3) return 'text-[var(--warning)]';
+  return 'text-[var(--text-secondary)]';
 }
 
 function FilterSelect({
@@ -250,10 +273,10 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       if (filterOwner && item.responsable !== filterOwner) return false;
       if (filterStatus && item.estado !== filterStatus) return false;
       if (onlyOverdue) {
-        if (item.estado === 'Completado' || item.estado === 'Caducada' || !item.deadline || item.deadline >= today) return false;
+        if (!isTaskOverdue(item, today)) return false;
       }
       if (q) {
-        const hay = `${item.area} ${item.titulo} ${item.responsable} ${item.comentarios}`.toLocaleLowerCase('es');
+        const hay = `${item.area} ${item.titulo} ${item.responsable} ${item.comentarios} ${(item.subtasks || []).map((step) => step.titulo).join(' ')}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -280,7 +303,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   };
 
   const openTask = (task: ChecklistTask) => {
-    setForm({ ...task });
+    setForm({ ...task, subtasks: (task.subtasks || []).map((item) => ({ ...item })) });
     setRepeatFor(task.askOnComplete || !task.repeatUntil ? 'onComplete' : 'until');
     setEditingId(task.id);
   };
@@ -313,6 +336,17 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       ));
       if (nextDate && !exists) setSpawnAsk({ ...task, estado: 'Completado' });
     }
+  };
+
+  const markSub = (task: ChecklistTask, subId: string) => {
+    patchTask(task.id, toggleSubtask(task, subId));
+  };
+
+  const setFormSub = (id: string, update: Partial<ChecklistSubtask>) => {
+    setForm({
+      ...form,
+      subtasks: (form.subtasks || []).map((item) => (item.id === id ? { ...item, ...update } : item)),
+    });
   };
 
   const confirmSpawn = (yes: boolean) => {
@@ -373,6 +407,16 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       askOnComplete,
       repeatUntil: repeating && !askOnComplete ? (form.repeatUntil || addMonthsIso(today, 1)) : null,
       seriesId: repeating ? (form.seriesId || form.id) : null,
+      subtasks: (form.subtasks || []).flatMap((item) => {
+        const step = item.titulo.trim();
+        if (!step) return [];
+        return [{
+          ...item,
+          titulo: step,
+          deadline: item.deadline || null,
+          completedAt: item.done ? (item.completedAt || new Date().toISOString()) : null,
+        }];
+      }),
     };
     const previous = editingId && editingId !== 'new'
       ? current.tasks.find((item) => item.id === editingId)
@@ -476,7 +520,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             {upcoming.length > 0 && (
               <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 {upcoming.map((item) => {
-                  const days = daysUntil(item.deadline, today);
+                  const nearest = effectiveDeadline(item);
+                  const days = daysUntil(nearest, today);
                   return (
                     <button
                       key={item.id}
@@ -486,7 +531,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     >
                       <p className="truncate text-xs font-medium">{item.titulo}</p>
                       <p className={`mt-1 text-[11px] ${deadlineTone(item, today)}`}>
-                        {formatIsoDate(item.deadline)}
+                        {formatIsoDate(nearest)}
                         {days != null ? ` · ${days === 0 ? 'hoy' : days > 0 ? `${days}d` : `${Math.abs(days)}d tarde`}` : ''}
                       </p>
                     </button>
@@ -551,6 +596,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 <ul>
                   {group.tasks.map((task) => {
                     const due = dueLabel(task, today);
+                    const progress = subtaskProgress(task);
                     return (
                       <li key={task.id} className="grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_1fr] sm:items-start">
                         <button
@@ -562,19 +608,49 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                         >
                           {task.estado === 'Completado' ? <Check className="h-3.5 w-3.5" /> : null}
                         </button>
-                        <button type="button" onClick={() => openTask(task)} className="min-w-0 space-y-1 text-left">
-                          <p className={`text-sm ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</p>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-secondary)]">
-                            <span className={deadlineTone(task, today)}>
-                              <Clock className="mr-1 inline h-3 w-3" />
-                              {formatIsoDate(task.deadline)}{due ? ` · ${due}` : ''}
-                            </span>
-                            {task.responsable ? <span>{task.responsable}</span> : null}
-                            <span>{task.estado}</span>
-                            {repeatLabel(task) ? <span>{repeatLabel(task)}</span> : null}
-                          </div>
-                          {task.comentarios ? <p className="text-xs text-[var(--text-muted)]">{task.comentarios}</p> : null}
-                        </button>
+                        <div className="min-w-0 space-y-2">
+                          <button type="button" onClick={() => openTask(task)} className="min-w-0 space-y-1 text-left">
+                            <p className={`text-sm ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</p>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-secondary)]">
+                              <span className={deadlineTone(task, today)}>
+                                <Clock className="mr-1 inline h-3 w-3" />
+                                {formatIsoDate(task.deadline || (progress.total > 0 ? effectiveDeadline(task) : null))}{due ? ` · ${due}` : ''}
+                              </span>
+                              {task.responsable ? <span>{task.responsable}</span> : null}
+                              <span>{task.estado}</span>
+                              {progress.total > 0 ? <span>{progress.done}/{progress.total} pasos</span> : null}
+                              {repeatLabel(task) ? <span>{repeatLabel(task)}</span> : null}
+                            </div>
+                            {task.comentarios ? <p className="text-xs text-[var(--text-muted)]">{task.comentarios}</p> : null}
+                          </button>
+                          {progress.total > 0 && (
+                            <ul className="space-y-1.5 border-l border-[var(--border)] pl-3">
+                              {task.subtasks.map((step) => {
+                                const stepDue = subDueLabel(step, today);
+                                return (
+                                  <li key={step.id} className="flex items-start gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => markSub(task, step.id)}
+                                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${step.done ? 'border-[var(--success)] bg-[var(--success)] text-white' : 'border-[var(--border-strong)]'}`}
+                                      aria-label={step.done ? 'Marcar paso pendiente' : 'Completar paso'}
+                                    >
+                                      {step.done ? <Check className="h-2.5 w-2.5" /> : null}
+                                    </button>
+                                    <button type="button" onClick={() => openTask(task)} className="min-w-0 text-left">
+                                      <p className={`text-xs ${step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-primary)]'}`}>{step.titulo}</p>
+                                      {step.deadline ? (
+                                        <p className={`text-[11px] ${subDeadlineTone(step, today)}`}>
+                                          {formatIsoDate(step.deadline)}{stepDue ? ` · ${stepDue}` : ''}
+                                        </p>
+                                      ) : null}
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
                       </li>
                     );
                   })}
@@ -631,9 +707,16 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             </button>
                           </td>
                           <td className="px-2 py-2 align-middle text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className={`px-2 py-2 align-middle ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
+                          <td className={`px-2 py-2 align-middle ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
+                            {task.titulo}
+                            {subtaskProgress(task).total > 0 ? (
+                              <span className="mt-0.5 block text-[11px] font-normal text-[var(--text-muted)] no-underline">
+                                {subtaskProgress(task).done}/{subtaskProgress(task).total} pasos
+                              </span>
+                            ) : null}
+                          </td>
                           <td className={`px-2 py-2 align-middle ${deadlineTone(task, today)}`}>
-                            {formatIsoDate(task.deadline)}{due ? ` · ${due}` : ''}
+                            {formatIsoDate(task.deadline || effectiveDeadline(task))}{due ? ` · ${due}` : ''}
                             {repeatLabel(task) ? <span className="block text-[11px] text-[var(--text-muted)]">{repeatLabel(task)}</span> : null}
                           </td>
                           <td className="px-2 py-2 align-middle">{task.responsable || '—'}</td>
@@ -694,7 +777,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
         <div className="abonos-modal-backdrop" onClick={closePanel}>
           <div
             className="abonos-modal"
-            style={{ width: 'min(560px, 100%)' }}
+            style={{ width: 'min(640px, 100%)' }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="checklist-modal-title"
@@ -766,6 +849,63 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     })}
                   />
                 </div>
+              </div>
+              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Pasos</span>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, subtasks: [...(form.subtasks || []), emptySubtask()] })}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--text-primary)]"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Añadir paso
+                  </button>
+                </div>
+                {(form.subtasks || []).length === 0 ? (
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Opcional. Ej: solicitar previsión de asistencia, hablar con el hotel…
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {(form.subtasks || []).map((step, index) => (
+                      <li key={step.id} className="flex items-start gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFormSub(step.id, {
+                            done: !step.done,
+                            completedAt: !step.done ? (step.completedAt || new Date().toISOString()) : null,
+                          })}
+                          className={`mt-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${step.done ? 'border-[var(--success)] bg-[var(--success)] text-white' : 'border-[var(--border-strong)] bg-white'}`}
+                          aria-label={step.done ? 'Marcar paso pendiente' : 'Completar paso'}
+                        >
+                          {step.done ? <Check className="h-2.5 w-2.5" /> : null}
+                        </button>
+                        <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[1fr_auto]">
+                          <input
+                            value={step.titulo}
+                            onChange={(e) => setFormSub(step.id, { titulo: e.target.value })}
+                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm"
+                            placeholder={`${index + 1}. Qué hay que hacer`}
+                          />
+                          <input
+                            type="date"
+                            value={step.deadline || ''}
+                            onChange={(e) => setFormSub(step.id, { deadline: e.target.value || null })}
+                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm sm:w-40"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, subtasks: (form.subtasks || []).filter((item) => item.id !== step.id) })}
+                          className="mt-1.5 rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                          aria-label="Quitar paso"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
                 <label className="block space-y-1">

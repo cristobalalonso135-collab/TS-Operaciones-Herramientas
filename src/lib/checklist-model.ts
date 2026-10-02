@@ -6,6 +6,14 @@ export type ChecklistRepeat = 'none' | 'weekdays' | 'weekly';
 
 export const CHECKLIST_STATUSES: ChecklistStatus[] = ['Pendiente', 'En curso', 'Completado', 'Bloqueado', 'Caducada'];
 
+export interface ChecklistSubtask {
+  id: string;
+  titulo: string;
+  deadline: string | null;
+  done: boolean;
+  completedAt: string | null;
+}
+
 export interface ChecklistTask {
   id: string;
   area: string;
@@ -20,6 +28,7 @@ export interface ChecklistTask {
   repeatUntil: string | null;
   seriesId: string | null;
   askOnComplete: boolean;
+  subtasks: ChecklistSubtask[];
 }
 
 export interface ChecklistState {
@@ -132,6 +141,63 @@ export function isClosed(task: ChecklistTask): boolean {
   return task.estado === 'Completado' || task.estado === 'Caducada';
 }
 
+export function subtaskProgress(task: ChecklistTask): { done: number; total: number } {
+  const total = task.subtasks?.length || 0;
+  const done = (task.subtasks || []).filter((item) => item.done).length;
+  return { done, total };
+}
+
+export function effectiveDeadline(task: ChecklistTask): string | null {
+  const open = (task.subtasks || []).filter((item) => !item.done && item.deadline).map((item) => item.deadline as string);
+  const dates = [task.deadline, ...open].filter((value): value is string => Boolean(value)).sort();
+  return dates[0] || null;
+}
+
+export function isTaskOverdue(task: ChecklistTask, today = todayIso()): boolean {
+  if (isClosed(task)) return false;
+  if (task.deadline && task.deadline < today) return true;
+  return (task.subtasks || []).some((item) => !item.done && item.deadline && item.deadline < today);
+}
+
+export function toggleSubtask(task: ChecklistTask, subId: string): ChecklistTask {
+  return {
+    ...task,
+    subtasks: (task.subtasks || []).map((item) => {
+      if (item.id !== subId) return item;
+      const done = !item.done;
+      return { ...item, done, completedAt: done ? nowIso() : null };
+    }),
+  };
+}
+
+export function emptySubtask(): ChecklistSubtask {
+  return {
+    id: newId('st'),
+    titulo: '',
+    deadline: null,
+    done: false,
+    completedAt: null,
+  };
+}
+
+export function normalizeSubtasks(value: unknown): ChecklistSubtask[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Partial<ChecklistSubtask>;
+    const titulo = String(row.titulo || '').trim();
+    if (!titulo) return [];
+    const done = row.done === true;
+    return [{
+      id: row.id || newId('st'),
+      titulo,
+      deadline: row.deadline || null,
+      done,
+      completedAt: row.completedAt || (done ? nowIso() : null),
+    }];
+  });
+}
+
 export function emptyTask(): ChecklistTask {
   return {
     id: newId('ck'),
@@ -147,6 +213,7 @@ export function emptyTask(): ChecklistTask {
     repeatUntil: null,
     seriesId: null,
     askOnComplete: false,
+    subtasks: [],
   };
 }
 
@@ -172,6 +239,7 @@ export function seedChecklistState(): ChecklistState {
     repeatUntil: null,
     seriesId: null,
     askOnComplete: false,
+    subtasks: [],
   });
   return {
     nombre: 'I Convención Teamsports GS 27/28',
@@ -223,6 +291,7 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
         repeatUntil,
         seriesId: item.seriesId || (repeat === 'none' ? null : id),
         askOnComplete,
+        subtasks: normalizeSubtasks(item.subtasks),
       };
     }).filter((item) => item.titulo)
     : seeded.tasks;
@@ -274,10 +343,7 @@ export function checklistKpis(tasks: ChecklistTask[], today = todayIso()) {
   const done = tasks.filter((item) => item.estado === 'Completado').length;
   const blocked = tasks.filter((item) => item.estado === 'Bloqueado').length;
   const expired = tasks.filter((item) => item.estado === 'Caducada').length;
-  const overdue = tasks.filter((item) => {
-    if (isClosed(item) || !item.deadline) return false;
-    return item.deadline < today;
-  }).length;
+  const overdue = tasks.filter((item) => isTaskOverdue(item, today)).length;
   const open = tasks.length - done - expired;
   return {
     total: tasks.length,
@@ -292,10 +358,10 @@ export function checklistKpis(tasks: ChecklistTask[], today = todayIso()) {
 
 export function upcomingTasks(tasks: ChecklistTask[], today = todayIso(), limit = 4): ChecklistTask[] {
   return tasks
-    .filter((item) => !isClosed(item) && item.deadline)
+    .filter((item) => !isClosed(item) && effectiveDeadline(item))
     .sort((a, b) => {
-      const da = a.deadline || '9999';
-      const db = b.deadline || '9999';
+      const da = effectiveDeadline(a) || '9999';
+      const db = effectiveDeadline(b) || '9999';
       if (da !== db) return da.localeCompare(db);
       return a.titulo.localeCompare(b.titulo, 'es');
     })
@@ -313,7 +379,16 @@ export function sortByDeadline(
       if (isClosed(a) && !isClosed(b)) return 1;
       if (!isClosed(a) && isClosed(b)) return -1;
     }
-    if (!a.deadline && !b.deadline) return a.titulo.localeCompare(b.titulo, 'es');
+    if (!a.deadline && !b.deadline) {
+      const ea = effectiveDeadline(a);
+      const eb = effectiveDeadline(b);
+      if (!ea && !eb) return a.titulo.localeCompare(b.titulo, 'es');
+      if (!ea) return 1;
+      if (!eb) return -1;
+      const cmpEff = ea.localeCompare(eb);
+      if (cmpEff) return cmpEff * sign;
+      return a.titulo.localeCompare(b.titulo, 'es');
+    }
     if (!a.deadline) return 1;
     if (!b.deadline) return -1;
     const cmp = a.deadline.localeCompare(b.deadline);
@@ -379,6 +454,12 @@ function seriesTaskFrom(task: ChecklistTask, deadline: string): ChecklistTask {
     repeatUntil: task.repeatUntil,
     seriesId: task.seriesId || task.id,
     askOnComplete: task.askOnComplete,
+    subtasks: (task.subtasks || []).map((item) => ({
+      ...item,
+      id: newId('st'),
+      done: false,
+      completedAt: null,
+    })),
   };
 }
 
@@ -398,6 +479,9 @@ export function expandRepeatingTask(task: ChecklistTask, today = todayIso()): Ch
     askOnComplete: false,
     estado: index === 0 ? task.estado : 'Pendiente',
     completedAt: index === 0 ? task.completedAt : null,
+    subtasks: index === 0
+      ? (task.subtasks || [])
+      : (task.subtasks || []).map((item) => ({ ...item, id: newId('st'), done: false, completedAt: null })),
   }));
 }
 
@@ -485,6 +569,7 @@ export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTas
         repeatUntil: item.repeatUntil ?? row.repeatUntil,
         seriesId: item.seriesId || row.seriesId,
         askOnComplete: item.askOnComplete ?? row.askOnComplete,
+        subtasks: item.subtasks?.length ? item.subtasks : row.subtasks,
       } : row));
       return;
     }
