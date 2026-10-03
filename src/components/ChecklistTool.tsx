@@ -61,54 +61,10 @@ function untilFrom(kind: RepeatFor, today: string, current: string | null): stri
 const TABS = [
   { id: 'tabla', label: 'Tabla' },
   { id: 'tablero', label: 'Tablero' },
-  { id: 'enviar', label: 'Enviar' },
-  { id: 'importar', label: 'Importar' },
+  { id: 'enviar', label: 'Semanal' },
+  { id: 'importar', label: 'Excel' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
-
-function weeklyDigest(nombre: string, tasks: ChecklistTask[], today: string): string {
-  const open = tasks.filter((item) => !isClosed(item));
-  const groups = new Map<string, ChecklistTask[]>();
-  open.forEach((item) => {
-    const owner = item.responsable.trim() || 'Sin responsable';
-    if (!groups.has(owner)) groups.set(owner, []);
-    groups.get(owner)!.push(item);
-  });
-  const owners = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b, 'es'));
-  const lines = [`${nombre}`, `Pendientes · ${formatIsoDate(today)}`, ''];
-  if (!open.length) {
-    lines.push('No hay pendientes.');
-    return lines.join('\n');
-  }
-  owners.forEach((owner) => {
-    lines.push(owner);
-    (groups.get(owner) || []).forEach((task) => {
-      const due = task.deadline || effectiveDeadline(task);
-      const days = daysUntil(due, today);
-      let when = formatIsoDate(due);
-      if (due && days != null) {
-        if (days < 0) when = `${formatIsoDate(due)} · ${Math.abs(days)}d tarde`;
-        else if (days === 0) when = `${formatIsoDate(due)} · hoy`;
-        else when = `${formatIsoDate(due)} · ${days}d`;
-      }
-      lines.push(`• ${task.titulo} — ${when}`);
-      (task.subtasks || []).filter((step) => !step.done).forEach((step) => {
-        const stepDays = daysUntil(step.deadline, today);
-        let stepWhen = '';
-        if (step.deadline && stepDays != null) {
-          if (stepDays < 0) stepWhen = ` — ${formatIsoDate(step.deadline)} · ${Math.abs(stepDays)}d tarde`;
-          else if (stepDays === 0) stepWhen = ` — ${formatIsoDate(step.deadline)} · hoy`;
-          else stepWhen = ` — ${formatIsoDate(step.deadline)} · ${stepDays}d`;
-        } else if (step.deadline) {
-          stepWhen = ` — ${formatIsoDate(step.deadline)}`;
-        }
-        lines.push(`   - ${step.titulo}${stepWhen}`);
-      });
-    });
-    lines.push('');
-  });
-  return lines.join('\n').trim();
-}
 
 function downloadAoa(rows: unknown[][], fileName: string) {
   void import('xlsx').then((XLSX) => {
@@ -376,7 +332,20 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return sortByDeadline(filtered, sort.dir);
   }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
-  const digest = useMemo(() => weeklyDigest(state?.nombre || 'Checklist', filtered, today), [filtered, state?.nombre, today]);
+  const weeklyGroups = useMemo(() => {
+    const open = filtered.filter((item) => !isClosed(item));
+    const order: string[] = [];
+    const map = new Map<string, ChecklistTask[]>();
+    open.forEach((item) => {
+      const owner = item.responsable.trim() || 'Sin responsable';
+      if (!map.has(owner)) {
+        map.set(owner, []);
+        order.push(owner);
+      }
+      map.get(owner)!.push(item);
+    });
+    return order.map((owner) => ({ owner, tasks: map.get(owner) || [] }));
+  }, [filtered]);
   const formReady = Boolean(
     form.titulo.trim()
     && form.area.trim()
@@ -832,7 +801,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               <button
                 type="button"
                 className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-                onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), 'checklist.xlsx')}
+                onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
               >
                 <Download className="h-3.5 w-3.5" /> Excel
               </button>
@@ -1074,34 +1043,57 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           )}
 
           {tab === 'enviar' && (
-            <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-display text-lg font-semibold tracking-tight">Para enviar</h3>
-                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                    Copia y pega en Teams o el correo. Agrupa por responsable los pendientes, con plazos.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(digest).then(
-                      () => setAck('Copiado. Ya lo puedes pegar.'),
-                      () => setAck('No he podido copiar. Selecciona el texto a mano.'),
-                    );
-                  }}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
-                >
-                  <Copy className="h-3.5 w-3.5" /> Copiar
-                </button>
-              </div>
-              <textarea
-                readOnly
-                value={digest}
-                rows={18}
-                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 font-mono text-sm leading-relaxed text-[var(--text-primary)]"
-              />
-            </section>
+            <div className="space-y-3">
+              <p className="text-sm text-[var(--text-secondary)]">
+                Solo pendientes, agrupados por persona. Más corto que la tabla, para mandar el debe de la semana.
+              </p>
+              {weeklyGroups.length === 0 ? (
+                <p className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-6 text-sm text-[var(--text-muted)]">No hay pendientes con este filtro.</p>
+              ) : (
+                weeklyGroups.map((group) => (
+                  <section key={group.owner} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+                    <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-1.5">
+                      <p className="text-sm font-semibold">{group.owner}</p>
+                      <p className="text-xs text-[var(--text-muted)]">{group.tasks.length} pendiente{group.tasks.length === 1 ? '' : 's'}</p>
+                    </div>
+                    <table className="w-full text-left text-sm">
+                      <thead className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                        <tr>
+                          <th className="px-3 py-1.5 font-semibold">Tarea</th>
+                          <th className="w-40 px-3 py-1.5 font-semibold">Deadline</th>
+                          <th className="w-36 px-3 py-1.5 font-semibold">Área</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.tasks.map((task) => {
+                          const openSteps = (task.subtasks || []).filter((step) => !step.done);
+                          return (
+                            <tr
+                              key={task.id}
+                              className="cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)]"
+                              onClick={() => openTask(task)}
+                            >
+                              <td className="px-3 py-1.5 align-top font-medium">
+                                {task.titulo}
+                                {openSteps.length > 0 ? (
+                                  <span className="mt-0.5 block text-[11px] font-normal text-[var(--text-muted)]">
+                                    {openSteps.map((step) => step.titulo).join(' · ')}
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td className="px-3 py-1.5 align-top">
+                                <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} />
+                              </td>
+                              <td className="px-3 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </section>
+                ))
+              )}
+            </div>
           )}
         </div>
       )}
@@ -1109,16 +1101,23 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       {tab === 'importar' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Sube un Excel con Área, Tarea, Deadline, Responsable, Estado y Comentarios. Si la tarea ya existe, se actualiza. El de la convención vale tal cual.
+            Exporta o importa el checklist entero: tareas, pasos, fechas, estados y responsables. Si la tarea ya existe, se actualiza.
           </p>
+          <button
+            type="button"
+            className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
+            onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
+          >
+            <Download className="h-3.5 w-3.5" /> Descargar Excel
+          </button>
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <input type="checkbox" checked={replaceAll} onChange={(e) => setReplaceAll(e.target.checked)} />
             Sustituir el checklist actual (no fusionar)
           </label>
           <FileUpload
             inputId="checklist-import"
-            label="Excel del checklist"
-            hint="Vale el de la convención o el que descargues desde Tablero."
+            label="Importar Excel"
+            hint="Usa el Excel que descargas aquí. Conserva Id, pasos y fechas."
             keepDropzone
             compact
             onFileLoaded={() => {}}
@@ -1136,6 +1135,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               void persist({
                 ...result.state,
                 nombre: parsed.nombre || result.state.nombre,
+                fechaEvento: parsed.fechaEvento || result.state.fechaEvento,
               }, backend);
               setAck(replaceAll
                 ? `Checklist sustituido: ${parsed.tasks.length} tareas.`

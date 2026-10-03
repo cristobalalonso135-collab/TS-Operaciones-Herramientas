@@ -22,17 +22,26 @@ function parsePasos(value: unknown): ChecklistSubtask[] {
   return text.split('|').flatMap((part) => {
     const chunk = part.trim();
     if (!chunk) return [];
-    const match = chunk.match(/^(.*?)(?:\s*\((\d{4}-\d{2}-\d{2})\))?\s*$/);
-    const titulo = (match?.[1] || chunk).trim();
+    const done = /^✓\s+/.test(chunk) || /\s*\[hecho\]\s*$/i.test(chunk);
+    const cleaned = chunk.replace(/^✓\s+/, '').replace(/\s*\[hecho\]\s*$/i, '').trim();
+    const match = cleaned.match(/^(.*?)(?:\s*\((\d{4}-\d{2}-\d{2})\))?\s*$/);
+    const titulo = (match?.[1] || cleaned).trim();
     if (!titulo) return [];
     return [{
       id: newId('st'),
       titulo,
       deadline: match?.[2] || null,
-      done: false,
-      completedAt: null,
+      done,
+      completedAt: done ? nowIso() : null,
     }];
   });
+}
+
+function formatPasos(steps: ChecklistSubtask[]): string {
+  return (steps || []).map((step) => {
+    const date = step.deadline ? ` (${step.deadline})` : '';
+    return `${step.done ? '✓ ' : ''}${step.titulo}${date}`;
+  }).join(' | ');
 }
 
 function parseDate(value: unknown): string | null {
@@ -84,10 +93,16 @@ export function pickChecklistRows(sheets: Record<string, unknown[][]>): unknown[
   return (withTarea || entries[0])[1] || [];
 }
 
-export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; tasks: ChecklistTask[] } {
+export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fechaEvento?: string; tasks: ChecklistTask[] } {
   if (!rows.length) return { tasks: [] };
-  const titleRow = rows.find((row) => cellText(row?.[1] || row?.[0]).toLocaleLowerCase('es').includes('checklist'));
+  const titleRow = rows.find((row) => cellText(row?.[1] || row?.[0]).toLocaleLowerCase('es').includes('checklist') || cellText(row?.[0]).length > 3);
   const nombre = titleRow ? cellText(titleRow[1] || titleRow[0]) : '';
+  const eventRow = rows.find((row) => (row || []).some((cell) => normalizeHeader(cell).includes('fecha evento') || normalizeHeader(cell).startsWith('evento')));
+  let fechaEvento: string | null = null;
+  if (eventRow) {
+    const joined = (eventRow || []).map(cellText).join(' ');
+    fechaEvento = parseDate(joined.replace(/fecha evento:?/i, '').trim()) || parseDate(eventRow[1]) || parseDate(eventRow[0]);
+  }
   const headerIndex = rows.findIndex((row) => {
     const joined = (row || []).map(normalizeHeader).join(' | ');
     return joined.includes('tarea') && (joined.includes('área') || joined.includes('area') || joined.includes('estado'));
@@ -95,6 +110,7 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; tasks
   const start = headerIndex >= 0 ? headerIndex : 0;
   const header = (rows[start] || []).map(normalizeHeader);
   const col = {
+    id: findCol(header, ['id']),
     area: findCol(header, ['área', 'area']),
     tarea: findCol(header, ['tarea', 'titulo', 'título', 'descripcion', 'descripción']),
     deadline: findCol(header, ['deadline', 'fecha', 'vencimiento', 'plazo']),
@@ -104,17 +120,21 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; tasks
     repeat: findCol(header, ['repetición', 'repeticion', 'repeat']),
     until: findCol(header, ['hasta', 'repeat until', 'fin']),
     ask: findCol(header, ['al completar', 'ask']),
+    completed: findCol(header, ['completada', 'completedat', 'completed at']),
+    created: findCol(header, ['creada', 'createdat', 'created at']),
+    series: findCol(header, ['serie', 'seriesid', 'series']),
     pasos: findCol(header, ['pasos', 'subtareas', 'subtasks']),
   };
   const tasks = rows.slice(start + 1).flatMap((row) => {
     const titulo = cellText(col.tarea == null ? '' : row[col.tarea]);
     if (!titulo) return [];
     const estado = asStatus(cellText(col.estado == null ? '' : row[col.estado]));
-    const id = newId('ck');
+    const id = cellText(col.id == null ? '' : row[col.id]) || newId('ck');
     const repeat = asRepeat(col.repeat == null ? '' : row[col.repeat]);
     const repeatUntil = parseDate(col.until == null ? '' : row[col.until]);
     const askText = cellText(col.ask == null ? '' : row[col.ask]).toLocaleLowerCase('es');
     const askOnComplete = repeat !== 'none' && (['sí', 'si', '1', 'true', 'al completar'].includes(askText) || !repeatUntil);
+    const completedAt = parseDate(col.completed == null ? '' : row[col.completed]);
     return [{
       id,
       area: cellText(col.area == null ? '' : row[col.area]),
@@ -123,25 +143,26 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; tasks
       responsable: cellText(col.responsable == null ? '' : row[col.responsable]),
       estado,
       comentarios: cellText(col.comentarios == null ? '' : row[col.comentarios]),
-      completedAt: estado === 'Completado' ? nowIso() : null,
-      createdAt: nowIso(),
+      completedAt: completedAt ? `${completedAt}T00:00:00.000Z` : (estado === 'Completado' ? nowIso() : null),
+      createdAt: parseDate(col.created == null ? '' : row[col.created]) || nowIso(),
       repeat,
       repeatUntil,
-      seriesId: repeat === 'none' ? null : id,
+      seriesId: cellText(col.series == null ? '' : row[col.series]) || (repeat === 'none' ? null : id),
       askOnComplete,
       subtasks: parsePasos(col.pasos == null ? '' : row[col.pasos]),
     }];
   });
-  return { nombre: nombre || undefined, tasks };
+  return { nombre: nombre || undefined, fechaEvento: fechaEvento || undefined, tasks };
 }
 
 export function checklistToAoa(nombre: string, fechaEvento: string, tasks: ChecklistTask[]): unknown[][] {
   return [
     [nombre],
-    [`Fecha evento: ${fechaEvento || '—'}`],
+    ['Fecha evento', fechaEvento || ''],
     [],
-    ['Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios', 'Repetición', 'Hasta', 'Al completar', 'Pasos'],
+    ['Id', 'Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios', 'Repetición', 'Hasta', 'Al completar', 'Completada', 'Creada', 'Serie', 'Pasos'],
     ...tasks.map((item) => [
+      item.id,
       item.area,
       item.titulo,
       item.deadline || '',
@@ -151,7 +172,10 @@ export function checklistToAoa(nombre: string, fechaEvento: string, tasks: Check
       item.repeat === 'weekdays' ? 'días laborables' : item.repeat === 'weekly' ? 'cada semana' : '',
       item.repeatUntil || '',
       item.askOnComplete ? 'sí' : '',
-      (item.subtasks || []).map((step) => `${step.titulo}${step.deadline ? ` (${step.deadline})` : ''}`).join(' | '),
+      item.completedAt ? item.completedAt.slice(0, 10) : '',
+      item.createdAt ? item.createdAt.slice(0, 10) : '',
+      item.seriesId || '',
+      formatPasos(item.subtasks || []),
     ]),
   ];
 }
