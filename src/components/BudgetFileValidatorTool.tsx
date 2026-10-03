@@ -719,9 +719,11 @@ function buildFactMismatches(
     const diff = roundMoney(budget - diario);
     const monthStart = planLine?.monthStart || key.split('|').slice(-1)[0];
     let status: FactMismatch['status'] = 'ok';
-    if (!planLine && dailyLine) status = 'solo-diario';
-    else if (planLine && !dailyLine) status = 'solo-budget';
-    else if (Math.abs(diff) > CENTIMO) status = 'mismatch';
+    if (Math.abs(diff) > CENTIMO) {
+      if (!planLine && dailyLine) status = 'solo-diario';
+      else if (planLine && !dailyLine) status = 'solo-budget';
+      else status = 'mismatch';
+    }
 
     const fixable = status === 'mismatch'
       ? Math.abs(diario) > CENTIMO
@@ -873,9 +875,11 @@ function buildCogsMonthMismatches(
     const diff = roundMoney(budget - diario);
     const monthStart = planLine?.monthStart || key.split('|').slice(-1)[0];
     let status: CogsMonthMismatch['status'] = 'ok';
-    if (!planLine && dailyLine) status = 'solo-diario';
-    else if (planLine && !dailyLine) status = 'solo-budget';
-    else if (Math.abs(diff) > CENTIMO) status = 'mismatch';
+    if (Math.abs(diff) > CENTIMO) {
+      if (!planLine && dailyLine) status = 'solo-diario';
+      else if (planLine && !dailyLine) status = 'solo-budget';
+      else status = 'mismatch';
+    }
 
     const hasFactDays = (dailyLine?.daysWithFact || 0) > 0 || Math.abs(dailyLine?.facturacion || 0) > CENTIMO;
     const fixable = status !== 'ok'
@@ -1123,6 +1127,65 @@ function sumMapField<T>(map: Map<string, T>, pick: (item: T) => number): number 
   return roundMoney(total);
 }
 
+interface FyMonthRow {
+  monthStart: string;
+  monthLabel: string;
+  factBudget: number;
+  factLoaded: number;
+  factDiff: number;
+  cogsBudget: number;
+  cogsLoaded: number;
+  cogsDiff: number;
+}
+
+function buildFyMonthRows(
+  plan: Map<string, PlanMonthLine>,
+  daily: Map<string, DailyMonthLine>
+): FyMonthRow[] {
+  const byMonth = new Map<string, {
+    monthStart: string;
+    factBudget: number;
+    factLoaded: number;
+    cogsBudget: number;
+    cogsLoaded: number;
+  }>();
+
+  const ensure = (monthStart: string) => {
+    const existing = byMonth.get(monthStart);
+    if (existing) return existing;
+    const created = { monthStart, factBudget: 0, factLoaded: 0, cogsBudget: 0, cogsLoaded: 0 };
+    byMonth.set(monthStart, created);
+    return created;
+  };
+
+  plan.forEach((line) => {
+    const row = ensure(line.monthStart);
+    row.factBudget += line.facturacion;
+    row.cogsBudget += line.cogs;
+  });
+
+  daily.forEach((line) => {
+    const monthStart = line.key.split('|').slice(-1)[0];
+    if (!monthStart) return;
+    const row = ensure(monthStart);
+    row.factLoaded += line.facturacion;
+    row.cogsLoaded += line.cogs;
+  });
+
+  return Array.from(byMonth.values())
+    .map((row) => ({
+      monthStart: row.monthStart,
+      monthLabel: displayMonth(row.monthStart),
+      factBudget: roundMoney(row.factBudget),
+      factLoaded: roundMoney(row.factLoaded),
+      factDiff: roundMoney(row.factLoaded - row.factBudget),
+      cogsBudget: roundMoney(row.cogsBudget),
+      cogsLoaded: roundMoney(row.cogsLoaded),
+      cogsDiff: roundMoney(row.cogsLoaded - row.cogsBudget),
+    }))
+    .sort((a, b) => a.monthStart.localeCompare(b.monthStart));
+}
+
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${
@@ -1234,6 +1297,12 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
       cogsLoaded,
     };
   }, [plan, daily]);
+  const fyMonthRows = useMemo(() => {
+    if (!plan || !daily) return [];
+    return buildFyMonthRows(plan.lines, daily.months);
+  }, [plan, daily]);
+  const factOffMonths = fyMonthRows.filter((row) => Math.abs(row.factDiff) > CENTIMO);
+  const cogsOffMonths = fyMonthRows.filter((row) => Math.abs(row.cogsDiff) > CENTIMO);
   const selectedCount = selectedKeys.size;
   const canGoToCogs = !plan || !daily || factSquared || ignoredRest;
 
@@ -1680,7 +1749,8 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                 <div>
                   <h3 className="text-lg font-semibold">Resumen FY</h3>
                   <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                    Totales del año: budget vs lo cargado en PBI. Si cuadra aquí, no hace falta entrar a mes ni a celda.
+                    Totales del año frente a PBI. Si el FY descuadra, la tabla de abajo dice en qué mes.
+                    Facturación por línea puede salir OK y aun así acumular céntimos en el total.
                   </p>
                 </div>
                 {fyLabel && (
@@ -1703,47 +1773,60 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                   loaded={fyTotals.cogsLoaded}
                 />
               </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <button
-                  type="button"
-                  onClick={() => setActiveStep(1)}
-                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:bg-[var(--bg-soft)]"
-                >
-                  <p className="text-xs text-[var(--text-secondary)]">Siguiente · por mes</p>
-                  <p className="mt-1 text-sm font-semibold">Facturación</p>
-                  <div className="mt-2">
-                    <StatusBadge ok={factSquared} label={factSquared ? 'Cuadra al céntimo' : `${factBadCount} desfases`} />
+              {fyTotals && (
+                  <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+                    <div className="border-b border-[var(--border)] px-4 py-3">
+                      <h4 className="text-sm font-semibold">Dónde descuadra · por mes</h4>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                        {factOffMonths.length === 0 && cogsOffMonths.length === 0
+                          ? (Math.abs(fyTotals.factLoaded - fyTotals.factBudget) > CENTIMO
+                            || Math.abs(fyTotals.cogsLoaded - fyTotals.cogsBudget) > CENTIMO
+                            ? 'Ningún mes se va más de un céntimo. El desfase FY es residuo acumulado entre líneas; no hace falta tocar.'
+                            : 'Todos los meses cuadran al céntimo.')
+                          : `${factOffMonths.length} mes${factOffMonths.length === 1 ? '' : 'es'} de facturación y ${cogsOffMonths.length} de COGS con desfase.`}
+                      </p>
+                    </div>
+                    <div className="overflow-auto">
+                      <table className="w-full min-w-[880px] border-collapse text-sm">
+                        <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
+                          <tr>
+                            <th className="px-4 py-2 font-medium">Mes</th>
+                            <th className="px-3 py-2 text-right font-medium">Fact. budget</th>
+                            <th className="px-3 py-2 text-right font-medium">Fact. PBI</th>
+                            <th className="px-3 py-2 text-right font-medium">Δ Fact.</th>
+                            <th className="px-3 py-2 text-right font-medium">COGS budget</th>
+                            <th className="px-3 py-2 text-right font-medium">COGS PBI</th>
+                            <th className="px-3 py-2 text-right font-medium">Δ COGS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fyMonthRows.map((row) => {
+                            const factOff = Math.abs(row.factDiff) > CENTIMO;
+                            const cogsOff = Math.abs(row.cogsDiff) > CENTIMO;
+                            return (
+                              <tr
+                                key={row.monthStart}
+                                className={`border-t border-[var(--border)] ${factOff || cogsOff ? 'bg-[var(--danger-soft)]' : ''}`}
+                              >
+                                <td className="px-4 py-2 capitalize">{row.monthLabel}</td>
+                                <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">{formatCurrency(row.factBudget)}</td>
+                                <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">{formatCurrency(row.factLoaded)}</td>
+                                <td className={`px-3 py-2 text-right font-mono text-xs tabular-nums ${factOff ? 'font-semibold text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                                  {formatCurrency(row.factDiff)}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">{formatCurrency(row.cogsBudget)}</td>
+                                <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">{formatCurrency(row.cogsLoaded)}</td>
+                                <td className={`px-3 py-2 text-right font-mono text-xs tabular-nums ${cogsOff ? 'font-semibold text-[var(--danger)]' : 'text-[var(--success)]'}`}>
+                                  {formatCurrency(row.cogsDiff)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!canGoToCogs) return;
-                    setActiveStep(2);
-                  }}
-                  className={`rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:bg-[var(--bg-soft)] ${!canGoToCogs ? 'opacity-45' : ''}`}
-                >
-                  <p className="text-xs text-[var(--text-secondary)]">Siguiente · por mes</p>
-                  <p className="mt-1 text-sm font-semibold">COGS</p>
-                  <div className="mt-2">
-                    <StatusBadge ok={cogsMonthOk} label={cogsMonthOk ? 'Cuadra al céntimo' : `${cogsMismatchRows.length} desfases`} />
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!canGoToCells) return;
-                    setActiveStep(3);
-                  }}
-                  className={`rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:bg-[var(--bg-soft)] ${!canGoToCells ? 'opacity-45' : ''}`}
-                >
-                  <p className="text-xs text-[var(--text-secondary)]">Último · por celda</p>
-                  <p className="mt-1 text-sm font-semibold">COGS vs facturación</p>
-                  <div className="mt-2">
-                    <StatusBadge ok={cellsOk} label={cellsOk ? 'Mismo día OK' : `${dayIssues.length} incidencias`} />
-                  </div>
-                </button>
-              </div>
+              )}
             </section>
           )}
 
