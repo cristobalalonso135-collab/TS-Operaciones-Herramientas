@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
+  CHECKLIST_PRIORITIES,
   CHECKLIST_STATUSES,
   checklistKpis,
   completeChecklistTask,
@@ -19,6 +20,7 @@ import {
   mergeImportedTasks,
   moveById,
   sortByDeadline,
+  sortByPriority,
   subtaskProgress,
   todayIso,
   toggleSubtask,
@@ -27,6 +29,7 @@ import {
   upcomingTasks,
   effectiveDeadline,
   type ChecklistLibrary,
+  type ChecklistPriority,
   type ChecklistState,
   type ChecklistStatus,
   type ChecklistSubtask,
@@ -136,6 +139,22 @@ function DeadlineMark({
   );
 }
 
+function PriorityMark({ value, muted }: { value?: ChecklistPriority | null; muted?: boolean }) {
+  const prioridad = value || 'Media';
+  const tone = muted
+    ? 'bg-[var(--bg-soft)] text-[var(--text-muted)]'
+    : prioridad === 'Alta'
+      ? 'bg-[var(--danger-soft)] text-[var(--danger)]'
+      : prioridad === 'Baja'
+        ? 'bg-[var(--bg-soft)] text-[var(--text-secondary)]'
+        : 'bg-amber-50 text-[var(--warning)]';
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
+      {prioridad}
+    </span>
+  );
+}
+
 function FilterSelect({
   value,
   onChange,
@@ -199,10 +218,11 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [filterArea, setFilterArea] = useState('');
   const [filterOwner, setFilterOwner] = useState('');
   const [filterStatus, setFilterStatus] = useState<ChecklistStatus | ''>('');
+  const [filterPriority, setFilterPriority] = useState<ChecklistPriority | ''>('');
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
-  const [sort, setSort] = useState<{ key: 'deadline' | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'asc' });
+  const [sort, setSort] = useState<{ key: 'deadline' | 'prioridad' | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'asc' });
   const dragRow = useRef<string | null>(null);
   const dragStep = useRef<string | null>(null);
   const [dropRow, setDropRow] = useState<string | null>(null);
@@ -271,20 +291,22 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       if (filterArea && item.area !== filterArea) return false;
       if (filterOwner && item.responsable !== filterOwner) return false;
       if (filterStatus && item.estado !== filterStatus) return false;
+      if (filterPriority && item.prioridad !== filterPriority) return false;
       if (onlyOverdue) {
         if (!isTaskOverdue(item, today)) return false;
       }
       if (q) {
-        const hay = `${item.area} ${item.titulo} ${item.responsable} ${item.comentarios} ${(item.subtasks || []).map((step) => step.titulo).join(' ')}`.toLocaleLowerCase('es');
+        const hay = `${item.area} ${item.titulo} ${item.responsable} ${item.prioridad} ${item.comentarios} ${(item.subtasks || []).map((step) => step.titulo).join(' ')}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [filterArea, filterOwner, filterStatus, onlyOverdue, query, tasks, today]);
+  }, [filterArea, filterOwner, filterPriority, filterStatus, onlyOverdue, query, tasks, today]);
   const groups = useMemo(() => groupByArea(filtered), [filtered]);
   const tableRows = useMemo(() => {
-    if (sort.key !== 'deadline') return filtered;
-    return sortByDeadline(filtered, sort.dir);
+    if (sort.key === 'deadline') return sortByDeadline(filtered, sort.dir);
+    if (sort.key === 'prioridad') return sortByPriority(filtered, sort.dir);
+    return filtered;
   }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
   const weeklyGroups = useMemo(() => {
@@ -299,7 +321,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       }
       map.get(owner)!.push(item);
     });
-    return order.map((owner) => ({ owner, tasks: map.get(owner) || [] }));
+    return order.map((owner) => ({ owner, tasks: sortByPriority(map.get(owner) || []) }));
   }, [filtered]);
   const formReady = Boolean(
     form.titulo.trim()
@@ -326,7 +348,11 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   };
 
   const openTask = (task: ChecklistTask) => {
-    setForm({ ...task, subtasks: (task.subtasks || []).map((item) => ({ ...item })) });
+    setForm({
+      ...task,
+      prioridad: task.prioridad || 'Media',
+      subtasks: (task.subtasks || []).map((item) => ({ ...item })),
+    });
     setEditingId(task.id);
   };
 
@@ -448,6 +474,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       responsable,
       comentarios: form.comentarios.trim(),
       deadline: form.deadline,
+      prioridad: form.prioridad || 'Media',
       completedAt: form.estado === 'Completado' ? (form.completedAt || new Date().toISOString()) : null,
       subtasks: pendingSteps.map((item) => ({
         ...item,
@@ -658,7 +685,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                       className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-left hover:border-[var(--border-strong)]"
                     >
                       <p className="truncate text-xs font-medium">{item.titulo}</p>
-                      <p className="mt-1 text-[11px]">
+                      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <PriorityMark value={item.prioridad} muted={closed} />
                         <DeadlineMark iso={nearest} today={today} closed={closed} />
                       </p>
                     </button>
@@ -686,8 +714,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filterArea} onChange={setFilterArea} label="Área" options={areas} />
             <FilterSelect value={filterOwner} onChange={setFilterOwner} label="Responsable" options={owners} />
             <FilterSelect value={filterStatus} onChange={(value) => setFilterStatus(value as ChecklistStatus | '')} label="Estado" options={[...CHECKLIST_STATUSES]} />
-            {(query || filterArea || filterOwner || filterStatus || onlyOverdue) ? (
-              <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => { setQuery(''); setFilterArea(''); setFilterOwner(''); setFilterStatus(''); setOnlyOverdue(false); }}>Quitar filtros</button>
+            <FilterSelect value={filterPriority} onChange={(value) => setFilterPriority(value as ChecklistPriority | '')} label="Prioridad" options={[...CHECKLIST_PRIORITIES]} />
+            {(query || filterArea || filterOwner || filterStatus || filterPriority || onlyOverdue) ? (
+              <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => { setQuery(''); setFilterArea(''); setFilterOwner(''); setFilterStatus(''); setFilterPriority(''); setOnlyOverdue(false); }}>Quitar filtros</button>
             ) : null}
             <div className="ml-auto flex flex-wrap gap-2">
               <button
@@ -781,6 +810,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                                 />
                               </span>
                               {task.responsable ? <span>{task.responsable}</span> : null}
+                              <PriorityMark value={task.prioridad} muted={closed} />
                               <span>{task.estado}</span>
                               {progress.total > 0 ? <span>{progress.done}/{progress.total} pasos</span> : null}
                             </div>
@@ -845,6 +875,22 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                         >
                           Deadline
                           {sort.key === 'deadline' ? (
+                            sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />
+                          ) : null}
+                        </button>
+                      </th>
+                      <th className="px-3 py-2 font-semibold">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => setSort((current) => (
+                            current.key === 'prioridad'
+                              ? { key: 'prioridad', dir: current.dir === 'asc' ? 'desc' : 'asc' }
+                              : { key: 'prioridad', dir: 'asc' }
+                          ))}
+                        >
+                          Prioridad
+                          {sort.key === 'prioridad' ? (
                             sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />
                           ) : null}
                         </button>
@@ -920,6 +966,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                           <td className="px-3 py-2.5 align-middle">
                             <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
                           </td>
+                          <td className="px-3 py-2.5 align-middle">
+                            <PriorityMark value={task.prioridad} muted={closed} />
+                          </td>
                           <td className="px-3 py-2.5 align-middle">{task.responsable || '—'}</td>
                           <td className="px-3 py-2.5 align-middle">{task.estado}</td>
                           <td className="max-w-[16rem] truncate px-3 py-2.5 align-middle text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
@@ -950,6 +999,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                       <thead className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
                         <tr>
                           <th className="px-3 py-1.5 font-semibold">Tarea</th>
+                          <th className="w-28 px-3 py-1.5 font-semibold">Prioridad</th>
                           <th className="w-40 px-3 py-1.5 font-semibold">Deadline</th>
                           <th className="w-36 px-3 py-1.5 font-semibold">Área</th>
                         </tr>
@@ -972,6 +1022,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                                 ) : null}
                               </td>
                               <td className="px-3 py-1.5 align-top">
+                                <PriorityMark value={task.prioridad} />
+                              </td>
+                              <td className="px-3 py-1.5 align-top">
                                 <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} />
                               </td>
                               <td className="px-3 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
@@ -991,7 +1044,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       {tab === 'importar' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Exporta o importa el checklist entero: tareas, pasos, fechas, estados y responsables. Si la tarea ya existe, se actualiza.
+            Exporta o importa el checklist entero: tareas, prioridad, pasos, fechas, estados y responsables. Si la tarea ya existe, se actualiza.
           </p>
           <button
             type="button"
@@ -1052,7 +1105,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   {editingId === 'new' ? 'Nueva tarea' : (form.titulo || 'Editar tarea')}
                 </p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  {form.area || 'Sin área'}{form.responsable ? ` · ${form.responsable}` : ''}
+                  {form.area || 'Sin área'}{form.responsable ? ` · ${form.responsable}` : ''}{form.prioridad ? ` · ${form.prioridad}` : ''}
                 </p>
               </div>
               <button type="button" onClick={closePanel} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
@@ -1196,6 +1249,29 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                       completedAt: estado === 'Completado' ? (form.completedAt || new Date().toISOString()) : null,
                     })}
                   />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Prioridad *</span>
+                <div className="flex flex-wrap gap-2">
+                  {CHECKLIST_PRIORITIES.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setForm({ ...form, prioridad: item })}
+                      className={`rounded-md border px-3 py-1.5 text-xs ${
+                        form.prioridad === item
+                          ? item === 'Alta'
+                            ? 'border-red-300 bg-[var(--danger-soft)] font-semibold text-[var(--danger)]'
+                            : item === 'Baja'
+                              ? 'border-[var(--border-strong)] bg-[var(--bg-soft)] font-semibold'
+                              : 'border-amber-300 bg-amber-50 font-semibold text-[var(--warning)]'
+                          : 'border-[var(--border)] bg-white'
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  ))}
                 </div>
               </div>
               <label className="block space-y-1">

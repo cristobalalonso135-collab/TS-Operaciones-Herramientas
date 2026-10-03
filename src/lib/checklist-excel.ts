@@ -1,4 +1,4 @@
-import { asStatus, newId, nowIso, type ChecklistSubtask, type ChecklistTask } from '@/lib/checklist-model';
+import { asPriority, asStatus, newId, nowIso, type ChecklistSubtask, type ChecklistTask } from '@/lib/checklist-model';
 
 function cellText(value: unknown): string {
   return String(value ?? '').replace(/\u00a0/g, ' ').trim();
@@ -116,6 +116,7 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fecha
     deadline: findCol(header, ['deadline', 'fecha', 'vencimiento', 'plazo']),
     responsable: findCol(header, ['responsable', 'owner', 'dueño']),
     estado: findCol(header, ['estado', 'status']),
+    prioridad: findCol(header, ['prioridad', 'criticidad', 'priority']),
     comentarios: findCol(header, ['comentarios', 'comentario', 'notas', 'nota']),
     completed: findCol(header, ['completada', 'completedat', 'completed at']),
     created: findCol(header, ['creada', 'createdat', 'created at']),
@@ -134,6 +135,7 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fecha
       deadline: parseDate(col.deadline == null ? '' : row[col.deadline]),
       responsable: cellText(col.responsable == null ? '' : row[col.responsable]),
       estado,
+      prioridad: asPriority(cellText(col.prioridad == null ? '' : row[col.prioridad])),
       comentarios: cellText(col.comentarios == null ? '' : row[col.comentarios]),
       completedAt: completedAt ? `${completedAt}T00:00:00.000Z` : (estado === 'Completado' ? nowIso() : null),
       createdAt: parseDate(col.created == null ? '' : row[col.created]) || nowIso(),
@@ -148,12 +150,13 @@ export function checklistToAoa(nombre: string, fechaEvento: string, tasks: Check
     [nombre],
     ['Fecha evento', fechaEvento || ''],
     [],
-    ['Id', 'Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios', 'Completada', 'Creada', 'Pasos'],
+    ['Id', 'Área', 'Tarea', 'Deadline', 'Prioridad', 'Responsable', 'Estado', 'Comentarios', 'Completada', 'Creada', 'Pasos'],
     ...tasks.map((item) => [
       item.id,
       item.area,
       item.titulo,
       item.deadline || '',
+      item.prioridad || '',
       item.responsable,
       item.estado,
       item.comentarios,

@@ -1,6 +1,9 @@
 export type ChecklistStatus = 'Pendiente' | 'En curso' | 'Completado' | 'Bloqueado' | 'Caducada';
+export type ChecklistPriority = 'Alta' | 'Media' | 'Baja';
 
 export const CHECKLIST_STATUSES: ChecklistStatus[] = ['Pendiente', 'En curso', 'Completado', 'Bloqueado', 'Caducada'];
+export const CHECKLIST_PRIORITIES: ChecklistPriority[] = ['Alta', 'Media', 'Baja'];
+export const DEFAULT_PRIORITY: ChecklistPriority = 'Media';
 
 export interface ChecklistSubtask {
   id: string;
@@ -17,6 +20,7 @@ export interface ChecklistTask {
   deadline: string | null;
   responsable: string;
   estado: ChecklistStatus;
+  prioridad: ChecklistPriority;
   comentarios: string;
   completedAt: string | null;
   createdAt: string;
@@ -57,6 +61,19 @@ export function asStatus(value: string): ChecklistStatus {
   if (['bloqueado', 'blocked', 'parado'].includes(text)) return 'Bloqueado';
   if (['caducada', 'caducado', 'expired', 'expirada'].includes(text)) return 'Caducada';
   return 'Pendiente';
+}
+
+export function asPriority(value: string | null | undefined): ChecklistPriority {
+  const text = String(value || '').trim().toLocaleLowerCase('es');
+  if (['alta', 'alto', 'high', 'urgente', 'crítica', 'critica', 'critical', 'a'].includes(text)) return 'Alta';
+  if (['baja', 'bajo', 'low', 'b'].includes(text)) return 'Baja';
+  return DEFAULT_PRIORITY;
+}
+
+export function priorityRank(priority: ChecklistPriority): number {
+  if (priority === 'Alta') return 0;
+  if (priority === 'Media') return 1;
+  return 2;
 }
 
 export function isClosed(task: ChecklistTask): boolean {
@@ -128,6 +145,7 @@ export function emptyTask(): ChecklistTask {
     deadline: null,
     responsable: '',
     estado: 'Pendiente',
+    prioridad: DEFAULT_PRIORITY,
     comentarios: '',
     completedAt: null,
     createdAt: nowIso(),
@@ -150,6 +168,7 @@ export function seedChecklistState(): ChecklistState {
     deadline,
     responsable,
     estado,
+    prioridad: DEFAULT_PRIORITY,
     comentarios: '',
     completedAt: estado === 'Completado' ? now : null,
     createdAt: now,
@@ -196,6 +215,7 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
         deadline: item.deadline || null,
         responsable: String(item.responsable || '').trim(),
         estado: asStatus(item.estado || 'Pendiente'),
+        prioridad: asPriority(item.prioridad),
         comentarios: String(item.comentarios || '').trim(),
         completedAt: item.completedAt || (asStatus(item.estado || '') === 'Completado' ? nowIso() : null),
         createdAt: item.createdAt || nowIso(),
@@ -235,6 +255,7 @@ export function cloneChecklist(source: ChecklistState): ChecklistState {
       area: task.area,
       titulo: task.titulo,
       responsable: task.responsable,
+      prioridad: task.prioridad || DEFAULT_PRIORITY,
       comentarios: '',
       subtasks: (task.subtasks || []).map((step) => ({
         ...emptySubtask(),
@@ -346,6 +367,21 @@ export function sortByDeadline(
   });
 }
 
+export function sortByPriority(
+  tasks: ChecklistTask[],
+  dir: 'asc' | 'desc' = 'asc',
+): ChecklistTask[] {
+  const sign = dir === 'desc' ? -1 : 1;
+  return tasks.slice().sort((a, b) => {
+    const cmp = (priorityRank(a.prioridad || DEFAULT_PRIORITY) - priorityRank(b.prioridad || DEFAULT_PRIORITY)) * sign;
+    if (cmp) return cmp;
+    const da = a.deadline || effectiveDeadline(a) || '9999';
+    const db = b.deadline || effectiveDeadline(b) || '9999';
+    if (da !== db) return da.localeCompare(db);
+    return a.titulo.localeCompare(b.titulo, 'es');
+  });
+}
+
 export function moveById<T extends { id: string }>(items: T[], fromId: string, toId: string): T[] {
   const from = items.findIndex((item) => item.id === fromId);
   const to = items.findIndex((item) => item.id === toId);
@@ -408,6 +444,7 @@ export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTas
         deadline: item.deadline ?? row.deadline,
         responsable: item.responsable || row.responsable,
         estado: item.estado,
+        prioridad: item.prioridad || row.prioridad,
         comentarios: item.comentarios || row.comentarios,
         completedAt: item.estado === 'Completado' ? (row.completedAt || nowIso()) : null,
         subtasks: item.subtasks?.length ? item.subtasks : row.subtasks,
