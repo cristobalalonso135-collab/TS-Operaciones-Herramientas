@@ -10,6 +10,8 @@ import {
   checklistKpis,
   completeChecklistTask,
   daysUntil,
+  cloneChecklist,
+  emptyChecklist,
   emptyTask,
   emptySubtask,
   ensureWindowSeries,
@@ -33,6 +35,7 @@ import {
   uniqueValues,
   upcomingTasks,
   effectiveDeadline,
+  type ChecklistLibrary,
   type ChecklistRepeat,
   type ChecklistState,
   type ChecklistStatus,
@@ -40,8 +43,8 @@ import {
   type ChecklistTask,
 } from '@/lib/checklist-model';
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
-import { loadChecklistState, saveChecklistState, type ChecklistBackend } from '@/lib/checklist-store';
-import { Check, ChevronDown, ChevronUp, Clock, Download, GripVertical, Plus, Search, Trash2, X } from 'lucide-react';
+import { loadChecklistLibrary, saveChecklistLibrary, type ChecklistBackend } from '@/lib/checklist-store';
+import { Check, ChevronDown, ChevronUp, Clock, Copy, Download, GripVertical, Plus, Search, Trash2, X } from 'lucide-react';
 
 type RepeatFor = 'onComplete' | 'week' | 'month' | '2months' | 'quarter' | 'until';
 
@@ -206,6 +209,8 @@ function StatusSelect({
 
 export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<TabId>('tablero');
+  const [library, setLibrary] = useState<ChecklistLibrary | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [state, setState] = useState<ChecklistState | null>(null);
   const [backend, setBackend] = useState<ChecklistBackend>('local');
   const [setupSql, setSetupSql] = useState<string | null>(null);
@@ -227,12 +232,33 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [spawnAsk, setSpawnAsk] = useState<ChecklistTask | null>(null);
   const today = todayIso();
   const stateRef = useRef<ChecklistState | null>(null);
+  const libraryRef = useRef<ChecklistLibrary | null>(null);
+
+  const persistLibrary = useCallback(async (next: ChecklistLibrary, currentBackend: ChecklistBackend) => {
+    libraryRef.current = next;
+    setLibrary(next);
+    try {
+      await saveChecklistLibrary(next, currentBackend);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No he podido guardar.');
+    }
+  }, []);
 
   const persist = useCallback(async (next: ChecklistState, currentBackend: ChecklistBackend) => {
     const filled = ensureWindowSeries(next.tasks, todayIso());
     const expired = expireOverdueSeries(filled, todayIso());
     const cleaned = { ...next, tasks: expired.tasks };
+    const lib = libraryRef.current;
+    const lists = lib
+      ? (lib.lists.some((item) => item.id === cleaned.id)
+        ? lib.lists.map((item) => (item.id === cleaned.id ? cleaned : item))
+        : [...lib.lists, cleaned])
+      : [cleaned];
+    const nextLib = { lists };
+    libraryRef.current = nextLib;
     stateRef.current = cleaned;
+    setLibrary(nextLib);
     setState(cleaned);
     setError(null);
     if (expired.expired > 0) {
@@ -241,7 +267,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
         : `${expired.expired} tareas han caducado: el periodo se ha acabado.`);
     }
     try {
-      await saveChecklistState(cleaned, currentBackend);
+      await saveChecklistLibrary(nextLib, currentBackend);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No he podido guardar.');
     }
@@ -249,23 +275,28 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     let cancelled = false;
-    loadChecklistState()
+    loadChecklistLibrary()
       .then((result) => {
         if (cancelled) return;
-        const filled = ensureWindowSeries(result.state.tasks, todayIso());
-        const expired = expireOverdueSeries(filled, todayIso());
-        const next = { ...result.state, tasks: expired.tasks };
-        const changed = filled.length !== result.state.tasks.length || expired.expired > 0;
-        stateRef.current = next;
-        setState(next);
+        let expiredCount = 0;
+        const lists = result.library.lists.map((board) => {
+          const filled = ensureWindowSeries(board.tasks, todayIso());
+          const expired = expireOverdueSeries(filled, todayIso());
+          expiredCount += expired.expired;
+          return { ...board, tasks: expired.tasks };
+        });
+        const nextLib = { lists };
+        const changed = result.migrated || lists.some((board, index) => board.tasks.length !== result.library.lists[index].tasks.length) || expiredCount > 0;
+        libraryRef.current = nextLib;
+        setLibrary(nextLib);
         setBackend(result.backend);
         setSetupSql(result.setupSql || null);
-        if (expired.expired > 0) {
-          setAck(expired.expired === 1
+        if (expiredCount > 0) {
+          setAck(expiredCount === 1
             ? '1 tarea ha caducado: el periodo se ha acabado.'
-            : `${expired.expired} tareas han caducado: el periodo se ha acabado.`);
+            : `${expiredCount} tareas han caducado: el periodo se ha acabado.`);
         }
-        if (changed) void saveChecklistState(next, result.backend);
+        if (changed) void saveChecklistLibrary(nextLib, result.backend);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'No he podido cargar el checklist.');
@@ -330,6 +361,64 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
 
   const closePanel = () => {
     setEditingId(null);
+  };
+
+  const openBoard = (id: string) => {
+    const board = libraryRef.current?.lists.find((item) => item.id === id);
+    if (!board) return;
+    setOpenId(id);
+    setTab('tablero');
+    setQuery('');
+    setFilterArea('');
+    setFilterOwner('');
+    setFilterStatus('');
+    setOnlyOverdue(false);
+    setSort({ key: null, dir: 'asc' });
+    stateRef.current = board;
+    setState(board);
+  };
+
+  const closeBoard = () => {
+    setOpenId(null);
+    setEditingId(null);
+    setSpawnAsk(null);
+    stateRef.current = null;
+    setState(null);
+  };
+
+  const createBoard = () => {
+    const board = emptyChecklist();
+    const lib = libraryRef.current || { lists: [] };
+    const nextLib = { lists: [...lib.lists, board] };
+    libraryRef.current = nextLib;
+    void persistLibrary(nextLib, backend);
+    stateRef.current = board;
+    setState(board);
+    setOpenId(board.id);
+    setTab('tablero');
+  };
+
+  const duplicateBoard = (source: ChecklistState) => {
+    const board = cloneChecklist(source);
+    const lib = libraryRef.current || { lists: [] };
+    const nextLib = { lists: [...lib.lists, board] };
+    libraryRef.current = nextLib;
+    void persistLibrary(nextLib, backend);
+    stateRef.current = board;
+    setState(board);
+    setOpenId(board.id);
+    setTab('tablero');
+    setAck(`Plantilla copiada. Ponle nombre y fechas a ${board.nombre}.`);
+  };
+
+  const removeBoard = (id: string) => {
+    const lib = libraryRef.current;
+    if (!lib || lib.lists.length < 2) return;
+    const board = lib.lists.find((item) => item.id === id);
+    if (!board || !window.confirm(`¿Quitar “${board.nombre}”?`)) return;
+    const nextLib = { lists: lib.lists.filter((item) => item.id !== id) };
+    void persistLibrary(nextLib, backend);
+    if (openId === id) closeBoard();
   };
 
   const markDone = (task: ChecklistTask) => {
@@ -488,13 +577,110 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [editingId]);
 
-  if (!state) {
+  if (!library) {
     return <p className="p-6 text-sm text-[var(--text-secondary)]">Cargando checklist…</p>;
+  }
+
+  if (!openId || !state) {
+    return (
+      <div className="space-y-4">
+        <WorkspaceChrome
+          onBack={onBack}
+          tabs={[{ id: 'listas', label: 'Listas' }]}
+          active="listas"
+          onSelect={() => undefined}
+        />
+        {setupSql && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <p className="font-semibold">Falta la tabla en Supabase. Pégalo en el SQL Editor:</p>
+            <textarea readOnly className="mt-2 h-28 w-full rounded-md border border-amber-200 bg-white p-2 font-mono text-[11px]" value={setupSql} />
+          </div>
+        )}
+        {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>}
+        {ack && (
+          <div className="rounded-lg border border-[var(--success)] bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
+            {ack}
+          </div>
+        )}
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">08 Checklist</p>
+          <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h2 className="font-display text-2xl font-semibold tracking-tight">Checklists</h2>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                Cada una es independiente. Duplica una para usarla de plantilla en la siguiente.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={createBoard}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
+            >
+              <Plus className="h-3.5 w-3.5" /> Nueva checklist
+            </button>
+          </div>
+        </section>
+        <div className="grid gap-3">
+          {library.lists.map((board) => {
+            const kpis = checklistKpis(board.tasks, today);
+            return (
+              <article key={board.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <button type="button" onClick={() => openBoard(board.id)} className="min-w-0 flex-1 text-left">
+                    <p className="font-display text-lg font-semibold tracking-tight">{board.nombre}</p>
+                    <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                      {board.fechaEvento ? `Evento ${formatIsoDate(board.fechaEvento)}` : 'Sin fecha de evento'}
+                      {' · '}{kpis.done}/{kpis.total || 0} hechas
+                      {kpis.overdue > 0 ? ` · ${kpis.overdue} vencidas` : ''}
+                    </p>
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+                      <div className="h-full rounded-full bg-[var(--success)]" style={{ width: `${Math.round(kpis.share * 100)}%` }} />
+                    </div>
+                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openBoard(board.id)}
+                      className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
+                    >
+                      Abrir
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => duplicateBoard(board)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
+                    >
+                      <Copy className="h-3.5 w-3.5" /> Duplicar plantilla
+                    </button>
+                    {library.lists.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => removeBoard(board.id)}
+                        className="inline-flex h-9 items-center rounded-md px-2 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                        aria-label="Quitar checklist"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
-      <WorkspaceChrome onBack={onBack} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
+      <WorkspaceChrome
+        onBack={closeBoard}
+        backLabel="Checklists"
+        tabs={[...TABS]}
+        active={tab}
+        onSelect={(id) => setTab(id as TabId)}
+      />
 
       {setupSql && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

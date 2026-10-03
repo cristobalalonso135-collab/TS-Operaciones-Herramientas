@@ -32,10 +32,18 @@ export interface ChecklistTask {
 }
 
 export interface ChecklistState {
+  id: string;
   nombre: string;
   fechaEvento: string;
   tasks: ChecklistTask[];
 }
+
+export interface ChecklistLibrary {
+  lists: ChecklistState[];
+}
+
+export const CONVENTION_CHECKLIST_ID = 'convencion-2728';
+export const CONVENTION_CHECKLIST_NAME = 'I Convención Teamsports 27/28';
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -242,7 +250,8 @@ export function seedChecklistState(): ChecklistState {
     subtasks: [],
   });
   return {
-    nombre: 'I Convención Teamsports GS 27/28',
+    id: CONVENTION_CHECKLIST_ID,
+    nombre: CONVENTION_CHECKLIST_NAME,
     fechaEvento: '2026-11-10',
     tasks: [
       row('Organización', 'Analizar si hay eventos en Zaragoza en esas fechas', '2026-09-09', 'Santi/Cristóbal', 'Completado'),
@@ -296,10 +305,60 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
     }).filter((item) => item.titulo)
     : seeded.tasks;
   return {
-    nombre: String(state?.nombre || '').trim() || seeded.nombre,
+    id: String(state?.id || '').trim() || newId('cl'),
+    nombre: canonicalChecklistName(String(state?.nombre || '').trim() || seeded.nombre),
     fechaEvento: String(state?.fechaEvento || '').slice(0, 10) || seeded.fechaEvento,
     tasks,
   };
+}
+
+function canonicalChecklistName(nombre: string): string {
+  if (nombre === 'I Convención Teamsports GS 27/28') return CONVENTION_CHECKLIST_NAME;
+  return nombre;
+}
+
+export function emptyChecklist(): ChecklistState {
+  return {
+    id: newId('cl'),
+    nombre: 'Nueva checklist',
+    fechaEvento: '',
+    tasks: [],
+  };
+}
+
+export function cloneChecklist(source: ChecklistState): ChecklistState {
+  return {
+    id: newId('cl'),
+    nombre: `Copia de ${source.nombre}`,
+    fechaEvento: '',
+    tasks: source.tasks.map((task) => ({
+      ...emptyTask(),
+      area: task.area,
+      titulo: task.titulo,
+      responsable: task.responsable,
+      comentarios: '',
+      repeat: 'none',
+      subtasks: (task.subtasks || []).map((step) => ({
+        ...emptySubtask(),
+        titulo: step.titulo,
+      })),
+    })),
+  };
+}
+
+export function asChecklistLibrary(value: unknown): ChecklistLibrary {
+  if (value && typeof value === 'object' && Array.isArray((value as ChecklistLibrary).lists)) {
+    const lists = (value as ChecklistLibrary).lists.map((item) => normalizeChecklist(item));
+    if (lists.length) return { lists };
+  }
+  if (value && typeof value === 'object' && Array.isArray((value as ChecklistState).tasks)) {
+    const board = normalizeChecklist({
+      ...(value as ChecklistState),
+      id: (value as ChecklistState).id || CONVENTION_CHECKLIST_ID,
+    });
+    return { lists: [board] };
+  }
+  return { lists: [seedChecklistState()] };
 }
 
 export function daysUntil(iso: string | null | undefined, today = todayIso()): number | null {

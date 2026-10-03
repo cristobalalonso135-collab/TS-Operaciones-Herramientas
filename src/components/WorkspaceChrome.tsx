@@ -9,11 +9,13 @@ interface WorkspaceTab {
 
 export default function WorkspaceChrome({
   onBack,
+  backLabel = 'Herramientas',
   tabs,
   active,
   onSelect,
 }: {
   onBack: () => void;
+  backLabel?: string;
   tabs: WorkspaceTab[];
   active: string;
   onSelect: (id: string) => void;
@@ -26,7 +28,7 @@ export default function WorkspaceChrome({
         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
       >
         <ArrowLeft className="h-4 w-4" />
-        Herramientas
+        {backLabel}
       </button>
       <div className="flex flex-wrap rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-1">
         {tabs.map((tab) => (

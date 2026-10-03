@@ -734,7 +734,7 @@ export default function Home() {
         id: 'checklist' as const,
         number: '08',
         title: 'Checklist',
-        description: 'Cuenta atrás y tareas de la convención (o de lo que toque). Completar, añadir, quitar, importar y descargar Excel.',
+        description: 'Varias checklists. De momento la I Convención Teamsports 27/28; se duplica como plantilla cuando haga falta otra.',
         tone: 'bg-[#f4e6da] text-[#8a4b2a]',
         link: 'text-[#8a4b2a]',
       },

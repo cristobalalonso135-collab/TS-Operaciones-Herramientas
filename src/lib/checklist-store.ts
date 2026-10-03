@@ -1,12 +1,13 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isMissingTableError } from '@/lib/seguimiento-db';
 import {
-  normalizeChecklist,
+  asChecklistLibrary,
   seedChecklistState,
-  type ChecklistState,
+  type ChecklistLibrary,
 } from '@/lib/checklist-model';
 
-const LOCAL_KEY = 'ts-checklist-v1';
+const LOCAL_KEY = 'ts-checklist-v2';
+const LOCAL_KEY_V1 = 'ts-checklist-v1';
 const STORE_ID = 'main';
 
 export const CHECKLIST_SETUP_SQL = `CREATE TABLE IF NOT EXISTS checklist_store (
@@ -29,26 +30,33 @@ CREATE POLICY checklist_store_delete ON checklist_store FOR DELETE USING (true);
 
 export type ChecklistBackend = 'supabase' | 'local';
 
-function isState(value: unknown): value is ChecklistState {
+function looksLikePayload(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  return Array.isArray((value as ChecklistState).tasks);
+  const row = value as { lists?: unknown; tasks?: unknown };
+  return Array.isArray(row.lists) || Array.isArray(row.tasks);
 }
 
-function readLocal(): ChecklistState {
-  if (typeof window === 'undefined') return seedChecklistState();
+function wasLegacy(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as { lists?: unknown; tasks?: unknown };
+  return Array.isArray(row.tasks) && !Array.isArray(row.lists);
+}
+
+function readLocal(): ChecklistLibrary {
+  if (typeof window === 'undefined') return { lists: [seedChecklistState()] };
   try {
-    const raw = window.localStorage.getItem(LOCAL_KEY);
-    if (!raw) return seedChecklistState();
+    const raw = window.localStorage.getItem(LOCAL_KEY) || window.localStorage.getItem(LOCAL_KEY_V1);
+    if (!raw) return { lists: [seedChecklistState()] };
     const parsed = JSON.parse(raw) as unknown;
-    return isState(parsed) ? normalizeChecklist(parsed) : seedChecklistState();
+    return looksLikePayload(parsed) ? asChecklistLibrary(parsed) : { lists: [seedChecklistState()] };
   } catch {
-    return seedChecklistState();
+    return { lists: [seedChecklistState()] };
   }
 }
 
-function writeLocal(state: ChecklistState) {
+function writeLocal(library: ChecklistLibrary) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
+  window.localStorage.setItem(LOCAL_KEY, JSON.stringify(library));
 }
 
 function requireClient() {
@@ -56,39 +64,38 @@ function requireClient() {
   return supabase;
 }
 
-export async function loadChecklistState(): Promise<{ state: ChecklistState; backend: ChecklistBackend; setupSql?: string }> {
+export async function loadChecklistLibrary(): Promise<{ library: ChecklistLibrary; backend: ChecklistBackend; setupSql?: string; migrated?: boolean }> {
   try {
     const client = requireClient();
     const { data, error } = await client.from('checklist_store').select('payload').eq('id', STORE_ID).maybeSingle();
     if (error) {
-      if (isMissingTableError(error.message)) return { state: readLocal(), backend: 'local', setupSql: CHECKLIST_SETUP_SQL };
+      if (isMissingTableError(error.message)) return { library: readLocal(), backend: 'local', setupSql: CHECKLIST_SETUP_SQL };
       throw new Error(error.message);
     }
-    if (data?.payload && isState(data.payload)) {
-      return { state: normalizeChecklist(data.payload), backend: 'supabase' };
+    if (data?.payload && looksLikePayload(data.payload)) {
+      const migrated = wasLegacy(data.payload);
+      return { library: asChecklistLibrary(data.payload), backend: 'supabase', migrated };
     }
-    const seeded = seedChecklistState();
+    const seeded = { lists: [seedChecklistState()] };
     const { error: upError } = await client.from('checklist_store').upsert({
       id: STORE_ID,
       saved_at: new Date().toISOString(),
       payload: seeded,
     }, { onConflict: 'id' });
     if (upError) {
-      if (isMissingTableError(upError.message)) return { state: seeded, backend: 'local', setupSql: CHECKLIST_SETUP_SQL };
+      if (isMissingTableError(upError.message)) return { library: seeded, backend: 'local', setupSql: CHECKLIST_SETUP_SQL };
       throw new Error(upError.message);
     }
-    return { state: seeded, backend: 'supabase' };
+    return { library: seeded, backend: 'supabase' };
   } catch {
-    return { state: readLocal(), backend: 'local', setupSql: CHECKLIST_SETUP_SQL };
+    return { library: readLocal(), backend: 'local', setupSql: CHECKLIST_SETUP_SQL };
   }
 }
 
-export async function saveChecklistState(state: ChecklistState, backend: ChecklistBackend): Promise<void> {
-  const next = normalizeChecklist(state);
-  if (backend === 'local') {
-    writeLocal(next);
-    return;
-  }
+export async function saveChecklistLibrary(library: ChecklistLibrary, backend: ChecklistBackend): Promise<void> {
+  const next = asChecklistLibrary(library);
+  writeLocal(next);
+  if (backend === 'local') return;
   const client = requireClient();
   const { error } = await client.from('checklist_store').upsert({
     id: STORE_ID,
@@ -96,7 +103,6 @@ export async function saveChecklistState(state: ChecklistState, backend: Checkli
     payload: next,
   }, { onConflict: 'id' });
   if (error) {
-    writeLocal(next);
     throw new Error(error.message);
   }
 }
