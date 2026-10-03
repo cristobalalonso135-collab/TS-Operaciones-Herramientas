@@ -212,6 +212,32 @@ function StatusSelect({
   );
 }
 
+function missingChecklistFields(form: ChecklistTask): Array<{ key: string; label: string }> {
+  const missing: Array<{ key: string; label: string }> = [];
+  if (!form.titulo.trim()) missing.push({ key: 'titulo', label: 'Tarea' });
+  if (!form.area.trim()) missing.push({ key: 'area', label: 'Área' });
+  if (!form.responsable.trim()) missing.push({ key: 'responsable', label: 'Responsable' });
+  if (!form.deadline) missing.push({ key: 'deadline', label: 'Deadline' });
+  (form.subtasks || []).forEach((step, index) => {
+    const title = step.titulo.trim();
+    const hasDate = Boolean(step.deadline);
+    if (!title && !hasDate) return;
+    if (!title) missing.push({ key: `paso-title-${step.id}`, label: `texto del paso ${index + 1}` });
+    if (!hasDate) missing.push({ key: `paso-date-${step.id}`, label: `fecha del paso ${index + 1}` });
+  });
+  return missing;
+}
+
+function joinEs(items: string[]): string {
+  if (items.length <= 1) return items[0] || '';
+  if (items.length === 2) return `${items[0]} y ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+}
+
+function fieldClass(invalid: boolean, extra = ''): string {
+  return `rounded-md border bg-white text-sm ${invalid ? 'border-[var(--danger)]' : 'border-[var(--border)]'} ${extra}`;
+}
+
 export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<TabId>('tabla');
   const [library, setLibrary] = useState<ChecklistLibrary | null>(null);
@@ -234,6 +260,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [dropRow, setDropRow] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState<ChecklistTask>(() => emptyTask());
+  const [askedSave, setAskedSave] = useState(false);
   const today = todayIso();
   const stateRef = useRef<ChecklistState | null>(null);
   const libraryRef = useRef<ChecklistLibrary | null>(null);
@@ -330,13 +357,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return order.map((owner) => ({ owner, tasks: sortByPriority(map.get(owner) || []) }));
   }, [tasks]);
   const weeklyPending = weeklyGroups.reduce((sum, group) => sum + group.tasks.length, 0);
-  const formReady = Boolean(
-    form.titulo.trim()
-    && form.area.trim()
-    && form.responsable.trim()
-    && form.deadline
-    && !(form.subtasks || []).filter((item) => item.titulo.trim()).some((item) => !item.deadline),
-  );
+  const formGaps = askedSave ? missingChecklistFields(form) : [];
+  const gapKeys = new Set(formGaps.map((item) => item.key));
 
   const patchTask = (id: string, update: Partial<ChecklistTask>, save = true) => {
     const current = stateRef.current;
@@ -361,15 +383,18 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       subtasks: (task.subtasks || []).map((item) => ({ ...item })),
     });
     setEditingId(task.id);
+    setAskedSave(false);
   };
 
   const openNew = () => {
     setForm(emptyTask());
     setEditingId('new');
+    setAskedSave(false);
   };
 
   const closePanel = () => {
     setEditingId(null);
+    setAskedSave(false);
   };
 
   const openBoard = (id: string) => {
@@ -390,6 +415,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const closeBoard = () => {
     setOpenId(null);
     setEditingId(null);
+    setAskedSave(false);
     stateRef.current = null;
     setState(null);
   };
@@ -466,12 +492,16 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   };
 
   const saveForm = () => {
+    const gaps = missingChecklistFields(form);
+    if (gaps.length) {
+      setAskedSave(true);
+      return;
+    }
+    setAskedSave(false);
     const titulo = form.titulo.trim();
     const area = form.area.trim();
     const responsable = form.responsable.trim();
-    if (!titulo || !area || !responsable || !form.deadline) return;
     const pendingSteps = (form.subtasks || []).filter((item) => item.titulo.trim());
-    if (pendingSteps.some((item) => !item.deadline)) return;
     const current = stateRef.current;
     if (!current) return;
     const nextTask: ChecklistTask = {
@@ -909,7 +939,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   </thead>
                   <tbody>
                     {tableRows.map((task) => {
-                      const progress = subtaskProgress(task);
                       const closed = task.estado === 'Completado' || task.estado === 'Caducada';
                       return (
                         <tr
@@ -932,7 +961,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             if (dropRow === task.id) setDropRow(null);
                           }}
                         >
-                          <td className="px-3 py-2.5 align-middle" onClick={(event) => event.stopPropagation()}>
+                          <td className="px-3 py-2.5 align-top" onClick={(event) => event.stopPropagation()}>
                             <div className="flex items-center gap-1.5">
                               <span
                                 draggable
@@ -961,24 +990,31 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               </button>
                             </div>
                           </td>
-                          <td className="px-3 py-2.5 align-middle text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className={`px-3 py-2.5 align-middle ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
+                          <td className="px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
+                          <td className={`px-3 py-2.5 align-top ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
                             {task.titulo}
-                            {progress.total > 0 ? (
-                              <span className="mt-0.5 block text-[11px] font-normal text-[var(--text-muted)] no-underline">
-                                {progress.done}/{progress.total} pasos
-                              </span>
+                            {(task.subtasks || []).length > 0 ? (
+                              <ul className="mt-1.5 space-y-1 font-normal no-underline">
+                                {task.subtasks.map((step) => (
+                                  <li key={step.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                    <span className={step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)]'}>
+                                      {step.done ? '✓ ' : '· '}{step.titulo}
+                                    </span>
+                                    <DeadlineMark iso={step.deadline} today={today} closed={step.done || closed} />
+                                  </li>
+                                ))}
+                              </ul>
                             ) : null}
                           </td>
-                          <td className="px-3 py-2.5 align-middle">
+                          <td className="px-3 py-2.5 align-top">
                             <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
                           </td>
-                          <td className="px-3 py-2.5 align-middle">
+                          <td className="px-3 py-2.5 align-top">
                             <PriorityMark value={task.prioridad} muted={closed} />
                           </td>
-                          <td className="px-3 py-2.5 align-middle">{task.responsable || '—'}</td>
-                          <td className="px-3 py-2.5 align-middle">{task.estado}</td>
-                          <td className="max-w-[16rem] truncate px-3 py-2.5 align-middle text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
+                          <td className="px-3 py-2.5 align-top">{task.responsable || '—'}</td>
+                          <td className="px-3 py-2.5 align-top">{task.estado}</td>
+                          <td className="max-w-[16rem] truncate px-3 py-2.5 align-top text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
                         </tr>
                       );
                     })}
@@ -1133,7 +1169,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   autoFocus
                   value={form.titulo}
                   onChange={(e) => setForm({ ...form, titulo: e.target.value })}
-                  className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  className={fieldClass(gapKeys.has('titulo'), 'h-10 w-full px-3')}
                   placeholder="Qué hay que hacer"
                 />
               </label>
@@ -1198,15 +1234,14 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                           <input
                             value={step.titulo}
                             onChange={(e) => setFormSub(step.id, { titulo: e.target.value })}
-                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm"
+                            className={fieldClass(gapKeys.has(`paso-title-${step.id}`), 'h-9 w-full px-2.5')}
                             placeholder={`${index + 1}. Qué hay que hacer *`}
                           />
                           <input
                             type="date"
-                            required
                             value={step.deadline || ''}
                             onChange={(e) => setFormSub(step.id, { deadline: e.target.value || null })}
-                            className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm sm:w-40"
+                            className={fieldClass(gapKeys.has(`paso-date-${step.id}`), 'h-9 w-full px-2.5 sm:w-40')}
                           />
                         </div>
                         <button
@@ -1229,7 +1264,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     list="ck-areas"
                     value={form.area}
                     onChange={(e) => setForm({ ...form, area: e.target.value })}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    className={fieldClass(gapKeys.has('area'), 'h-10 w-full px-3')}
                     placeholder="Organización, Logística…"
                   />
                 </label>
@@ -1239,7 +1274,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     list="ck-owners"
                     value={form.responsable}
                     onChange={(e) => setForm({ ...form, responsable: e.target.value })}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    className={fieldClass(gapKeys.has('responsable'), 'h-10 w-full px-3')}
                     placeholder="Quién lo lleva"
                   />
                 </label>
@@ -1249,7 +1284,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     type="date"
                     value={form.deadline || ''}
                     onChange={(e) => setForm({ ...form, deadline: e.target.value || null })}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    className={fieldClass(gapKeys.has('deadline'), 'h-10 w-full px-3')}
                   />
                 </label>
                 <div className="space-y-1">
@@ -1298,12 +1333,16 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   placeholder="Notas, menús, alergias, lo que falte…"
                 />
               </label>
+              {formGaps.length > 0 ? (
+                <p className="text-sm text-[var(--danger)]">
+                  Rellena estos campos: {joinEs(formGaps.map((item) => item.label))}.
+                </p>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
                   onClick={saveForm}
-                  disabled={!formReady}
-                  className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                  className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
                 >
                   Guardar
                 </button>
