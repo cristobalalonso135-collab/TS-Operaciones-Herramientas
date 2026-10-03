@@ -102,7 +102,7 @@ interface BudgetFileValidatorToolProps {
   hideBack?: boolean;
 }
 
-type ValidatorStep = 1 | 2 | 3;
+type ValidatorStep = 0 | 1 | 2 | 3;
 type SortDirection = 'asc' | 'desc';
 type FactSortKey = 'line' | 'month' | 'budget' | 'diario' | 'diff';
 
@@ -1115,6 +1115,14 @@ function buildSelectedDayCogsCorrection(
   };
 }
 
+function sumMapField<T>(map: Map<string, T>, pick: (item: T) => number): number {
+  let total = 0;
+  map.forEach((item) => {
+    total += pick(item);
+  });
+  return roundMoney(total);
+}
+
 function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${
@@ -1126,10 +1134,48 @@ function StatusBadge({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
+function GlanceCard({
+  title,
+  budgetLabel,
+  loadedLabel,
+  budget,
+  loaded,
+}: {
+  title: string;
+  budgetLabel: string;
+  loadedLabel: string;
+  budget: number;
+  loaded: number;
+}) {
+  const diff = roundMoney(loaded - budget);
+  const ok = Math.abs(diff) <= CENTIMO;
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-semibold">{title}</p>
+        <StatusBadge ok={ok} label={ok ? 'Cuadra' : 'Desviación'} />
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{budgetLabel}</p>
+          <p className="mt-1 text-xl font-semibold tabular-nums">{formatCurrency(budget)}</p>
+        </div>
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">{loadedLabel}</p>
+          <p className="mt-1 text-xl font-semibold tabular-nums">{formatCurrency(loaded)}</p>
+        </div>
+      </div>
+      <p className={`mt-4 text-sm font-medium ${ok ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
+        {ok ? 'Sin desfase al céntimo.' : `Desfase ${formatCurrency(diff)}`}
+      </p>
+    </div>
+  );
+}
+
 export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFileValidatorToolProps) {
   const [dailyWorkbook, setDailyWorkbook] = useState<WorkbookUpload | null>(null);
   const [planWorkbook, setPlanWorkbook] = useState<WorkbookUpload | null>(null);
-  const [activeStep, setActiveStep] = useState<ValidatorStep>(1);
+  const [activeStep, setActiveStep] = useState<ValidatorStep>(0);
   const [query, setQuery] = useState('');
   const [onlyMismatches, setOnlyMismatches] = useState(true);
   const [onlyFixable, setOnlyFixable] = useState(false);
@@ -1162,6 +1208,7 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
     setSelectedDayKeys(new Set());
     setIgnoredRest(false);
     setIgnoredCogsRest(false);
+    setActiveStep(0);
   }, [dailyWorkbook?.fileName, planWorkbook?.fileName]);
 
   const mismatchRows = useMemo(() => factRows.filter((row) => row.status !== 'ok'), [factRows]);
@@ -1174,6 +1221,19 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
   );
   const remainingDiff = roundMoney(factTotalDiff - selectedDiff);
   const factSquared = factRows.length > 0 && factBadCount === 0;
+  const fyTotals = useMemo(() => {
+    if (!plan || !daily) return null;
+    const factBudget = sumMapField(plan.lines, (line) => line.facturacion);
+    const factLoaded = sumMapField(daily.months, (line) => line.facturacion);
+    const cogsBudget = sumMapField(plan.lines, (line) => line.cogs);
+    const cogsLoaded = sumMapField(daily.months, (line) => line.cogs);
+    return {
+      factBudget,
+      factLoaded,
+      cogsBudget,
+      cogsLoaded,
+    };
+  }, [plan, daily]);
   const selectedCount = selectedKeys.size;
   const canGoToCogs = !plan || !daily || factSquared || ignoredRest;
 
@@ -1525,14 +1585,16 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
             <h2 className="mt-1 text-2xl font-semibold tracking-tight">Validador budget</h2>
             <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              Marca filas → Aplicar (se reajusta en pantalla) → Descargar el mismo archivo diario ya corregido.
+              Compara lo cargado en PBI contra el budget. El resumen FY te dice de un vistazo si cuadra;
+              si hay desfase, baja a facturación y COGS por mes y, al final, a cada celda.
             </p>
           </div>
           <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-1">
             {([
-              [1, '1 · Facturación'],
-              [2, '2 · COGS mes'],
-              [3, '3 · Celdas'],
+              [0, 'Resumen'],
+              [1, 'Facturación'],
+              [2, 'COGS'],
+              [3, 'Celdas'],
             ] as const).map(([step, label]) => (
               <button
                 key={step}
@@ -1608,41 +1670,84 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
 
       {!plan || !daily ? (
         <div className="rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--bg-soft)] px-4 py-8 text-center text-sm text-[var(--text-secondary)]">
-          Sube los dos archivos para empezar la validación.
+          Sube los dos archivos para comparar lo cargado en PBI contra el budget.
         </div>
       ) : (
         <>
-          <section className="grid gap-3 md:grid-cols-5">
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">FY analizado</p>
-              <p className="mt-1 text-sm font-semibold">{fyLabel}</p>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Facturación</p>
-              <div className="mt-2">
-                <StatusBadge ok={factSquared} label={factSquared ? 'Cuadra al céntimo' : `${factBadCount} desfases`} />
+          {activeStep === 0 && fyTotals && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-lg font-semibold">Resumen FY</h3>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                    Totales del año: budget vs lo cargado en PBI. Si cuadra aquí, no hace falta entrar a mes ni a celda.
+                  </p>
+                </div>
+                {fyLabel && (
+                  <p className="text-xs font-medium text-[var(--text-muted)]">{fyLabel}</p>
+                )}
               </div>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">COGS mes</p>
-              <div className="mt-2">
-                <StatusBadge ok={cogsMonthOk} label={cogsMonthOk ? 'Cuadra al céntimo' : `${cogsMismatchRows.length} desfases`} />
+              <div className="grid gap-4 lg:grid-cols-2">
+                <GlanceCard
+                  title="Facturación"
+                  budgetLabel="Facturación budget"
+                  loadedLabel="Facturación FY (PBI)"
+                  budget={fyTotals.factBudget}
+                  loaded={fyTotals.factLoaded}
+                />
+                <GlanceCard
+                  title="COGS"
+                  budgetLabel="COGS budget"
+                  loadedLabel="COGS cargado (PBI)"
+                  budget={fyTotals.cogsBudget}
+                  loaded={fyTotals.cogsLoaded}
+                />
               </div>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Celdas</p>
-              <div className="mt-2">
-                <StatusBadge ok={cellsOk} label={cellsOk ? 'Mismo día OK' : `${dayIssues.length} incidencias`} />
+              <div className="grid gap-3 md:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => setActiveStep(1)}
+                  className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:bg-[var(--bg-soft)]"
+                >
+                  <p className="text-xs text-[var(--text-secondary)]">Siguiente · por mes</p>
+                  <p className="mt-1 text-sm font-semibold">Facturación</p>
+                  <div className="mt-2">
+                    <StatusBadge ok={factSquared} label={factSquared ? 'Cuadra al céntimo' : `${factBadCount} desfases`} />
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canGoToCogs) return;
+                    setActiveStep(2);
+                  }}
+                  className={`rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:bg-[var(--bg-soft)] ${!canGoToCogs ? 'opacity-45' : ''}`}
+                >
+                  <p className="text-xs text-[var(--text-secondary)]">Siguiente · por mes</p>
+                  <p className="mt-1 text-sm font-semibold">COGS</p>
+                  <div className="mt-2">
+                    <StatusBadge ok={cogsMonthOk} label={cogsMonthOk ? 'Cuadra al céntimo' : `${cogsMismatchRows.length} desfases`} />
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canGoToCells) return;
+                    setActiveStep(3);
+                  }}
+                  className={`rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4 text-left transition hover:bg-[var(--bg-soft)] ${!canGoToCells ? 'opacity-45' : ''}`}
+                >
+                  <p className="text-xs text-[var(--text-secondary)]">Último · por celda</p>
+                  <p className="mt-1 text-sm font-semibold">COGS vs facturación</p>
+                  <div className="mt-2">
+                    <StatusBadge ok={cellsOk} label={cellsOk ? 'Mismo día OK' : `${dayIssues.length} incidencias`} />
+                  </div>
+                </button>
               </div>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-xs text-[var(--text-secondary)]">Desfase facturación neto</p>
-              <p className={`mt-1 text-lg font-semibold ${Math.abs(factTotalDiff) <= CENTIMO ? 'text-[var(--success)]' : 'text-[var(--danger)]'}`}>
-                {formatCurrency(factTotalDiff)}
-              </p>
-            </div>
-          </section>
+            </section>
+          )}
 
+          {activeStep !== 0 && (
           <section className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
             <div className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -1674,16 +1779,17 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
               </label>
             )}
           </section>
+          )}
 
           {activeStep === 1 && (
             <section className="space-y-4">
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="max-w-2xl">
-                    <h3 className="text-lg font-semibold">Paso 1 · Facturación</h3>
+                    <h3 className="text-lg font-semibold">Facturación por mes</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Marca las filas, pulsa Aplicar para reajustar lo de pantalla, y luego descarga el archivo diario.
-                      Lo no marcado no se toca. Si el resto lo harás a mano, ignora y pasa a COGS.
+                      Compara cada línea/mes de facturación del diario PBI contra el budget.
+                      Marca, aplica y descarga si hay que reajustar. Lo no marcado no se toca.
                     </p>
                     <p className="mt-2 text-xs text-[var(--text-secondary)]">
                       Desfases: {factBadCount} · Autoajustables: {factFixableCount} · Sin diario: {factUnfixableCount} · Marcadas: {selectedCount}
@@ -1781,7 +1887,7 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                       ) : filteredFactRows.map((row) => (
                         <tr
                           key={row.key}
-                          className={`border-b border-[var(--border)] align-top ${row.fixable ? '' : 'bg-[var(--bg-soft)]/70'}`}
+                          className={`border-b border-[var(--border)] align-top ${row.fixable ? '' : 'bg-[var(--bg-soft)]'}`}
                         >
                           <td className="px-3 py-2">
                             <input
@@ -1808,14 +1914,14 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
               </div>
 
               {factUnfixableCount > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <div className="rounded-lg border border-[var(--warning-soft)] bg-[var(--warning-soft)] px-4 py-3 text-sm text-[var(--warning)]">
                   {factUnfixableCount} filas no tienen diario usable (gris, sin checkbox). Esas las dejas para ti o las revisas aparte.
                 </div>
               )}
 
               {factSquared && (
-                <div className="rounded-lg border border-green-200 bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
-                  Facturación cuadrada. Pasa al paso 2 para COGS.
+                <div className="rounded-lg border border-[var(--success-soft)] bg-[var(--success-soft)] px-4 py-3 text-sm text-[var(--success)]">
+                  Facturación cuadrada. Pasa a COGS por mes.
                 </div>
               )}
             </section>
@@ -1826,10 +1932,10 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="max-w-2xl">
-                    <h3 className="text-lg font-semibold">Paso 2 · COGS mensuales</h3>
+                    <h3 className="text-lg font-semibold">COGS por mes</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Marca filas/meses, pulsa Aplicar para recalcular COGS en pantalla (mismo día + % del budget),
-                      y descarga el archivo diario. Lo no marcado no se toca.
+                      Compara cada línea/mes de COGS del diario PBI contra el budget.
+                      Marca, aplica (mismo día + % del budget) y descarga. Lo no marcado no se toca.
                     </p>
                     <p className="mt-2 text-xs text-[var(--text-secondary)]">
                       Desfases mes: {cogsMismatchRows.length} · Autoajustables: {cogsFixableCount} · Marcadas: {selectedCogsCount}
@@ -1877,15 +1983,15 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                   </div>
                 </div>
                 {!factSquared && (
-                  <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <p className="mt-3 rounded-md border border-[var(--warning-soft)] bg-[var(--warning-soft)] px-3 py-2 text-sm text-[var(--warning)]">
                     {ignoredRest
                       ? `Has ignorado el resto de facturación (${formatCurrency(remainingDiff)} pendientes). COGS usará el diario tal cual esté ahora.`
-                      : 'La facturación aún no cuadra al céntimo. Conviene cerrar o ignorar el resto en el paso 1.'}
+                      : 'La facturación aún no cuadra al céntimo. Conviene cerrar o ignorar el resto en Facturación.'}
                   </p>
                 )}
                 {cogsMonthOk && (
-                  <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                    Totales mensuales de COGS cuadrados. Pasa al paso 3 para revisar celdas (huecos y %).
+                  <div className="mt-3 rounded-md border border-[var(--success-soft)] bg-[var(--success-soft)] px-3 py-2 text-sm text-[var(--success)]">
+                    Totales mensuales de COGS cuadrados. Pasa a celdas (huecos y %).
                     <button
                       type="button"
                       onClick={() => setActiveStep(3)}
@@ -1933,7 +2039,7 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                       ) : filteredCogsMonthRows.map((row) => (
                         <tr
                           key={row.key}
-                          className={`border-b border-[var(--border)] align-top ${row.fixable ? '' : 'bg-[var(--bg-soft)]/70'}`}
+                          className={`border-b border-[var(--border)] align-top ${row.fixable ? '' : 'bg-[var(--bg-soft)]'}`}
                         >
                           <td className="px-3 py-2">
                             <input
@@ -1966,10 +2072,10 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="max-w-2xl">
-                    <h3 className="text-lg font-semibold">Paso 3 · Celdas (mismo día)</h3>
+                    <h3 className="text-lg font-semibold">COGS vs facturación · por celda</h3>
                     <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Marca incidencias celda a celda: huecos (fact sin COGS / COGS sin fact) o COGS ≠ facturación × %.
-                      Aplicar corrige solo lo marcado; luego descarga el mismo archivo diario.
+                      Cada celda del diario PBI: mismo día, sin huecos, COGS = facturación × % del budget.
+                      Marca incidencias, aplica y descarga. Lo no marcado no se toca.
                     </p>
                     <p className="mt-2 text-xs text-[var(--text-secondary)]">
                       Incidencias: {dayIssues.length} · Huecos: {dayGapCount} · % distinto: {dayRateCount}
@@ -2007,14 +2113,14 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                   </div>
                 </div>
                 {!cogsMonthOk && (
-                  <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <p className="mt-3 rounded-md border border-[var(--warning-soft)] bg-[var(--warning-soft)] px-3 py-2 text-sm text-[var(--warning)]">
                     {ignoredCogsRest
                       ? 'Has ignorado el resto de COGS mensuales. Las celdas se revisan sobre el diario actual.'
-                      : 'Los totales mensuales de COGS aún no cuadran. Conviene cerrarlos o ignorarlos en el paso 2.'}
+                      : 'Los totales mensuales de COGS aún no cuadran. Conviene cerrarlos o ignorarlos en COGS por mes.'}
                   </p>
                 )}
                 {cellsOk && (
-                  <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  <div className="mt-3 rounded-md border border-[var(--success-soft)] bg-[var(--success-soft)] px-3 py-2 text-sm text-[var(--success)]">
                     Celdas alineadas: mismo día, sin huecos, COGS al % del budget.
                   </div>
                 )}
@@ -2061,7 +2167,7 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
                       ) : filteredDayIssues.slice(0, 200).map((issue) => (
                         <tr
                           key={issue.key}
-                          className={`border-b border-[var(--border)] ${issue.fixable ? '' : 'bg-[var(--bg-soft)]/70'}`}
+                          className={`border-b border-[var(--border)] ${issue.fixable ? '' : 'bg-[var(--bg-soft)]'}`}
                         >
                           <td className="px-3 py-2">
                             <input

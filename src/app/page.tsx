@@ -38,9 +38,9 @@ const ALL_MONTHS = 'ALL';
 
 const BUDGET_TABS = [
   { id: 'generate', label: 'Diario' },
-  { id: 'compare', label: 'Comparador' },
   { id: 'validator', label: 'Validador' },
   { id: 'match', label: 'Cuadre' },
+  { id: 'compare', label: 'Comparador' },
   { id: 'variation', label: 'Suavidad' },
 ] as const;
 
