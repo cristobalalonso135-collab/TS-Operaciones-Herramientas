@@ -42,7 +42,7 @@ import { Check, ChevronDown, ChevronUp, Clock, Copy, Download, GripVertical, Plu
 const TABS = [
   { id: 'tabla', label: 'Tabla' },
   { id: 'tablero', label: 'Tablero' },
-  { id: 'enviar', label: 'Semanal' },
+  { id: 'enviar', label: 'Resumen' },
   { id: 'importar', label: 'Excel' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
@@ -336,10 +336,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return filtered;
   }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
-  const weeklyRows = useMemo(() => {
-    const open = tasks.filter((item) => !isClosed(item));
-    return sortByDeadline(open, 'asc');
-  }, [tasks]);
+  const weeklyRows = useMemo(() => sortByDeadline(tasks, 'asc', true), [tasks]);
+  const weeklyOpen = weeklyRows.filter((item) => !isClosed(item)).length;
+  const weeklyDone = weeklyRows.filter((item) => item.estado === 'Completado').length;
   const formGaps = askedSave ? missingChecklistFields(form) : [];
   const gapKeys = new Set(formGaps.map((item) => item.key));
 
@@ -1014,12 +1013,12 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--border)] bg-white px-3 py-2">
             <p className="font-display text-base font-semibold tracking-tight">{state.nombre}</p>
             <p className="text-xs text-[var(--text-secondary)]">
-              {weeklyRows.length} pendiente{weeklyRows.length === 1 ? '' : 's'}
+              {weeklyDone} hecha{weeklyDone === 1 ? '' : 's'} · {weeklyOpen} pendiente{weeklyOpen === 1 ? '' : 's'}
               {state.fechaEvento ? ` · evento ${formatIsoDate(state.fechaEvento)}` : ''}
             </p>
           </div>
           {weeklyRows.length === 0 ? (
-            <p className="px-3 py-6 text-sm text-[var(--text-muted)]">No hay pendientes.</p>
+            <p className="px-3 py-6 text-sm text-[var(--text-muted)]">No hay tareas.</p>
           ) : (
             <table className="w-full text-left text-[13px]">
               <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
@@ -1029,26 +1028,29 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   <th className="w-36 px-2.5 py-1.5 font-semibold">Deadline</th>
                   <th className="w-20 px-2.5 py-1.5 font-semibold">Prioridad</th>
                   <th className="px-2.5 py-1.5 font-semibold">Responsable</th>
+                  <th className="px-2.5 py-1.5 font-semibold">Estado</th>
                 </tr>
               </thead>
               <tbody>
                 {weeklyRows.map((task) => {
-                  const overdue = isTaskOverdue(task, today);
+                  const closed = isClosed(task);
+                  const overdue = !closed && !!task.deadline && task.deadline < today;
                   return (
                     <tr
                       key={task.id}
-                      className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : 'bg-white'}`}
+                      className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : closed ? 'bg-[var(--bg-secondary)]' : 'bg-white'}`}
                       onClick={() => openTask(task)}
                     >
                       <td className="whitespace-nowrap px-2.5 py-1 text-[var(--text-secondary)]">{task.area || '—'}</td>
-                      <td className="px-2.5 py-1 font-medium">{task.titulo}</td>
+                      <td className={`px-2.5 py-1 ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
                       <td className="whitespace-nowrap px-2.5 py-1">
-                        <DeadlineMark iso={task.deadline} today={today} />
+                        <DeadlineMark iso={task.deadline} today={today} closed={closed} />
                       </td>
                       <td className="px-2.5 py-1">
-                        <PriorityMark value={task.prioridad} />
+                        <PriorityMark value={task.prioridad} muted={closed} />
                       </td>
                       <td className="whitespace-nowrap px-2.5 py-1">{task.responsable || '—'}</td>
+                      <td className="whitespace-nowrap px-2.5 py-1 text-[var(--text-secondary)]">{task.estado}</td>
                     </tr>
                   );
                 })}
