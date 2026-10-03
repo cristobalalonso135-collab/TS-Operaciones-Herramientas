@@ -5,8 +5,6 @@ import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   CHECKLIST_STATUSES,
-  addMonthsIso,
-  addDaysIso,
   checklistKpis,
   completeChecklistTask,
   daysUntil,
@@ -14,21 +12,13 @@ import {
   emptyChecklist,
   emptyTask,
   emptySubtask,
-  ensureWindowSeries,
-  occurrenceDates,
-  expandRepeatingTask,
-  expireOverdueSeries,
-  firstWorkingDayOnOrAfter,
   formatIsoDate,
   groupByArea,
   isClosed,
   isTaskOverdue,
   mergeImportedTasks,
   moveById,
-  nextOccurrence,
-  repeatLabel,
   sortByDeadline,
-  spawnNextOccurrence,
   subtaskProgress,
   todayIso,
   toggleSubtask,
@@ -37,7 +27,6 @@ import {
   upcomingTasks,
   effectiveDeadline,
   type ChecklistLibrary,
-  type ChecklistRepeat,
   type ChecklistState,
   type ChecklistStatus,
   type ChecklistSubtask,
@@ -46,17 +35,6 @@ import {
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
 import { loadChecklistLibrary, saveChecklistLibrary, type ChecklistBackend } from '@/lib/checklist-store';
 import { Check, ChevronDown, ChevronUp, Clock, Copy, Download, GripVertical, Plus, Search, Trash2, X } from 'lucide-react';
-
-type RepeatFor = 'onComplete' | 'week' | 'month' | '2months' | 'quarter' | 'until';
-
-function untilFrom(kind: RepeatFor, today: string, current: string | null): string | null {
-  if (kind === 'onComplete') return null;
-  if (kind === 'week') return addDaysIso(today, 7);
-  if (kind === 'month') return addMonthsIso(today, 1);
-  if (kind === '2months') return addMonthsIso(today, 2);
-  if (kind === 'quarter') return addMonthsIso(today, 3);
-  return current;
-}
 
 const TABS = [
   { id: 'tabla', label: 'Tabla' },
@@ -230,8 +208,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [dropRow, setDropRow] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState<ChecklistTask>(() => emptyTask());
-  const [repeatFor, setRepeatFor] = useState<RepeatFor>('onComplete');
-  const [spawnAsk, setSpawnAsk] = useState<ChecklistTask | null>(null);
   const today = todayIso();
   const stateRef = useRef<ChecklistState | null>(null);
   const libraryRef = useRef<ChecklistLibrary | null>(null);
@@ -248,26 +224,18 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   }, []);
 
   const persist = useCallback(async (next: ChecklistState, currentBackend: ChecklistBackend) => {
-    const filled = ensureWindowSeries(next.tasks, todayIso());
-    const expired = expireOverdueSeries(filled, todayIso());
-    const cleaned = { ...next, tasks: expired.tasks };
     const lib = libraryRef.current;
     const lists = lib
-      ? (lib.lists.some((item) => item.id === cleaned.id)
-        ? lib.lists.map((item) => (item.id === cleaned.id ? cleaned : item))
-        : [...lib.lists, cleaned])
-      : [cleaned];
+      ? (lib.lists.some((item) => item.id === next.id)
+        ? lib.lists.map((item) => (item.id === next.id ? next : item))
+        : [...lib.lists, next])
+      : [next];
     const nextLib = { lists };
     libraryRef.current = nextLib;
-    stateRef.current = cleaned;
+    stateRef.current = next;
     setLibrary(nextLib);
-    setState(cleaned);
+    setState(next);
     setError(null);
-    if (expired.expired > 0) {
-      setAck(expired.expired === 1
-        ? '1 tarea ha caducado: el periodo se ha acabado.'
-        : `${expired.expired} tareas han caducado: el periodo se ha acabado.`);
-    }
     try {
       await saveChecklistLibrary(nextLib, currentBackend);
     } catch (err) {
@@ -280,25 +248,12 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     loadChecklistLibrary()
       .then((result) => {
         if (cancelled) return;
-        let expiredCount = 0;
-        const lists = result.library.lists.map((board) => {
-          const filled = ensureWindowSeries(board.tasks, todayIso());
-          const expired = expireOverdueSeries(filled, todayIso());
-          expiredCount += expired.expired;
-          return { ...board, tasks: expired.tasks };
-        });
-        const nextLib = { lists };
-        const changed = result.migrated || lists.some((board, index) => board.tasks.length !== result.library.lists[index].tasks.length) || expiredCount > 0;
+        const nextLib = result.library;
         libraryRef.current = nextLib;
         setLibrary(nextLib);
         setBackend(result.backend);
         setSetupSql(result.setupSql || null);
-        if (expiredCount > 0) {
-          setAck(expiredCount === 1
-            ? '1 tarea ha caducado: el periodo se ha acabado.'
-            : `${expiredCount} tareas han caducado: el periodo se ha acabado.`);
-        }
-        if (changed) void saveChecklistLibrary(nextLib, result.backend);
+        if (result.migrated) void saveChecklistLibrary(nextLib, result.backend);
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'No he podido cargar el checklist.');
@@ -372,13 +327,11 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
 
   const openTask = (task: ChecklistTask) => {
     setForm({ ...task, subtasks: (task.subtasks || []).map((item) => ({ ...item })) });
-    setRepeatFor(task.askOnComplete || !task.repeatUntil ? 'onComplete' : 'until');
     setEditingId(task.id);
   };
 
   const openNew = () => {
     setForm(emptyTask());
-    setRepeatFor('onComplete');
     setEditingId('new');
   };
 
@@ -404,7 +357,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const closeBoard = () => {
     setOpenId(null);
     setEditingId(null);
-    setSpawnAsk(null);
     stateRef.current = null;
     setState(null);
   };
@@ -452,16 +404,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       patchTask(task.id, toggleTask(task));
       return;
     }
-    const result = completeChecklistTask(task, current.tasks, today);
+    const result = completeChecklistTask(task, current.tasks);
     void persist({ ...current, tasks: result.tasks }, backend);
-    if (task.askOnComplete) {
-      const nextDate = nextOccurrence(task, today);
-      const seriesId = task.seriesId || task.id;
-      const exists = nextDate && result.tasks.some((item) => (
-        (item.seriesId || item.id) === seriesId && item.deadline === nextDate
-      ));
-      if (nextDate && !exists) setSpawnAsk({ ...task, estado: 'Completado' });
-    }
   };
 
   const markSub = (task: ChecklistTask, subId: string) => {
@@ -488,45 +432,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     setForm({ ...form, subtasks: moveById(form.subtasks || [], fromId, toId) });
   };
 
-  const confirmSpawn = (yes: boolean) => {
-    const source = spawnAsk;
-    setSpawnAsk(null);
-    if (!yes || !source) return;
-    const current = stateRef.current;
-    if (!current) return;
-    const result = spawnNextOccurrence(source, current.tasks, today);
-    if (result.spawned) void persist({ ...current, tasks: result.tasks }, backend);
-  };
-
-  const applyRepeat = (repeat: ChecklistRepeat) => {
-    if (repeat === 'none') {
-      setForm({ ...form, repeat, repeatUntil: null, seriesId: null, askOnComplete: false });
-      setRepeatFor('onComplete');
-      return;
-    }
-    const ask = repeatFor === 'onComplete';
-    setForm({
-      ...form,
-      repeat,
-      askOnComplete: ask,
-      repeatUntil: ask ? null : (form.repeatUntil || addMonthsIso(today, 1)),
-      seriesId: form.seriesId || form.id,
-      deadline: form.deadline || firstWorkingDayOnOrAfter(today),
-    });
-  };
-
-  const applyRepeatFor = (kind: RepeatFor) => {
-    const until = untilFrom(kind, today, form.repeatUntil);
-    setRepeatFor(kind);
-    setForm({
-      ...form,
-      askOnComplete: kind === 'onComplete',
-      repeatUntil: until,
-      seriesId: form.seriesId || form.id,
-      deadline: form.deadline || firstWorkingDayOnOrAfter(today),
-    });
-  };
-
   const saveForm = () => {
     const titulo = form.titulo.trim();
     const area = form.area.trim();
@@ -536,8 +441,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     if (pendingSteps.some((item) => !item.deadline)) return;
     const current = stateRef.current;
     if (!current) return;
-    const repeating = editingId !== 'new' && form.repeat !== 'none';
-    const askOnComplete = repeating && repeatFor === 'onComplete';
     const nextTask: ChecklistTask = {
       ...form,
       titulo,
@@ -546,10 +449,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       comentarios: form.comentarios.trim(),
       deadline: form.deadline,
       completedAt: form.estado === 'Completado' ? (form.completedAt || new Date().toISOString()) : null,
-      repeat: repeating ? form.repeat : 'none',
-      askOnComplete,
-      repeatUntil: repeating && !askOnComplete ? (form.repeatUntil || addMonthsIso(today, 1)) : null,
-      seriesId: repeating ? (form.seriesId || form.id) : null,
       subtasks: pendingSteps.map((item) => ({
         ...item,
         titulo: item.titulo.trim(),
@@ -560,20 +459,13 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     const previous = editingId && editingId !== 'new'
       ? current.tasks.find((item) => item.id === editingId)
       : null;
-    const created = editingId === 'new' && !askOnComplete
-      ? expandRepeatingTask(nextTask, today)
-      : [nextTask];
     let tasks = editingId === 'new'
-      ? [...current.tasks, ...created]
+      ? [...current.tasks, nextTask]
       : current.tasks.map((item) => (item.id === editingId ? { ...item, ...nextTask, id: item.id } : item));
     const saved = tasks.find((item) => item.id === nextTask.id) || nextTask;
     if (saved.estado === 'Completado' && previous?.estado !== 'Completado') {
-      const result = completeChecklistTask({ ...saved, estado: 'Pendiente' }, tasks, today);
+      const result = completeChecklistTask({ ...saved, estado: 'Pendiente' }, tasks);
       tasks = result.tasks;
-      if (saved.askOnComplete) {
-        const nextDate = nextOccurrence(saved, today);
-        if (nextDate) setSpawnAsk({ ...saved, estado: 'Completado' });
-      }
     }
     void persist({ ...current, tasks }, backend);
     closePanel();
@@ -891,7 +783,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               {task.responsable ? <span>{task.responsable}</span> : null}
                               <span>{task.estado}</span>
                               {progress.total > 0 ? <span>{progress.done}/{progress.total} pasos</span> : null}
-                              {repeatLabel(task) ? <span>{repeatLabel(task)}</span> : null}
                             </div>
                             {task.comentarios ? <p className="text-xs text-[var(--text-muted)]">{task.comentarios}</p> : null}
                           </button>
@@ -1028,7 +919,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                           </td>
                           <td className="px-3 py-2.5 align-middle">
                             <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
-                            {repeatLabel(task) ? <span className="mt-1 block text-[11px] text-[var(--text-muted)]">{repeatLabel(task)}</span> : null}
                           </td>
                           <td className="px-3 py-2.5 align-middle">{task.responsable || '—'}</td>
                           <td className="px-3 py-2.5 align-middle">{task.estado}</td>
@@ -1308,70 +1198,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   />
                 </div>
               </div>
-              {editingId !== 'new' && form.repeat !== 'none' ? (
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Periodicidad</span>
-                  <select
-                    value={form.repeat}
-                    onChange={(e) => applyRepeat(e.target.value as ChecklistRepeat)}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  >
-                    <option value="none">No se repite</option>
-                    <option value="weekdays">Cada día laborable (Zaragoza)</option>
-                    <option value="weekly">Cada semana</option>
-                  </select>
-                </label>
-                <>
-                    <div className="space-y-1">
-                      <span className="text-xs font-medium text-[var(--text-secondary)]">Hasta cuándo</span>
-                      <div className="flex flex-wrap gap-2">
-                        {([
-                          ['onComplete', 'Al completar'],
-                          ['week', '1 semana'],
-                          ['month', '1 mes'],
-                          ['2months', '2 meses'],
-                          ['quarter', '3 meses'],
-                        ] as Array<[RepeatFor, string]>).map(([kind, label]) => (
-                          <button
-                            key={kind}
-                            type="button"
-                            onClick={() => applyRepeatFor(kind)}
-                            className={`rounded-md border px-2.5 py-1 text-xs ${repeatFor === kind ? 'border-[var(--text-primary)] bg-white font-semibold' : 'border-[var(--border)] bg-white'}`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    {repeatFor === 'onComplete' ? (
-                      <p className="text-[11px] text-[var(--text-muted)]">
-                        Al marcarla hecha te preguntará si quieres la siguiente.
-                      </p>
-                    ) : (
-                      <>
-                        <label className="block space-y-1">
-                          <span className="text-xs font-medium text-[var(--text-secondary)]">Hasta</span>
-                          <input
-                            type="date"
-                            value={form.repeatUntil || ''}
-                            onChange={(e) => {
-                              setRepeatFor('until');
-                              setForm({ ...form, askOnComplete: false, repeatUntil: e.target.value || null });
-                            }}
-                            className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                          />
-                        </label>
-                        <p className="text-[11px] text-[var(--text-muted)]">
-                          {form.repeatUntil
-                            ? `${occurrenceDates(form.repeat, form.deadline || firstWorkingDayOnOrAfter(today), form.repeatUntil).length} días. Completas u omites. La última no genera otra.`
-                            : 'Completas u omites. La última no genera otra.'}
-                        </p>
-                      </>
-                    )}
-                </>
-              </div>
-              ) : null}
               <label className="block space-y-1">
                 <span className="text-xs font-medium text-[var(--text-secondary)]">Comentarios</span>
                 <textarea
@@ -1403,39 +1229,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             </div>
             <datalist id="ck-areas">{areas.map((item) => <option key={item} value={item} />)}</datalist>
             <datalist id="ck-owners">{owners.map((item) => <option key={item} value={item} />)}</datalist>
-          </div>
-        </div>
-      )}
-      {spawnAsk && (
-        <div className="abonos-modal-backdrop" onClick={() => confirmSpawn(false)}>
-          <div
-            className="abonos-modal"
-            style={{ width: 'min(420px, 100%)' }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="checklist-spawn-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="space-y-3 p-5">
-              <p id="checklist-spawn-title" className="font-display text-lg font-semibold tracking-tight">
-                ¿Crear la siguiente?
-              </p>
-              <p className="text-sm text-[var(--text-secondary)]">
-                {spawnAsk.titulo} · {formatIsoDate(nextOccurrence(spawnAsk, today))}
-              </p>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => confirmSpawn(true)}
-                  className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-                >
-                  Crear
-                </button>
-                <button type="button" onClick={() => confirmSpawn(false)} className="rounded-md px-4 py-2 text-sm text-[var(--text-secondary)]">
-                  No
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}

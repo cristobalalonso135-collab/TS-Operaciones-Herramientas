@@ -1,4 +1,4 @@
-import { asRepeat, asStatus, newId, nowIso, type ChecklistSubtask, type ChecklistTask } from '@/lib/checklist-model';
+import { asStatus, newId, nowIso, type ChecklistSubtask, type ChecklistTask } from '@/lib/checklist-model';
 
 function cellText(value: unknown): string {
   return String(value ?? '').replace(/\u00a0/g, ' ').trim();
@@ -117,12 +117,8 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fecha
     responsable: findCol(header, ['responsable', 'owner', 'dueño']),
     estado: findCol(header, ['estado', 'status']),
     comentarios: findCol(header, ['comentarios', 'comentario', 'notas', 'nota']),
-    repeat: findCol(header, ['repetición', 'repeticion', 'repeat']),
-    until: findCol(header, ['hasta', 'repeat until', 'fin']),
-    ask: findCol(header, ['al completar', 'ask']),
     completed: findCol(header, ['completada', 'completedat', 'completed at']),
     created: findCol(header, ['creada', 'createdat', 'created at']),
-    series: findCol(header, ['serie', 'seriesid', 'series']),
     pasos: findCol(header, ['pasos', 'subtareas', 'subtasks']),
   };
   const tasks = rows.slice(start + 1).flatMap((row) => {
@@ -130,10 +126,6 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fecha
     if (!titulo) return [];
     const estado = asStatus(cellText(col.estado == null ? '' : row[col.estado]));
     const id = cellText(col.id == null ? '' : row[col.id]) || newId('ck');
-    const repeat = asRepeat(col.repeat == null ? '' : row[col.repeat]);
-    const repeatUntil = parseDate(col.until == null ? '' : row[col.until]);
-    const askText = cellText(col.ask == null ? '' : row[col.ask]).toLocaleLowerCase('es');
-    const askOnComplete = repeat !== 'none' && (['sí', 'si', '1', 'true', 'al completar'].includes(askText) || !repeatUntil);
     const completedAt = parseDate(col.completed == null ? '' : row[col.completed]);
     return [{
       id,
@@ -145,10 +137,6 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fecha
       comentarios: cellText(col.comentarios == null ? '' : row[col.comentarios]),
       completedAt: completedAt ? `${completedAt}T00:00:00.000Z` : (estado === 'Completado' ? nowIso() : null),
       createdAt: parseDate(col.created == null ? '' : row[col.created]) || nowIso(),
-      repeat,
-      repeatUntil,
-      seriesId: cellText(col.series == null ? '' : row[col.series]) || (repeat === 'none' ? null : id),
-      askOnComplete,
       subtasks: parsePasos(col.pasos == null ? '' : row[col.pasos]),
     }];
   });
@@ -160,7 +148,7 @@ export function checklistToAoa(nombre: string, fechaEvento: string, tasks: Check
     [nombre],
     ['Fecha evento', fechaEvento || ''],
     [],
-    ['Id', 'Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios', 'Repetición', 'Hasta', 'Al completar', 'Completada', 'Creada', 'Serie', 'Pasos'],
+    ['Id', 'Área', 'Tarea', 'Deadline', 'Responsable', 'Estado', 'Comentarios', 'Completada', 'Creada', 'Pasos'],
     ...tasks.map((item) => [
       item.id,
       item.area,
@@ -169,12 +157,8 @@ export function checklistToAoa(nombre: string, fechaEvento: string, tasks: Check
       item.responsable,
       item.estado,
       item.comentarios,
-      item.repeat === 'weekdays' ? 'días laborables' : item.repeat === 'weekly' ? 'cada semana' : '',
-      item.repeatUntil || '',
-      item.askOnComplete ? 'sí' : '',
       item.completedAt ? item.completedAt.slice(0, 10) : '',
       item.createdAt ? item.createdAt.slice(0, 10) : '',
-      item.seriesId || '',
       formatPasos(item.subtasks || []),
     ]),
   ];

@@ -1,8 +1,4 @@
-import { getHolidays } from './holidays';
-import { isWorkingDay } from './working-days';
-
 export type ChecklistStatus = 'Pendiente' | 'En curso' | 'Completado' | 'Bloqueado' | 'Caducada';
-export type ChecklistRepeat = 'none' | 'weekdays' | 'weekly';
 
 export const CHECKLIST_STATUSES: ChecklistStatus[] = ['Pendiente', 'En curso', 'Completado', 'Bloqueado', 'Caducada'];
 
@@ -24,10 +20,6 @@ export interface ChecklistTask {
   comentarios: string;
   completedAt: string | null;
   createdAt: string;
-  repeat: ChecklistRepeat;
-  repeatUntil: string | null;
-  seriesId: string | null;
-  askOnComplete: boolean;
   subtasks: ChecklistSubtask[];
 }
 
@@ -65,84 +57,6 @@ export function asStatus(value: string): ChecklistStatus {
   if (['bloqueado', 'blocked', 'parado'].includes(text)) return 'Bloqueado';
   if (['caducada', 'caducado', 'expired', 'expirada'].includes(text)) return 'Caducada';
   return 'Pendiente';
-}
-
-export function asRepeat(value: unknown): ChecklistRepeat {
-  const text = String(value || '').trim().toLocaleLowerCase('es');
-  if (['weekdays', 'laborable', 'laborables', 'días laborables', 'dias laborables', 'diario', 'cada día', 'cada dia'].includes(text)) {
-    return 'weekdays';
-  }
-  if (['weekly', 'semanal', 'semana', 'cada semana'].includes(text)) return 'weekly';
-  return 'none';
-}
-
-function parseLocalIso(iso: string): Date {
-  const [year, month, day] = iso.slice(0, 10).split('-').map(Number);
-  return new Date(year, (month || 1) - 1, day || 1);
-}
-
-export function addDaysIso(iso: string, days: number): string {
-  const date = parseLocalIso(iso);
-  date.setDate(date.getDate() + days);
-  return todayIso(date);
-}
-
-export function addMonthsIso(iso: string, months: number): string {
-  const date = parseLocalIso(iso);
-  date.setMonth(date.getMonth() + months);
-  return todayIso(date);
-}
-
-function holidaysAround(iso: string): Set<string> {
-  const year = Number(iso.slice(0, 4)) || new Date().getFullYear();
-  const out = new Set<string>();
-  getHolidays(year - 1).forEach((day) => out.add(day));
-  getHolidays(year).forEach((day) => out.add(day));
-  getHolidays(year + 1).forEach((day) => out.add(day));
-  return out;
-}
-
-export function firstWorkingDayOnOrAfter(fromIso: string): string {
-  const holidays = holidaysAround(fromIso);
-  let iso = fromIso;
-  for (let i = 0; i < 21; i += 1) {
-    if (isWorkingDay(parseLocalIso(iso), holidays)) return iso;
-    iso = addDaysIso(iso, 1);
-  }
-  return iso;
-}
-
-export function nextWorkingDayAfter(fromIso: string): string {
-  return firstWorkingDayOnOrAfter(addDaysIso(fromIso, 1));
-}
-
-export function workingDaysInclusive(fromIso: string, untilIso: string): string[] {
-  const holidays = holidaysAround(fromIso);
-  const out: string[] = [];
-  let iso = fromIso;
-  for (let i = 0; i < 400; i += 1) {
-    if (iso > untilIso) break;
-    if (isWorkingDay(parseLocalIso(iso), holidays)) out.push(iso);
-    iso = addDaysIso(iso, 1);
-  }
-  return out;
-}
-
-export function weeklyOccurrences(fromIso: string, untilIso: string): string[] {
-  const out: string[] = [];
-  let iso = fromIso;
-  for (let i = 0; i < 80; i += 1) {
-    if (iso > untilIso) break;
-    const day = firstWorkingDayOnOrAfter(iso);
-    if (day <= untilIso && !out.includes(day)) out.push(day);
-    iso = addDaysIso(iso, 7);
-  }
-  return out;
-}
-
-export function occurrenceDates(repeat: ChecklistRepeat, fromIso: string, untilIso: string): string[] {
-  if (repeat === 'weekly') return weeklyOccurrences(fromIso, untilIso);
-  return workingDaysInclusive(fromIso, untilIso);
 }
 
 export function isClosed(task: ChecklistTask): boolean {
@@ -217,10 +131,6 @@ export function emptyTask(): ChecklistTask {
     comentarios: '',
     completedAt: null,
     createdAt: nowIso(),
-    repeat: 'none',
-    repeatUntil: null,
-    seriesId: null,
-    askOnComplete: false,
     subtasks: [],
   };
 }
@@ -243,10 +153,6 @@ export function seedChecklistState(): ChecklistState {
     comentarios: '',
     completedAt: estado === 'Completado' ? now : null,
     createdAt: now,
-    repeat: 'none',
-    repeatUntil: null,
-    seriesId: null,
-    askOnComplete: false,
     subtasks: [],
   });
   return {
@@ -282,10 +188,7 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
   const seeded = seedChecklistState();
   const tasks = Array.isArray(state?.tasks)
     ? state.tasks.map((item) => {
-      const repeat = asRepeat(item.repeat);
       const id = item.id || newId('ck');
-      const repeatUntil = item.repeatUntil || null;
-      const askOnComplete = repeat !== 'none' && (item.askOnComplete === true || !repeatUntil);
       return {
         id,
         area: String(item.area || '').trim(),
@@ -296,10 +199,6 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
         comentarios: String(item.comentarios || '').trim(),
         completedAt: item.completedAt || (asStatus(item.estado || '') === 'Completado' ? nowIso() : null),
         createdAt: item.createdAt || nowIso(),
-        repeat,
-        repeatUntil,
-        seriesId: item.seriesId || (repeat === 'none' ? null : id),
-        askOnComplete,
         subtasks: normalizeSubtasks(item.subtasks),
       };
     }).filter((item) => item.titulo)
@@ -337,7 +236,6 @@ export function cloneChecklist(source: ChecklistState): ChecklistState {
       titulo: task.titulo,
       responsable: task.responsable,
       comentarios: '',
-      repeat: 'none',
       subtasks: (task.subtasks || []).map((step) => ({
         ...emptySubtask(),
         titulo: step.titulo,
@@ -374,14 +272,6 @@ export function formatIsoDate(value: string | null | undefined): string {
   const [year, month, day] = value.slice(0, 10).split('-');
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
-}
-
-export function repeatLabel(task: ChecklistTask): string {
-  if (!task.repeat || task.repeat === 'none') return '';
-  const kind = task.repeat === 'weekly' ? 'cada semana' : 'días laborables Zaragoza';
-  if (task.askOnComplete) return `${kind} · al completar`;
-  if (task.repeatUntil) return `${kind} · hasta ${formatIsoDate(task.repeatUntil)}`;
-  return kind;
 }
 
 export function uniqueValues(tasks: ChecklistTask[], key: 'area' | 'responsable'): string[] {
@@ -491,126 +381,12 @@ export function toggleTask(task: ChecklistTask): ChecklistTask {
   return { ...task, estado: 'Completado', completedAt: nowIso() };
 }
 
-function nextDeadlineFor(task: ChecklistTask, today: string): string {
-  const from = task.deadline && task.deadline > today ? task.deadline : today;
-  if (task.repeat === 'weekly') return firstWorkingDayOnOrAfter(addDaysIso(from, 7));
-  return nextWorkingDayAfter(from);
-}
-
-export function nextOccurrence(task: ChecklistTask, today = todayIso()): string | null {
-  if (!task.repeat || task.repeat === 'none') return null;
-  const nextDeadline = nextDeadlineFor(task, today);
-  if (task.repeatUntil && nextDeadline > task.repeatUntil) return null;
-  return nextDeadline;
-}
-
-function siblingExists(tasks: ChecklistTask[], seriesId: string, deadline: string): boolean {
-  return tasks.some((item) => (
-    (item.seriesId || item.id) === seriesId
-    && item.deadline === deadline
-  ));
-}
-
-function seriesTaskFrom(task: ChecklistTask, deadline: string): ChecklistTask {
-  return {
-    ...emptyTask(),
-    area: task.area,
-    titulo: task.titulo,
-    responsable: task.responsable,
-    deadline,
-    estado: 'Pendiente',
-    repeat: task.repeat,
-    repeatUntil: task.repeatUntil,
-    seriesId: task.seriesId || task.id,
-    askOnComplete: task.askOnComplete,
-    subtasks: (task.subtasks || []).map((item) => ({
-      ...item,
-      id: newId('st'),
-      done: false,
-      completedAt: null,
-    })),
-  };
-}
-
-export function expandRepeatingTask(task: ChecklistTask, today = todayIso()): ChecklistTask[] {
-  if (!task.repeat || task.repeat === 'none' || task.askOnComplete || !task.repeatUntil) {
-    return [task];
-  }
-  const start = task.deadline || firstWorkingDayOnOrAfter(today);
-  const days = occurrenceDates(task.repeat, start, task.repeatUntil);
-  const seriesId = task.seriesId || task.id;
-  if (!days.length) return [{ ...task, deadline: start, seriesId, askOnComplete: false }];
-  return days.map((deadline, index) => ({
-    ...task,
-    id: index === 0 ? task.id : newId('ck'),
-    deadline,
-    seriesId,
-    askOnComplete: false,
-    estado: index === 0 ? task.estado : 'Pendiente',
-    completedAt: index === 0 ? task.completedAt : null,
-    subtasks: index === 0
-      ? (task.subtasks || [])
-      : (task.subtasks || []).map((item) => ({ ...item, id: newId('st'), done: false, completedAt: null })),
-  }));
-}
-
-export function ensureWindowSeries(tasks: ChecklistTask[], today = todayIso()): ChecklistTask[] {
-  const seen = new Set<string>();
-  let extra: ChecklistTask[] = [];
-  tasks.forEach((task) => {
-    if (!task.repeat || task.repeat === 'none' || task.askOnComplete || !task.repeatUntil) return;
-    const seriesId = task.seriesId || task.id;
-    if (seen.has(seriesId)) return;
-    seen.add(seriesId);
-    const siblings = tasks.filter((item) => (item.seriesId || item.id) === seriesId);
-    const start = siblings.map((item) => item.deadline).filter(Boolean).sort()[0]
-      || firstWorkingDayOnOrAfter(today);
-    occurrenceDates(task.repeat, start, task.repeatUntil).forEach((deadline) => {
-      if (siblingExists(tasks, seriesId, deadline)) return;
-      extra = [...extra, seriesTaskFrom(task, deadline)];
-    });
-  });
-  return extra.length ? [...tasks, ...extra] : tasks;
-}
-
 export function completeChecklistTask(
   task: ChecklistTask,
   tasks: ChecklistTask[],
-  today = todayIso(),
-): { tasks: ChecklistTask[]; spawned: boolean; ended: boolean } {
+): { tasks: ChecklistTask[] } {
   const done: ChecklistTask = { ...task, estado: 'Completado', completedAt: nowIso() };
-  const nextTasks = tasks.map((item) => (item.id === task.id ? done : item));
-  return { tasks: nextTasks, spawned: false, ended: !nextOccurrence(done, today) };
-}
-
-export function spawnNextOccurrence(
-  task: ChecklistTask,
-  tasks: ChecklistTask[],
-  today = todayIso(),
-): { tasks: ChecklistTask[]; spawned: boolean } {
-  if (!task.askOnComplete || !task.repeat || task.repeat === 'none') {
-    return { tasks, spawned: false };
-  }
-  const seriesId = task.seriesId || task.id;
-  const nextDeadline = nextOccurrence(task, today);
-  if (!nextDeadline) return { tasks, spawned: false };
-  if (siblingExists(tasks, seriesId, nextDeadline)) return { tasks, spawned: false };
-  return { tasks: [...tasks, seriesTaskFrom({ ...task, seriesId }, nextDeadline)], spawned: true };
-}
-
-export function expireOverdueSeries(
-  tasks: ChecklistTask[],
-  today = todayIso(),
-): { tasks: ChecklistTask[]; expired: number } {
-  let expired = 0;
-  const next = tasks.map((task) => {
-    if (isClosed(task)) return task;
-    if (!task.repeat || task.repeat === 'none' || !task.repeatUntil) return task;
-    if (task.repeatUntil >= today) return task;
-    expired += 1;
-    return { ...task, estado: 'Caducada' as const };
-  });
-  return { tasks: next, expired };
+  return { tasks: tasks.map((item) => (item.id === task.id ? done : item)) };
 }
 
 export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTask[]): { state: ChecklistState; added: number; updated: number } {
@@ -634,10 +410,6 @@ export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTas
         estado: item.estado,
         comentarios: item.comentarios || row.comentarios,
         completedAt: item.estado === 'Completado' ? (row.completedAt || nowIso()) : null,
-        repeat: item.repeat || row.repeat,
-        repeatUntil: item.repeatUntil ?? row.repeatUntil,
-        seriesId: item.seriesId || row.seriesId,
-        askOnComplete: item.askOnComplete ?? row.askOnComplete,
         subtasks: item.subtasks?.length ? item.subtasks : row.subtasks,
       } : row));
       return;
