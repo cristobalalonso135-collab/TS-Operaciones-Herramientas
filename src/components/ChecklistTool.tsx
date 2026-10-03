@@ -21,6 +21,7 @@ import {
   firstWorkingDayOnOrAfter,
   formatIsoDate,
   groupByArea,
+  isClosed,
   isTaskOverdue,
   mergeImportedTasks,
   moveById,
@@ -58,11 +59,56 @@ function untilFrom(kind: RepeatFor, today: string, current: string | null): stri
 }
 
 const TABS = [
-  { id: 'tablero', label: 'Tablero' },
   { id: 'tabla', label: 'Tabla' },
+  { id: 'tablero', label: 'Tablero' },
+  { id: 'enviar', label: 'Enviar' },
   { id: 'importar', label: 'Importar' },
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
+
+function weeklyDigest(nombre: string, tasks: ChecklistTask[], today: string): string {
+  const open = tasks.filter((item) => !isClosed(item));
+  const groups = new Map<string, ChecklistTask[]>();
+  open.forEach((item) => {
+    const owner = item.responsable.trim() || 'Sin responsable';
+    if (!groups.has(owner)) groups.set(owner, []);
+    groups.get(owner)!.push(item);
+  });
+  const owners = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b, 'es'));
+  const lines = [`${nombre}`, `Pendientes · ${formatIsoDate(today)}`, ''];
+  if (!open.length) {
+    lines.push('No hay pendientes.');
+    return lines.join('\n');
+  }
+  owners.forEach((owner) => {
+    lines.push(owner);
+    (groups.get(owner) || []).forEach((task) => {
+      const due = task.deadline || effectiveDeadline(task);
+      const days = daysUntil(due, today);
+      let when = formatIsoDate(due);
+      if (due && days != null) {
+        if (days < 0) when = `${formatIsoDate(due)} · ${Math.abs(days)}d tarde`;
+        else if (days === 0) when = `${formatIsoDate(due)} · hoy`;
+        else when = `${formatIsoDate(due)} · ${days}d`;
+      }
+      lines.push(`• ${task.titulo} — ${when}`);
+      (task.subtasks || []).filter((step) => !step.done).forEach((step) => {
+        const stepDays = daysUntil(step.deadline, today);
+        let stepWhen = '';
+        if (step.deadline && stepDays != null) {
+          if (stepDays < 0) stepWhen = ` — ${formatIsoDate(step.deadline)} · ${Math.abs(stepDays)}d tarde`;
+          else if (stepDays === 0) stepWhen = ` — ${formatIsoDate(step.deadline)} · hoy`;
+          else stepWhen = ` — ${formatIsoDate(step.deadline)} · ${stepDays}d`;
+        } else if (step.deadline) {
+          stepWhen = ` — ${formatIsoDate(step.deadline)}`;
+        }
+        lines.push(`   - ${step.titulo}${stepWhen}`);
+      });
+    });
+    lines.push('');
+  });
+  return lines.join('\n').trim();
+}
 
 function downloadAoa(rows: unknown[][], fileName: string) {
   void import('xlsx').then((XLSX) => {
@@ -208,7 +254,7 @@ function StatusSelect({
 }
 
 export default function ChecklistTool({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<TabId>('tablero');
+  const [tab, setTab] = useState<TabId>('tabla');
   const [library, setLibrary] = useState<ChecklistLibrary | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [state, setState] = useState<ChecklistState | null>(null);
@@ -330,6 +376,14 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return sortByDeadline(filtered, sort.dir);
   }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
+  const digest = useMemo(() => weeklyDigest(state?.nombre || 'Checklist', filtered, today), [filtered, state?.nombre, today]);
+  const formReady = Boolean(
+    form.titulo.trim()
+    && form.area.trim()
+    && form.responsable.trim()
+    && form.deadline
+    && !(form.subtasks || []).filter((item) => item.titulo.trim()).some((item) => !item.deadline),
+  );
 
   const patchTask = (id: string, update: Partial<ChecklistTask>, save = true) => {
     const current = stateRef.current;
@@ -367,7 +421,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     const board = libraryRef.current?.lists.find((item) => item.id === id);
     if (!board) return;
     setOpenId(id);
-    setTab('tablero');
+    setTab('tabla');
     setQuery('');
     setFilterArea('');
     setFilterOwner('');
@@ -395,7 +449,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     stateRef.current = board;
     setState(board);
     setOpenId(board.id);
-    setTab('tablero');
+    setTab('tabla');
   };
 
   const duplicateBoard = (source: ChecklistState) => {
@@ -407,7 +461,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     stateRef.current = board;
     setState(board);
     setOpenId(board.id);
-    setTab('tablero');
+    setTab('tabla');
     setAck(`Plantilla copiada. Ponle nombre y fechas a ${board.nombre}.`);
   };
 
@@ -506,33 +560,33 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
 
   const saveForm = () => {
     const titulo = form.titulo.trim();
-    if (!titulo) return;
+    const area = form.area.trim();
+    const responsable = form.responsable.trim();
+    if (!titulo || !area || !responsable || !form.deadline) return;
+    const pendingSteps = (form.subtasks || []).filter((item) => item.titulo.trim());
+    if (pendingSteps.some((item) => !item.deadline)) return;
     const current = stateRef.current;
     if (!current) return;
-    const repeating = form.repeat !== 'none';
+    const repeating = editingId !== 'new' && form.repeat !== 'none';
     const askOnComplete = repeating && repeatFor === 'onComplete';
     const nextTask: ChecklistTask = {
       ...form,
       titulo,
-      area: form.area.trim(),
-      responsable: form.responsable.trim(),
+      area,
+      responsable,
       comentarios: form.comentarios.trim(),
-      deadline: form.deadline || (repeating ? firstWorkingDayOnOrAfter(today) : null),
+      deadline: form.deadline,
       completedAt: form.estado === 'Completado' ? (form.completedAt || new Date().toISOString()) : null,
-      repeat: form.repeat,
+      repeat: repeating ? form.repeat : 'none',
       askOnComplete,
       repeatUntil: repeating && !askOnComplete ? (form.repeatUntil || addMonthsIso(today, 1)) : null,
       seriesId: repeating ? (form.seriesId || form.id) : null,
-      subtasks: (form.subtasks || []).flatMap((item) => {
-        const step = item.titulo.trim();
-        if (!step) return [];
-        return [{
-          ...item,
-          titulo: step,
-          deadline: item.deadline || null,
-          completedAt: item.done ? (item.completedAt || new Date().toISOString()) : null,
-        }];
-      }),
+      subtasks: pendingSteps.map((item) => ({
+        ...item,
+        titulo: item.titulo.trim(),
+        deadline: item.deadline,
+        completedAt: item.done ? (item.completedAt || new Date().toISOString()) : null,
+      })),
     };
     const previous = editingId && editingId !== 'new'
       ? current.tasks.find((item) => item.id === editingId)
@@ -695,7 +749,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {(tab === 'tablero' || tab === 'tabla') && (
+      {(tab === 'tablero' || tab === 'tabla' || tab === 'enviar') && (
         <div className="space-y-4">
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">08 Checklist</p>
@@ -1018,6 +1072,37 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               )}
             </div>
           )}
+
+          {tab === 'enviar' && (
+            <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-lg font-semibold tracking-tight">Para enviar</h3>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                    Copia y pega en Teams o el correo. Agrupa por responsable los pendientes, con plazos.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(digest).then(
+                      () => setAck('Copiado. Ya lo puedes pegar.'),
+                      () => setAck('No he podido copiar. Selecciona el texto a mano.'),
+                    );
+                  }}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
+                >
+                  <Copy className="h-3.5 w-3.5" /> Copiar
+                </button>
+              </div>
+              <textarea
+                readOnly
+                value={digest}
+                rows={18}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 font-mono text-sm leading-relaxed text-[var(--text-primary)]"
+              />
+            </section>
+          )}
         </div>
       )}
 
@@ -1055,7 +1140,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               setAck(replaceAll
                 ? `Checklist sustituido: ${parsed.tasks.length} tareas.`
                 : `${result.added} nuevas y ${result.updated} actualizadas.`);
-              setTab('tablero');
+              setTab('tabla');
             }}
           />
         </div>
@@ -1086,7 +1171,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             </div>
             <div className="space-y-3 p-5">
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Tarea</span>
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Tarea *</span>
                 <input
                   autoFocus
                   value={form.titulo}
@@ -1108,7 +1193,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 </div>
                 {(form.subtasks || []).length === 0 ? (
                   <p className="text-[11px] text-[var(--text-muted)]">
-                    Opcional. Ej: solicitar previsión de asistencia, hablar con el hotel…
+                    Si añades un paso, el texto y la fecha son obligatorios.
                   </p>
                 ) : (
                   <ul className="space-y-2">
@@ -1157,10 +1242,11 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             value={step.titulo}
                             onChange={(e) => setFormSub(step.id, { titulo: e.target.value })}
                             className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm"
-                            placeholder={`${index + 1}. Qué hay que hacer`}
+                            placeholder={`${index + 1}. Qué hay que hacer *`}
                           />
                           <input
                             type="date"
+                            required
                             value={step.deadline || ''}
                             onChange={(e) => setFormSub(step.id, { deadline: e.target.value || null })}
                             className="h-9 w-full rounded-md border border-[var(--border)] bg-white px-2.5 text-sm sm:w-40"
@@ -1181,7 +1267,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Área</span>
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Área *</span>
                   <input
                     list="ck-areas"
                     value={form.area}
@@ -1191,7 +1277,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable</span>
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable *</span>
                   <input
                     list="ck-owners"
                     value={form.responsable}
@@ -1201,7 +1287,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Deadline</span>
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Deadline *</span>
                   <input
                     type="date"
                     value={form.deadline || ''}
@@ -1210,7 +1296,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   />
                 </label>
                 <div className="space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Estado</span>
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
                   <StatusSelect
                     full
                     value={form.estado}
@@ -1222,6 +1308,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   />
                 </div>
               </div>
+              {editingId !== 'new' && form.repeat !== 'none' ? (
               <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-3">
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-[var(--text-secondary)]">Periodicidad</span>
@@ -1235,8 +1322,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     <option value="weekly">Cada semana</option>
                   </select>
                 </label>
-                {form.repeat !== 'none' && (
-                  <>
+                <>
                     <div className="space-y-1">
                       <span className="text-xs font-medium text-[var(--text-secondary)]">Hasta cuándo</span>
                       <div className="flex flex-wrap gap-2">
@@ -1283,9 +1369,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                         </p>
                       </>
                     )}
-                  </>
-                )}
+                </>
               </div>
+              ) : null}
               <label className="block space-y-1">
                 <span className="text-xs font-medium text-[var(--text-secondary)]">Comentarios</span>
                 <textarea
@@ -1300,7 +1386,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                 <button
                   type="button"
                   onClick={saveForm}
-                  disabled={!form.titulo.trim()}
+                  disabled={!formReady}
                   className="rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
                 >
                   Guardar
