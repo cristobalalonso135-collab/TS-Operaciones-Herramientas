@@ -336,21 +336,10 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     return filtered;
   }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
-  const weeklyGroups = useMemo(() => {
+  const weeklyRows = useMemo(() => {
     const open = tasks.filter((item) => !isClosed(item));
-    const order: string[] = [];
-    const map = new Map<string, ChecklistTask[]>();
-    open.forEach((item) => {
-      const owner = item.responsable.trim() || 'Sin responsable';
-      if (!map.has(owner)) {
-        map.set(owner, []);
-        order.push(owner);
-      }
-      map.get(owner)!.push(item);
-    });
-    return order.map((owner) => ({ owner, tasks: sortByPriority(map.get(owner) || []) }));
+    return sortByDeadline(open, 'asc');
   }, [tasks]);
-  const weeklyPending = weeklyGroups.reduce((sum, group) => sum + group.tasks.length, 0);
   const formGaps = askedSave ? missingChecklistFields(form) : [];
   const gapKeys = new Set(formGaps.map((item) => item.key));
 
@@ -1021,57 +1010,50 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'enviar' && (
-        <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] shadow-sm">
-          <div className="border-b border-[var(--border)] bg-white px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Pendientes de la semana</p>
-            <p className="mt-1 font-display text-xl font-semibold tracking-tight">{state.nombre}</p>
-            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">
-              {weeklyPending} pendiente{weeklyPending === 1 ? '' : 's'}
-              {weeklyGroups.length ? ` · ${weeklyGroups.length} persona${weeklyGroups.length === 1 ? '' : 's'}` : ''}
+        <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--border)] bg-white px-3 py-2">
+            <p className="font-display text-base font-semibold tracking-tight">{state.nombre}</p>
+            <p className="text-xs text-[var(--text-secondary)]">
+              {weeklyRows.length} pendiente{weeklyRows.length === 1 ? '' : 's'}
               {state.fechaEvento ? ` · evento ${formatIsoDate(state.fechaEvento)}` : ''}
             </p>
           </div>
-          {weeklyGroups.length === 0 ? (
-            <p className="px-4 py-8 text-sm text-[var(--text-muted)]">No hay pendientes.</p>
+          {weeklyRows.length === 0 ? (
+            <p className="px-3 py-6 text-sm text-[var(--text-muted)]">No hay pendientes.</p>
           ) : (
-            weeklyGroups.map((group) => (
-              <section key={group.owner} className="border-t border-[var(--border)]">
-                <div className="flex items-baseline justify-between gap-3 bg-[var(--bg-soft)] px-4 py-1.5">
-                  <p className="text-sm font-semibold">{group.owner}</p>
-                  <p className="text-xs tabular-nums text-[var(--text-muted)]">{group.tasks.length}</p>
-                </div>
-                <table className="w-full text-left text-sm">
-                  <thead className="text-[11px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                    <tr>
-                      <th className="px-4 py-1.5 font-semibold">Tarea</th>
-                      <th className="w-36 px-3 py-1.5 font-semibold">Área</th>
-                      <th className="w-40 px-3 py-1.5 font-semibold">Deadline</th>
+            <table className="w-full text-left text-[13px]">
+              <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                <tr>
+                  <th className="px-2.5 py-1.5 font-semibold">Área</th>
+                  <th className="px-2.5 py-1.5 font-semibold">Tarea</th>
+                  <th className="w-36 px-2.5 py-1.5 font-semibold">Deadline</th>
+                  <th className="w-20 px-2.5 py-1.5 font-semibold">Prioridad</th>
+                  <th className="px-2.5 py-1.5 font-semibold">Responsable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weeklyRows.map((task) => {
+                  const overdue = isTaskOverdue(task, today);
+                  return (
+                    <tr
+                      key={task.id}
+                      className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : 'bg-white'}`}
+                      onClick={() => openTask(task)}
+                    >
+                      <td className="whitespace-nowrap px-2.5 py-1 text-[var(--text-secondary)]">{task.area || '—'}</td>
+                      <td className="px-2.5 py-1 font-medium">{task.titulo}</td>
+                      <td className="whitespace-nowrap px-2.5 py-1">
+                        <DeadlineMark iso={task.deadline} today={today} />
+                      </td>
+                      <td className="px-2.5 py-1">
+                        <PriorityMark value={task.prioridad} />
+                      </td>
+                      <td className="whitespace-nowrap px-2.5 py-1">{task.responsable || '—'}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {group.tasks.map((task) => {
-                      const overdue = isTaskOverdue(task, today);
-                      return (
-                        <tr
-                          key={task.id}
-                          className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : 'bg-white'}`}
-                          onClick={() => openTask(task)}
-                        >
-                          <td className="px-4 py-1.5">
-                            <span className="mr-2 font-medium">{task.titulo}</span>
-                            <PriorityMark value={task.prioridad} />
-                          </td>
-                          <td className="px-3 py-1.5 text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className="px-3 py-1.5">
-                            <DeadlineMark iso={task.deadline} today={today} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </section>
-            ))
+                  );
+                })}
+              </tbody>
+            </table>
           )}
         </div>
       )}
