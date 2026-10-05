@@ -307,6 +307,18 @@ export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: n
   return current === 'Pago comunicado' ? current : 'Pendiente';
 }
 
+/** Keep the status chosen in the modal unless receipts already prove Liquidado / Exceso / A cuenta. */
+export function resolveManualStatus(
+  selected: AbonoStatus | '',
+  expectedAmount: number | null,
+  receivedTotal: number,
+  estimated = false,
+): AbonoStatus | '' {
+  const derived = statusAfterReceipts(selected, expectedAmount, receivedTotal, estimated);
+  if (derived === 'Liquidado' || derived === 'Exceso' || derived === 'A cuenta') return derived;
+  return selected || derived;
+}
+
 export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms: TradeTerm[], today = todayIso()): AbonoComputed {
   const recordedTotal = receivedTotalFor(row.id, receipts);
   const receivedTotal = row.status === 'Liquidado' && row.expectedAmount !== null

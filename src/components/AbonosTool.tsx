@@ -11,10 +11,7 @@ import {
   ABONOS_PEOPLE,
   addDaysIso,
   abonoRequiredGaps,
-  amountKindLabel,
   caseLabel,
-  claimKindLabel,
-  claimsForCase,
   computeAll,
   DEFAULT_NEW_AUTHOR,
   displayDash,
@@ -29,6 +26,7 @@ import {
   nextRegistro,
   parseMoney,
   receiptsForCase,
+  resolveManualStatus,
   shortPersonName,
   statusAfterReceipts,
   taskName,
@@ -458,7 +456,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [termForm, setTermForm] = useState<Partial<TradeTerm>>({ brand: 'Adidas', name: '', compensation: '', triggerText: '', period: '', active: true, comment: '' });
   const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
   const [claimNote, setClaimNote] = useState('');
-  const [claimDraft, setClaimDraft] = useState({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
   const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
 
   const persist = useCallback(async (next: AbonosState, currentBackend: AbonosBackend) => {
@@ -703,7 +700,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     });
     setExpectedAmountText(formatMoneyInput(row.expectedAmount));
     setCommunicatedAmountText(formatMoneyInput(row.communicatedAmount));
-    setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
     setPanelNote(null);
     setViewerImage(null);
     setPanelOpen(true);
@@ -770,7 +766,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const received = editing
       ? receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0)
       : 0;
-    const status = statusAfterReceipts(
+    const status = resolveManualStatus(
       (form.status || '') as AbonoStatus | '',
       expectedAmount,
       received,
@@ -807,7 +803,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       'team',
       row.teamMotivo,
     );
-    void persist({ ...state, cases, catalogs }, backend);
+    await persist({ ...state, cases, catalogs }, backend);
     closePanel();
     setAck({
       title: 'Guardado',
@@ -895,40 +891,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setReceiptDraft({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
     setNote('Recepción añadida.');
     setPanelNote('Pago registrado.');
-  };
-
-  const addClaimFromModal = async () => {
-    if (!editing) return;
-    const nextReview = claimDraft.nextReview || addDaysIso(todayIso(), 7);
-    const hasPriorClaim = claimsForCase(state.claims, editing.id).some((claim) => claim.kind === 'reclamar' || claim.kind === 'seguir');
-    const kind = hasPriorClaim ? 'seguir' as const : 'reclamar' as const;
-    const cases = state.cases.map((row) => row.id === editing.id ? { ...row, nextReview } : row);
-    const claims = [...state.claims, makeClaim(editing.id, kind, claimDraft.note, claimDraft.claimedAt || todayIso())];
-    await persist({ ...state, cases, claims }, backend);
-    setEditing({ ...editing, nextReview });
-    setForm((current) => ({ ...current, nextReview }));
-    setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
-    setNote(`Gestión guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.`);
-    setPanelNote(`Gestión guardada. Vuelve a salir el ${formatIsoDate(nextReview)}.`);
-  };
-
-  const addResponseFromModal = async () => {
-    if (!editing || !claimDraft.note.trim()) {
-      setError('Escribe la respuesta recibida.');
-      return;
-    }
-    const nextReview = claimDraft.nextReview || null;
-    const cases = state.cases.map((row) => (
-      row.id === editing.id ? { ...row, nextReview } : row
-    ));
-    const claims = [...state.claims, makeClaim(editing.id, 'respuesta', claimDraft.note, claimDraft.claimedAt || todayIso())];
-    await persist({ ...state, cases, claims }, backend);
-    setEditing({ ...editing, nextReview });
-    setForm((current) => ({ ...current, nextReview }));
-    setClaimDraft({ claimedAt: todayIso(), nextReview: addDaysIso(todayIso(), 7), note: '' });
-    setError(null);
-    setNote(nextReview ? `Respuesta guardada. Volverá a aparecer el ${formatIsoDate(nextReview)}.` : 'Respuesta guardada.');
-    setPanelNote(nextReview ? `Respuesta guardada. Vuelve a salir el ${formatIsoDate(nextReview)}.` : 'Respuesta guardada.');
   };
 
   const deleteReceipt = async (id: string) => {
@@ -1064,9 +1026,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
   const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
-  const caseClaims = editing ? claimsForCase(state.claims, editing.id) : [];
   const brandTerms = state.tradeTerms.filter((term) => term.brand === form.brand && (term.active !== false || term.id === form.tradeTermId));
-  const formTerm = state.tradeTerms.find((term) => term.id === form.tradeTermId) || null;
   const tableWidth = columnOrder.reduce((sum, key) => sum + columnWidths[key], 0);
 
   const toggleSort = (key: SortKey) => {
@@ -1724,423 +1684,283 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       {panelOpen && (
         <div className="abonos-modal-backdrop" onClick={closePanel}>
           <div
-            className="abonos-modal"
+            className="abonos-modal flex max-h-[calc(100vh-48px)] flex-col"
+            style={{ width: 'min(560px, 100%)' }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="abonos-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
               <div className="min-w-0">
                 <p id="abonos-modal-title" className="font-display text-lg font-semibold tracking-tight">
                   {editing ? caseLabel({ brand: form.brand || editing.brand, area: form.area || editing.area, teamMotivo: form.teamMotivo || editing.teamMotivo }) : 'Nuevo abono'}
                 </p>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  {formTerm ? `${formTerm.brand} · ${formTerm.name}${formTerm.compensation ? ` · ${formTerm.compensation}` : ''}` : null}
-                  {formTerm ? ' · ' : ''}
                   {formatIsoDate(form.dueDate || null)} · {formatMoney(form.expectedAmount ?? null)}
                   {editing ? ` · #${editing.registro}` : ''}
                 </p>
+                {currentComputed && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <StatusPill row={{
+                      ...currentComputed,
+                      estimated: form.estimated === true,
+                      status: (form.status || currentComputed.status) as AbonoComputed['status'],
+                    }} />
+                    {currentComputed.overdueDays !== null && form.estimated !== true && (
+                      <span className="text-xs font-medium text-[var(--danger)]">Vencido hace {currentComputed.overdueDays} días</span>
+                    )}
+                  </div>
+                )}
               </div>
               <button type="button" onClick={closePanel} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
-              <div>
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{editing ? 'Editar' : 'Datos del abono'}</p>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <CatalogField
-                    label="Marca"
-                    value={form.brand || ''}
-                    options={state.catalogs.brands}
-                    required
-                    onChange={(brand) => {
-                      const linked = state.tradeTerms.find((term) => term.id === form.tradeTermId);
+            <div className="min-h-0 flex-1 space-y-6 overflow-auto p-5">
+              <section className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Datos</p>
+                <CatalogField
+                  label="Marca"
+                  value={form.brand || ''}
+                  options={state.catalogs.brands}
+                  required
+                  onChange={(brand) => {
+                    const linked = state.tradeTerms.find((term) => term.id === form.tradeTermId);
+                    setForm({
+                      ...form,
+                      brand,
+                      tradeTermId: linked && linked.brand === brand ? form.tradeTermId : null,
+                    });
+                  }}
+                  onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)}
+                />
+                <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
+                <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree required onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
+                <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto *</span>
+                  <input
+                    inputMode="decimal"
+                    placeholder="300,44"
+                    value={expectedAmountText}
+                    onChange={(event) => {
+                      const text = event.target.value;
+                      setExpectedAmountText(text);
+                      setForm({ ...form, expectedAmount: parseMoney(text) });
+                    }}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Real o estimado *</span>
+                  <select
+                    value={form.estimated === true ? 'Estimado' : form.estimated === false ? 'Real' : ''}
+                    onChange={(event) => {
+                      const estimated = event.target.value === 'Estimado' ? true : event.target.value === 'Real' ? false : null;
+                      const received = currentComputed?.receivedTotal ?? 0;
                       setForm({
                         ...form,
-                        brand,
-                        tradeTermId: linked && linked.brand === brand ? form.tradeTermId : null,
+                        estimated,
+                        status: estimated === null
+                          ? form.status
+                          : statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated),
                       });
                     }}
-                    onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)}
-                  />
-                  <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
-                  <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree required onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
-                    <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Acuerdo' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
-                    </select>
-                  </label>
-                  <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto *</span>
-                    <input
-                      inputMode="decimal"
-                      placeholder="300,44"
-                      value={expectedAmountText}
-                      onChange={(event) => {
-                        const text = event.target.value;
-                        setExpectedAmountText(text);
-                        setForm({ ...form, expectedAmount: parseMoney(text) });
-                      }}
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
-                    />
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Real o estimado *</span>
-                    <select
-                      value={form.estimated === true ? 'Estimado' : form.estimated === false ? 'Real' : ''}
-                      onChange={(event) => {
-                        const estimated = event.target.value === 'Estimado' ? true : event.target.value === 'Real' ? false : null;
-                        const received = currentComputed?.receivedTotal ?? 0;
-                        setForm({
-                          ...form,
-                          estimated,
-                          status: estimated === null
-                            ? form.status
-                            : statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated),
-                        });
-                      }}
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                    >
-                      <option value="">—</option>
-                      {ABONO_AMOUNT_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
-                    <input
-                      type="date"
-                      value={form.dueDate || ''}
-                      onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                    />
-                  </label>
-                  {form.origin === 'Acuerdo' && (
-                    <label className="space-y-1 md:col-span-2">
-                      <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term *</span>
-                      <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                        <option value="">Selecciona</option>
-                        {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
-                      </select>
-                    </label>
-                  )}
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por *</span>
-                    <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable de seguimiento *</span>
-                    <select value={form.responsible || ''} onChange={(event) => setForm({ ...form, responsible: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
-                    </select>
-                  </label>
-                  <p className="md:col-span-2 pt-1 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Confirmación de la marca</p>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Canal *</span>
-                    <select value={form.source || ''} onChange={(event) => setForm({ ...form, source: event.target.value as AbonoSource | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                      <option value="">—</option>
-                      {ABONO_SOURCES.map((source) => <option key={source} value={source}>{source}</option>)}
-                    </select>
-                  </label>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Persona *</span>
-                    <input
-                      value={form.informedBy || ''}
-                      onChange={(event) => setForm({ ...form, informedBy: event.target.value })}
-                      placeholder="Quién te lo dijo o de la marca"
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                    />
-                  </label>
-                  <div className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
-                    <p className="text-[11px] text-[var(--text-secondary)]">Imagen, PDF o Excel. Hasta {MAX_EVIDENCE}. Pega una captura con Ctrl+V.</p>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {(form.attachments || []).map((item) => (
-                        <div key={item.id} className="relative">
-                          <button
-                            type="button"
-                            onClick={() => openAttachment(item, setViewerImage)}
-                            className="flex h-20 w-28 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
-                            title={item.name}
-                          >
-                            {isImageAttachment(item) ? (
-                              <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
-                            ) : (
-                              <>
-                                <FileText className="h-5 w-5 text-[var(--text-muted)]" />
-                                <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
-                              </>
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeEvidence(item.id)}
-                            className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
-                            aria-label="Quitar documento"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                      {(form.attachments || []).length < MAX_EVIDENCE && (
-                        <button
-                          type="button"
-                          onClick={() => evidenceInputRef.current?.click()}
-                          className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
-                        >
-                          <ImagePlus className="h-4 w-4" />
-                          <span className="text-[11px] font-medium">Añadir</span>
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      ref={evidenceInputRef}
-                      type="file"
-                      accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
-                      multiple
-                      className="hidden"
-                      onChange={(event) => {
-                        const files = Array.from(event.target.files || []);
-                        event.target.value = '';
-                        void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
-                      }}
-                    />
-                  </div>
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
-                    <select
-                      value={form.status || ''}
-                      onChange={(event) => {
-                        const status = event.target.value as AbonoStatus | '';
-                        setForm({ ...form, status, estimated: status === 'A cuenta' ? true : form.estimated });
-                      }}
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                    >
-                      <option value="">—</option>
-                      {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                  </label>
-                  {form.status === 'Pago comunicado' && (
-                    <label className="space-y-1">
-                      <span className="text-xs font-medium text-[var(--text-secondary)]">Importe comunicado por la marca</span>
-                      <input
-                        inputMode="decimal"
-                        placeholder="0,00"
-                        value={communicatedAmountText}
-                        onChange={(event) => {
-                          const text = event.target.value;
-                          setCommunicatedAmountText(text);
-                          setForm({ ...form, communicatedAmount: parseMoney(text) });
-                        }}
-                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
-                      />
-                      {form.communicatedAmount !== null && form.communicatedAmount !== undefined
-                        && Math.abs(form.communicatedAmount - (currentComputed?.pending ?? Math.max(0, form.expectedAmount ?? 0))) > 0.009 && (
-                        <span className="block text-xs font-medium text-[var(--warning)]">No coincide con el importe pendiente.</span>
-                      )}
-                    </label>
-                  )}
-                  <label className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Próxima revisión</span>
-                    <input type="date" value={form.nextReview || ''} onChange={(event) => setForm({ ...form, nextReview: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-                  </label>
-                  <label className="space-y-1 md:col-span-2">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
-                    <textarea
-                      value={form.comment || ''}
-                      onChange={(event) => setForm({ ...form, comment: event.target.value })}
-                      rows={3}
-                      placeholder="Nombre del correo, día de la conversación, nº de pedido…"
-                      className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                    />
-                  </label>
-                </div>
-                {panelNote && (
-                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-green-200 bg-[var(--success-soft)] px-3 py-2.5 text-sm font-medium text-[var(--success)]" role="status">
-                    <Check className="h-4 w-4 shrink-0" />
-                    {panelNote}
-                  </div>
-                )}
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={saveForm}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                   >
-                    Guardar
-                  </button>
-                  {editing && (
-                    <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
-                  )}
-                </div>
-              </div>
+                    <option value="">—</option>
+                    {ABONO_AMOUNT_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
+                  <input
+                    type="date"
+                    value={form.dueDate || ''}
+                    onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
+                  <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Acuerdo' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <option value="">—</option>
+                    {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
+                  </select>
+                </label>
+                {form.origin === 'Acuerdo' && (
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term *</span>
+                    <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                      <option value="">Selecciona</option>
+                      {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
+                    </select>
+                  </label>
+                )}
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por *</span>
+                  <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <option value="">—</option>
+                    {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable de seguimiento *</span>
+                  <select value={form.responsible || ''} onChange={(event) => setForm({ ...form, responsible: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <option value="">—</option>
+                    {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Canal *</span>
+                  <select value={form.source || ''} onChange={(event) => setForm({ ...form, source: event.target.value as AbonoSource | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <option value="">—</option>
+                    {ABONO_SOURCES.map((source) => <option key={source} value={source}>{source}</option>)}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Persona *</span>
+                  <input
+                    value={form.informedBy || ''}
+                    onChange={(event) => setForm({ ...form, informedBy: event.target.value })}
+                    placeholder="Quién te lo dijo o de la marca"
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  />
+                </label>
+              </section>
 
-              <div className="space-y-3">
-                <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Resumen</p>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    <div>
-                      <p className="text-[11px] text-[var(--text-secondary)]">{form.estimated === true ? 'Previsto (estimado)' : 'Previsto'}</p>
-                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] text-[var(--text-secondary)]">Liquidado</p>
-                      <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
-                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
-                    </div>
+              <section className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Pago</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">Adjunta el documento y cambia el estado.</p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 rounded-md bg-white px-3 py-2">
+                  <div>
+                    <p className="text-[11px] text-[var(--text-secondary)]">{form.estimated === true ? 'Previsto (est.)' : 'Previsto'}</p>
+                    <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
                   </div>
-                  {currentComputed && (
-                    <div className="mt-3">
-                      <StatusPill row={{
-                        ...currentComputed,
-                        estimated: form.estimated === true,
-                        status: (form.status || currentComputed.status) as AbonoComputed['status'],
-                      }} />
-                    </div>
-                  )}
-                  <p className="mt-2 text-xs text-[var(--text-secondary)]">
-                    {caseReceipts.length === 0
-                      ? 'Sin pagos registrados.'
-                      : `${caseReceipts.length} pago${caseReceipts.length === 1 ? '' : 's'} · último ${formatIsoDate(caseReceipts[caseReceipts.length - 1]?.receivedAt || null)}`}
-                  </p>
-                  {form.estimated === true && currentComputed && currentComputed.pending > 0.009 && (
-                    <p className="mt-2 text-sm font-medium text-[var(--warning)]">
-                      Quedan {formatMoney(currentComputed.pending)}. Reclama el resto o baja el previsto cuando sepas el importe real.
-                    </p>
-                  )}
-                  {form.estimated === true && currentComputed && currentComputed.pending <= 0.009 && currentComputed.receivedTotal > 0.009 && (
-                    <p className="mt-2 text-sm font-medium text-[var(--account)]">
-                      Han pagado el estimado. Cuando sepas el importe real, ajústalo y márcalo como Real.
-                    </p>
-                  )}
-                  {form.estimated !== true && currentComputed?.overdueDays !== null && currentComputed?.overdueDays !== undefined && (
-                    <p className="mt-2 text-sm font-medium text-[var(--danger)]">Vencido hace {currentComputed.overdueDays} días</p>
-                  )}
-                  {currentComputed?.reviewOverdue && (
-                    <p className="mt-1 text-sm font-medium text-[var(--warning)]">Revisar hoy</p>
-                  )}
-                  {form.estimated !== true && currentComputed && currentComputed.excessAmount > 0.009 && (
-                    <p className="mt-2 text-sm font-medium text-[var(--excess)]">Han pagado {formatMoney(currentComputed.excessAmount)} de más.</p>
-                  )}
+                  <div>
+                    <p className="text-[11px] text-[var(--text-secondary)]">Liquidado</p>
+                    <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
+                    <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
+                  </div>
                 </div>
-
-                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Información adicional</p>
-                  <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Fecha de alta</dt>
-                      <dd>{formatIsoDate(editing?.createdAt ? editing.createdAt.slice(0, 10) : null)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Añadido por</dt>
-                      <dd>{displayDash(form.addedBy)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Responsable</dt>
-                      <dd>{displayDash(form.responsible)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Fecha prevista</dt>
-                      <dd>{formatIsoDate(form.dueDate || null)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Próx. revisión</dt>
-                      <dd>{formatIsoDate(form.nextReview || null)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Real o estimado</dt>
-                      <dd>{displayDash(amountKindLabel(form.estimated ?? null))}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Origen</dt>
-                      <dd>{displayDash(form.origin)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Trade Term</dt>
-                      <dd>{displayDash(currentComputed?.tradeTermName)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Canal</dt>
-                      <dd>{displayDash(form.source)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[11px] text-[var(--text-secondary)]">Persona</dt>
-                      <dd>{displayDash(form.informedBy)}</dd>
-                    </div>
-                  </dl>
-                  {(form.attachments || []).length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {(form.attachments || []).map((item) => (
+                <div className="space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
+                  <p className="text-[11px] text-[var(--text-secondary)]">Imagen, PDF o Excel. Hasta {MAX_EVIDENCE}. Pega una captura con Ctrl+V.</p>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {(form.attachments || []).map((item) => (
+                      <div key={item.id} className="relative">
                         <button
-                          key={item.id}
                           type="button"
                           onClick={() => openAttachment(item, setViewerImage)}
-                          className="flex h-14 w-20 items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white"
+                          className="flex h-20 w-28 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
                           title={item.name}
                         >
                           {isImageAttachment(item) ? (
                             <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
                           ) : (
-                            <FileText className="h-4 w-4 text-[var(--text-muted)]" />
+                            <>
+                              <FileText className="h-5 w-5 text-[var(--text-muted)]" />
+                              <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
+                            </>
                           )}
                         </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Reclamaciones</p>
-                  <div className="mt-3 space-y-2">
-                    {caseClaims.map((claim) => (
-                      <div key={claim.id} className="rounded-md bg-[var(--bg-soft)] px-3 py-2 text-sm">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{claimKindLabel(claim.kind)} · {formatIsoDate(claim.claimedAt)}</p>
-                        <p className="mt-0.5 text-[var(--text-secondary)]">{claim.note || 'Sin nota'}</p>
+                        <button
+                          type="button"
+                          onClick={() => removeEvidence(item.id)}
+                          className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
+                          aria-label="Quitar documento"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     ))}
-                    {caseClaims.length === 0 && (
-                      <p className="text-xs text-[var(--text-secondary)]">{editing ? 'Aún no hay reclamaciones anotadas.' : 'Guarda el abono para anotar reclamaciones.'}</p>
+                    {(form.attachments || []).length < MAX_EVIDENCE && (
+                      <button
+                        type="button"
+                        onClick={() => evidenceInputRef.current?.click()}
+                        className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
+                      >
+                        <ImagePlus className="h-4 w-4" />
+                        <span className="text-[11px] font-medium">Añadir</span>
+                      </button>
                     )}
                   </div>
-                  {editing && (
-                    <div className="mt-3 grid gap-2">
-                      <label className="space-y-1">
-                        <span className="text-[11px] text-[var(--text-secondary)]">Fecha de la gestión</span>
-                        <input type="date" value={claimDraft.claimedAt} onChange={(event) => setClaimDraft({ ...claimDraft, claimedAt: event.target.value })} className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-                      </label>
-                      <input value={claimDraft.note} onChange={(event) => setClaimDraft({ ...claimDraft, note: event.target.value })} placeholder="Reclamación o respuesta recibida" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <label className="space-y-1">
-                        <span className="text-[11px] text-[var(--text-secondary)]">Volver a revisar</span>
-                        <input type="date" value={claimDraft.nextReview} onChange={(event) => setClaimDraft({ ...claimDraft, nextReview: event.target.value })} className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button type="button" onClick={addClaimFromModal} className="rounded-md bg-[var(--text-primary)] px-3 py-2 text-sm font-semibold text-white hover:bg-black">He reclamado</button>
-                        <button type="button" onClick={addResponseFromModal} className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-semibold hover:bg-[var(--bg-soft)]">Añadir respuesta</button>
-                      </div>
-                    </div>
-                  )}
+                  <input
+                    ref={evidenceInputRef}
+                    type="file"
+                    accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                      const files = Array.from(event.target.files || []);
+                      event.target.value = '';
+                      void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
+                    }}
+                  />
                 </div>
-
-                <div className="rounded-lg border border-[var(--border)] bg-white p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Pagos recibidos</p>
-                  <div className="mt-3 space-y-2">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
+                  <select
+                    value={form.status || ''}
+                    onChange={(event) => {
+                      const status = event.target.value as AbonoStatus | '';
+                      const estimated = status === 'A cuenta' ? true : form.estimated;
+                      setForm({ ...form, status, estimated });
+                      if (!editing || !state) return;
+                      const received = receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0);
+                      const nextStatus = resolveManualStatus(
+                        status,
+                        parseMoney(expectedAmountText) ?? editing.expectedAmount,
+                        received,
+                        estimated === true,
+                      );
+                      const cases = state.cases.map((row) => (
+                        row.id === editing.id ? { ...row, status: nextStatus, estimated: estimated === true } : row
+                      ));
+                      setEditing({ ...editing, status: nextStatus, estimated: estimated === true });
+                      setPanelNote('Estado guardado.');
+                      void persist({ ...state, cases }, backend);
+                    }}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  >
+                    <option value="">—</option>
+                    {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </label>
+                {form.status === 'Pago comunicado' && (
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe comunicado por la marca</span>
+                    <input
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={communicatedAmountText}
+                      onChange={(event) => {
+                        const text = event.target.value;
+                        setCommunicatedAmountText(text);
+                        setForm({ ...form, communicatedAmount: parseMoney(text) });
+                      }}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
+                    />
+                    {form.communicatedAmount !== null && form.communicatedAmount !== undefined
+                      && Math.abs(form.communicatedAmount - (currentComputed?.pending ?? Math.max(0, form.expectedAmount ?? 0))) > 0.009 && (
+                      <span className="block text-xs font-medium text-[var(--warning)]">No coincide con el importe pendiente.</span>
+                    )}
+                  </label>
+                )}
+                {editing && (
+                  <div className="space-y-2 border-t border-[var(--border)] pt-3">
+                    <p className="text-xs font-medium text-[var(--text-secondary)]">Si ha entrado el dinero, regístralo</p>
                     {caseReceipts.map((receipt, index) => (
-                      <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-3 py-2 text-sm">
+                      <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm">
                         <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{paymentLabel(index)}</p>
-                          <p className="font-medium">{formatIsoDate(receipt.receivedAt)} · {formatMoney(receipt.amount)}</p>
+                          <p className="font-medium">{paymentLabel(index)} · {formatIsoDate(receipt.receivedAt)} · {formatMoney(receipt.amount)}</p>
                           <p className="text-xs text-[var(--text-secondary)]">{receipt.reference || receipt.comment || '—'}</p>
                         </div>
                         <button type="button" onClick={() => deleteReceipt(receipt.id)} className="text-[var(--danger)]" aria-label="Eliminar pago">
@@ -2148,21 +1968,48 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         </button>
                       </div>
                     ))}
-                    {caseReceipts.length === 0 && (
-                      <p className="text-xs text-[var(--text-secondary)]">{editing ? 'Aún no hay pagos registrados.' : 'Guarda el abono para poder anotar pagos.'}</p>
-                    )}
-                  </div>
-                  {editing && (
-                    <div className="mt-3 grid gap-2">
-                      <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <input inputMode="decimal" value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] px-3 text-right font-mono text-sm" />
-                      <input value={receiptDraft.reference} onChange={(event) => setReceiptDraft({ ...receiptDraft, reference: event.target.value })} placeholder="Referencia" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <input value={receiptDraft.comment} onChange={(event) => setReceiptDraft({ ...receiptDraft, comment: event.target.value })} placeholder="Comentario" className="h-9 rounded-md border border-[var(--border)] px-3 text-sm" />
-                      <button type="button" onClick={addReceipt} className="rounded-md bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">Registrar pago</button>
+                    <div className="grid gap-2">
+                      <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
+                      <input inputMode="decimal" value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
+                      <button type="button" onClick={addReceipt} className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-[var(--accent)] ring-1 ring-[var(--border)] hover:bg-[var(--accent-soft)]">Registrar pago</button>
                     </div>
-                  )}
+                  </div>
+                )}
+              </section>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
+                <textarea
+                  value={form.comment || ''}
+                  onChange={(event) => setForm({ ...form, comment: event.target.value })}
+                  rows={3}
+                  placeholder="Nombre del correo, conversación, nº de pedido…"
+                  className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                />
+              </label>
+
+              {panelNote && (
+                <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-[var(--success-soft)] px-3 py-2.5 text-sm font-medium text-[var(--success)]" role="status">
+                  <Check className="h-4 w-4 shrink-0" />
+                  {panelNote}
                 </div>
-              </div>
+              )}
+              {error && (
+                <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-3 py-2.5 text-sm text-[var(--danger)]">{error}</div>
+              )}
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3">
+              <button
+                type="button"
+                onClick={saveForm}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+              >
+                Guardar
+              </button>
+              {editing && (
+                <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
+              )}
             </div>
           </div>
         </div>
