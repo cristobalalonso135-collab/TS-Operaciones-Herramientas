@@ -15,6 +15,7 @@ import StockTool from '@/components/StockTool';
 import AbonosTool from '@/components/AbonosTool';
 import AlbaranesTool from '@/components/AlbaranesTool';
 import ChecklistTool from '@/components/ChecklistTool';
+import ObjetivosTool from '@/components/ObjetivosTool';
 import MejorasTool from '@/components/MejorasTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -416,7 +417,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -672,6 +673,10 @@ export default function Home() {
     return <ChecklistTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'objetivos') {
+    return <ObjetivosTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -730,13 +735,21 @@ export default function Home() {
         tone: 'bg-[#ece7f6] text-[#5b3d91]',
         link: 'text-[#5b3d91]',
       },
-      {
+        {
         id: 'checklist' as const,
         number: '08',
         title: 'Checklist',
         description: 'Varias checklists. De momento la I Convención Teamsports 27/28; se duplica como plantilla cuando haga falta otra.',
         tone: 'bg-[#f4e6da] text-[#8a4b2a]',
         link: 'text-[#8a4b2a]',
+      },
+      {
+        id: 'objetivos' as const,
+        number: '09',
+        title: 'Objetivos',
+        description: 'FY 26/27: los tuyos vigentes y los de Blanca. Los Target Setting tuyos quedan como anteriores.',
+        tone: 'bg-[#e8eef5] text-[#1f4b7a]',
+        link: 'text-[#1f4b7a]',
       },
     ];
 
@@ -753,7 +766,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Ocho entradas: comercial, almacén, abonos, mejoras IT, albaranes y checklist. El resto vive en pestañas dentro de cada herramienta.
+              Nueve entradas: comercial, almacén, abonos, mejoras IT, albaranes, checklist y objetivos. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
