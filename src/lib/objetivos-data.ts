@@ -18,12 +18,21 @@ export interface ObjetivoPack {
   vigente: boolean;
   etiqueta: string;
   fuente: string;
+  archivo: string;
   reunion: string | null;
   liderArchivo: string;
   responsableActual: string;
   nota: string | null;
   escala?: { rango: string; pago: string }[];
   items: ObjetivoItem[];
+}
+
+export interface ObjetivoArchivo {
+  packId: ObjetivoPack['id'];
+  persona: string;
+  etiqueta: string;
+  nombre: string;
+  href: string;
 }
 
 export const OBJETIVO_KIND_LABEL: Record<ObjetivoKind, string> = {
@@ -41,6 +50,7 @@ export const CRISTOBAL_ACTUAL: ObjetivoPack = {
   vigente: true,
   etiqueta: 'Actuales · FY 26/27',
   fuente: 'Objetivos FY 2627_Cristobal Alonso.xlsx',
+  archivo: '/objetivos/objetivos-fy-2627-cristobal.xlsx',
   reunion: null,
   liderArchivo: 'Alberto Antequera',
   responsableActual: 'Alberto Antequera',
@@ -71,7 +81,8 @@ export const CRISTOBAL_ACTUAL: ObjetivoPack = {
       peso: 25,
       titulo: 'C Margin Teamsport',
       cifra: '8,8 M€',
-      medida: 'Según el split del pantallazo de referencia del objetivo.',
+      medida:
+        'Contribution margin de Teamsport, según el split del pantallazo. No es el EBITDA Teamsport 8,725 M€ pre central de Blanca (ni el tuyo del Target Setting).',
     },
     {
       id: 'ca-stock',
@@ -80,7 +91,7 @@ export const CRISTOBAL_ACTUAL: ObjetivoPack = {
       peso: 25,
       titulo: 'Stock por debajo de 11 M€',
       cifra: '< 11 M€',
-      medida: 'Stock final en Equipaciones y B2B.',
+      medida: 'Stock final en Equipaciones y B2B. No es el de Blanca (8,5 M€ Equi + B2B, sin Francia, consignment Puma ni DVC in-line).',
     },
     {
       id: 'ca-ind',
@@ -123,6 +134,7 @@ export const CRISTOBAL_ANTERIOR: ObjetivoPack = {
   vigente: false,
   etiqueta: 'Anteriores · Target Setting',
   fuente: 'TARGET SETTING_26-27_Cristobal Alonso.xlsx',
+  archivo: '/objetivos/target-setting-2627-cristobal.xlsx',
   reunion: '29/05/2026',
   liderArchivo: 'Pablo Laguna',
   responsableActual: 'Pablo Laguna',
@@ -144,7 +156,7 @@ export const CRISTOBAL_ANTERIOR: ObjetivoPack = {
       peso: 25,
       titulo: 'EBITDA Teamsport',
       cifra: '8,725 M€',
-      medida: 'Pre central.',
+      medida: 'Pre central. Es lo que ahora tiene Blanca. En tus actuales se sustituyó por C Margin 8,8 M€.',
     },
     {
       id: 'co-ia',
@@ -186,6 +198,7 @@ export const BLANCA_ACTUAL: ObjetivoPack = {
   vigente: true,
   etiqueta: 'Actuales · Target Setting',
   fuente: 'TARGET SETTING_26-27_Blanca Sancho.xlsx',
+  archivo: '/objetivos/target-setting-2627-blanca.xlsx',
   reunion: '29/05/2026',
   liderArchivo: 'Pablo Laguna',
   responsableActual: 'Cristóbal Alonso',
@@ -207,7 +220,7 @@ export const BLANCA_ACTUAL: ObjetivoPack = {
       peso: 25,
       titulo: 'EBITDA Teamsport',
       cifra: '8,725 M€',
-      medida: 'Pre central.',
+      medida: 'Pre central. Es la misma línea que tenías tú en el Target Setting, no el C Margin 8,8 M€.',
     },
     {
       id: 'ba-stock',
@@ -216,7 +229,7 @@ export const BLANCA_ACTUAL: ObjetivoPack = {
       peso: 25,
       titulo: 'Stock final almacén Equi + B2B',
       cifra: '8,5 M€',
-      medida: 'Quitando todo lo derivado de Francia, consignment Puma y DVC Adidas si la consume in-line.',
+      medida: 'Quitando Francia, consignment Puma y DVC Adidas si la consume in-line. No es tu stock de < 11 M€.',
     },
     {
       id: 'ba-repos',
@@ -233,4 +246,28 @@ export const BLANCA_ACTUAL: ObjetivoPack = {
 export const PERSONAS = [
   { id: 'cristobal' as const, nombre: 'Cristóbal Alonso', rol: 'Tú', packs: [CRISTOBAL_ACTUAL, CRISTOBAL_ANTERIOR] },
   { id: 'blanca' as const, nombre: 'Blanca Sancho', rol: 'Tu equipo', packs: [BLANCA_ACTUAL] },
+];
+
+export const OBJETIVO_ARCHIVOS: ObjetivoArchivo[] = [
+  {
+    packId: 'cristobal-actual',
+    persona: 'Cristóbal',
+    etiqueta: 'Actuales',
+    nombre: CRISTOBAL_ACTUAL.fuente,
+    href: CRISTOBAL_ACTUAL.archivo,
+  },
+  {
+    packId: 'cristobal-anterior',
+    persona: 'Cristóbal',
+    etiqueta: 'Anteriores',
+    nombre: CRISTOBAL_ANTERIOR.fuente,
+    href: CRISTOBAL_ANTERIOR.archivo,
+  },
+  {
+    packId: 'blanca-actual',
+    persona: 'Blanca',
+    etiqueta: 'Actuales',
+    nombre: BLANCA_ACTUAL.fuente,
+    href: BLANCA_ACTUAL.archivo,
+  },
 ];

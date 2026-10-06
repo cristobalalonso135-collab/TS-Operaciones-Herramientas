@@ -1,13 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import { Download } from 'lucide-react';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   BLANCA_ACTUAL,
   CRISTOBAL_ACTUAL,
   CRISTOBAL_ANTERIOR,
+  OBJETIVO_ARCHIVOS,
   OBJETIVO_KIND_LABEL,
   PERSONAS,
+  type ObjetivoArchivo,
   type ObjetivoItem,
   type ObjetivoPack,
 } from '@/lib/objetivos-data';
@@ -63,7 +66,27 @@ function GoalCard({ item }: { item: ObjetivoItem }) {
   );
 }
 
+function ExcelLink({ archivo }: { archivo: ObjetivoArchivo }) {
+  return (
+    <a
+      href={archivo.href}
+      download={archivo.nombre}
+      className="inline-flex w-full items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2.5 text-left hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+    >
+      <Download className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+      <span>
+        <span className="block text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+          {archivo.persona} · {archivo.etiqueta}
+        </span>
+        <span className="mt-0.5 block text-sm font-medium leading-snug">{archivo.nombre}</span>
+      </span>
+    </a>
+  );
+}
+
 function PackView({ pack }: { pack: ObjetivoPack }) {
+  const archivo = OBJETIVO_ARCHIVOS.find((item) => item.packId === pack.id);
+
   return (
     <div className="space-y-5">
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 sm:p-6">
@@ -75,15 +98,27 @@ function PackView({ pack }: { pack: ObjetivoPack }) {
             <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">{pack.persona}</h2>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{pack.rol}</p>
           </div>
-          {pack.vigente ? (
-            <span className="rounded-md bg-[var(--success-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--success)]">
-              Vigente
-            </span>
-          ) : (
-            <span className="rounded-md bg-[var(--bg-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--text-secondary)]">
-              Sustituido
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {pack.vigente ? (
+              <span className="rounded-md bg-[var(--success-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--success)]">
+                Vigente
+              </span>
+            ) : (
+              <span className="rounded-md bg-[var(--bg-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--text-secondary)]">
+                Sustituido
+              </span>
+            )}
+            {archivo && (
+              <a
+                href={archivo.href}
+                download={archivo.nombre}
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1 text-xs font-semibold text-[var(--text-secondary)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Excel
+              </a>
+            )}
+          </div>
         </div>
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
           <div>
@@ -209,6 +244,27 @@ export default function ObjetivosTool({ onBack }: ObjetivosToolProps) {
           </div>
         )}
       </div>
+
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4 sm:p-5">
+        <h3 className="text-sm font-semibold">Los 3 Excel</h3>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {OBJETIVO_ARCHIVOS.map((archivo) => (
+            <ExcelLink key={archivo.packId} archivo={archivo} />
+          ))}
+        </div>
+      </section>
+
+      {(personaId === 'blanca' || (personaId === 'cristobal' && cristobalPack === 'actual')) && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-5 py-4">
+          <h3 className="text-sm font-semibold">C Margin Teamsport no es lo de Blanca</h3>
+          <p className="mt-2 text-sm leading-relaxed text-[var(--text-secondary)]">
+            El 8,8 M€ de C Margin es contribution margin de Teamsport, y es tuyo. Blanca no tiene esa línea:
+            su objetivo de departamento sigue siendo EBITDA Teamsport 8,725 M€ pre central, el mismo que tenías
+            en el Target Setting. El stock tampoco coincide: tú &lt; 11 M€ Equi + B2B; ella 8,5 M€ Equi + B2B
+            sin Francia, consignment Puma ni DVC in-line.
+          </p>
+        </section>
+      )}
 
       {personaId === 'cristobal' && cristobalPack === 'actual' && (
         <section className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-5 py-4">
