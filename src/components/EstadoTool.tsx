@@ -7,7 +7,11 @@ import {
   emptyCaso,
   emptyEstadoState,
   emptyMovimiento,
+  escenarioTotales,
   formatEuro,
+  formatPct,
+  formatSignedEuro,
+  formatSignedPct,
   parseEuro,
   tipologiasUsadas,
   type EstadoCaso,
@@ -58,6 +62,38 @@ function ConceptoField({ value, onSave }: { value: string; onSave: (next: string
         }
       }}
       className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-1.5 py-0.5 text-sm font-medium outline-none"
+    />
+  );
+}
+
+function EscenarioMoney({
+  value,
+  onSave,
+}: {
+  value: number | null;
+  onSave: (next: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value).replace('.', ','));
+
+  useEffect(() => {
+    setDraft(value == null ? '' : String(value).replace('.', ','));
+  }, [value]);
+
+  return (
+    <input
+      value={draft}
+      inputMode="decimal"
+      placeholder="—"
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const typed = draft.trim();
+        if (!typed) {
+          onSave(null);
+          return;
+        }
+        onSave(parseEuro(typed));
+      }}
+      className="w-full max-w-[8rem] rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1 text-right text-sm font-medium tabular-nums outline-none"
     />
   );
 }
@@ -168,6 +204,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
 
   if (caso) {
     const totales = casoTotales(caso);
+    const escenario = escenarioTotales(caso);
     const ingresos = caso.movimientos.filter((item) => item.lado === 'ingreso');
     const gastos = caso.movimientos.filter((item) => item.lado === 'gasto');
     const cuadra = caso.movimientos.length > 0 && Math.abs(totales.beneficio) < 0.005;
@@ -202,7 +239,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
           />
         </div>
 
-        <section className="grid gap-3 sm:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Ingresos</p>
             <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.ingresos)}</p>
@@ -214,6 +251,79 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Beneficio</p>
             <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.beneficio)}</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Margen</p>
+            <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatPct(totales.margen)}</p>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]">
+          <div className="border-b border-[var(--border)] px-4 py-3">
+            <h3 className="text-sm font-semibold">Escenario</h3>
+            <p className="mt-0.5 text-sm text-[var(--text-secondary)]">
+              Lo que tendríamos que haber sacado frente a lo que sacamos. Pon ingresos y gastos del escenario.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[32rem] text-sm">
+              <thead className="bg-[var(--bg-soft)] text-left text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Cifra</th>
+                  <th className="px-4 py-2 font-medium">Tendríamos que sacar</th>
+                  <th className="px-4 py-2 font-medium">Sacamos</th>
+                  <th className="px-4 py-2 text-right font-medium">Diferencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-[var(--border)]">
+                  <td className="px-4 py-2 text-[var(--text-secondary)]">Ingresos</td>
+                  <td className="px-4 py-2">
+                    <EscenarioMoney
+                      value={caso.escenarioIngresos}
+                      onSave={(next) => patchCaso(caso, { ...caso, escenarioIngresos: next })}
+                    />
+                  </td>
+                  <td className="px-4 py-2 font-medium tabular-nums">{formatEuro(totales.ingresos)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {caso.escenarioIngresos == null ? '—' : formatSignedEuro(totales.ingresos - caso.escenarioIngresos)}
+                  </td>
+                </tr>
+                <tr className="border-t border-[var(--border)]">
+                  <td className="px-4 py-2 text-[var(--text-secondary)]">Gastos</td>
+                  <td className="px-4 py-2">
+                    <EscenarioMoney
+                      value={caso.escenarioGastos}
+                      onSave={(next) => patchCaso(caso, { ...caso, escenarioGastos: next })}
+                    />
+                  </td>
+                  <td className="px-4 py-2 font-medium tabular-nums">{formatEuro(totales.gastos)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {caso.escenarioGastos == null ? '—' : formatSignedEuro(totales.gastos - caso.escenarioGastos)}
+                  </td>
+                </tr>
+                <tr className="border-t border-[var(--border)]">
+                  <td className="px-4 py-2 text-[var(--text-secondary)]">Beneficio</td>
+                  <td className="px-4 py-2 font-medium tabular-nums">
+                    {escenario?.beneficio == null ? '—' : formatEuro(escenario.beneficio)}
+                  </td>
+                  <td className="px-4 py-2 font-medium tabular-nums">{formatEuro(totales.beneficio)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {escenario?.beneficio == null ? '—' : formatSignedEuro(totales.beneficio - escenario.beneficio)}
+                  </td>
+                </tr>
+                <tr className="border-t border-[var(--border)]">
+                  <td className="px-4 py-2 text-[var(--text-secondary)]">Margen</td>
+                  <td className="px-4 py-2 font-medium tabular-nums">{formatPct(escenario?.margen ?? null)}</td>
+                  <td className="px-4 py-2 font-medium tabular-nums">{formatPct(totales.margen)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {escenario?.margen == null || totales.margen == null
+                      ? '—'
+                      : formatSignedPct(totales.margen - escenario.margen)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -434,7 +544,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                 <div className="min-w-0">
                   <p className="font-display text-lg font-semibold tracking-tight">{item.nombre || 'Sin nombre'}</p>
                   <p className="mt-0.5 text-sm text-[var(--text-secondary)]">
-                    Beneficio {formatEuro(totales.beneficio)} · {item.movimientos.length === 1 ? '1 movimiento' : `${item.movimientos.length} movimientos`}
+                    Beneficio {formatEuro(totales.beneficio)} · Margen {formatPct(totales.margen)} · {item.movimientos.length === 1 ? '1 movimiento' : `${item.movimientos.length} movimientos`}
                   </p>
                 </div>
                 <p className="shrink-0 font-display text-xl font-semibold tabular-nums">{formatEuro(totales.beneficio)}</p>
