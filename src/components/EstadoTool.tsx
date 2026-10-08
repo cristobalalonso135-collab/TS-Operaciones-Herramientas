@@ -194,7 +194,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
         </div>
 
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">10 Estado</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">10 Cuentas</p>
           <input
             value={caso.nombre}
             onChange={(event) => patchCaso(caso, { ...caso, nombre: event.target.value })}
@@ -387,7 +387,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
       </div>
 
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">10 Estado</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">10 Cuentas</p>
         <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Ingresos, gastos, beneficio</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
           Lo que quieres ver es el beneficio: ingresos menos gastos. Un cupón de 150 € sin coste son 150 € de beneficio. Luego añades el coste, un cobro de más o la liquidación.

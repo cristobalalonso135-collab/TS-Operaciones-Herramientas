@@ -759,7 +759,7 @@ export default function Home() {
       {
         id: 'estado' as const,
         number: '10',
-        title: 'Estado',
+        title: 'Cuentas',
         description: 'Ingresos, gastos y el beneficio que te entra. Cupón, coste, cobro duplicado: lo que salga.',
         tone: 'bg-[#efe8e2] text-[#6b4a32]',
         link: 'text-[#6b4a32]',
@@ -779,7 +779,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Diez entradas: comercial, almacén, abonos, mejoras IT, albaranes, checklist, objetivos y estado. El resto vive en pestañas dentro de cada herramienta.
+              Diez entradas: comercial, almacén, abonos, mejoras IT, albaranes, checklist, objetivos y cuentas. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
