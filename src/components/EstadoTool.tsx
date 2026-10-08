@@ -86,22 +86,23 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
   const addMovimiento = () => {
     if (!caso) return;
     const typed = importeText.trim();
-    if (!typed || typed === '0') {
+    if (!typed || typed === '0' || typed === '-0' || typed === '-') {
       setError(null);
       return;
     }
-    const importe = parseEuro(typed);
-    if (importe === null || importe === 0) {
+    const parsed = parseEuro(typed);
+    if (parsed === null || parsed === 0) {
       setError('Ese importe no se entiende.');
       return;
     }
+    const importe = lado === 'gasto' ? Math.abs(parsed) : parsed;
     const etiqueta = concepto.trim() || tipologia.trim() || (lado === 'ingreso' ? 'Ingreso' : 'Gasto');
     setError(null);
     setConcepto('');
     setImporteText('');
     patchCaso(caso, {
       ...caso,
-      movimientos: [...caso.movimientos, emptyMovimiento(lado, tipologia, etiqueta, Math.abs(importe))],
+      movimientos: [...caso.movimientos, emptyMovimiento(lado, tipologia, etiqueta, importe)],
     });
   };
 
@@ -220,7 +221,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                 setImporteText(event.target.value);
               }}
               inputMode="decimal"
-              placeholder="150"
+              placeholder="150 o -40"
               className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1.5 text-sm font-medium text-[var(--text-primary)]"
             />
           </label>
@@ -255,7 +256,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <span className="text-sm font-semibold tabular-nums">{formatEuro(item.importe)}</span>
+                        <span className={`text-sm font-semibold tabular-nums ${item.importe < 0 ? 'text-[var(--danger)]' : ''}`}>{formatEuro(item.importe)}</span>
                         <button type="button" onClick={() => borrarMovimiento(item.id)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]" aria-label="Quitar movimiento">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>

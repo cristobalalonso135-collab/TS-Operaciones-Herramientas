@@ -23,6 +23,7 @@ export interface EstadoState {
 export const ESTADO_TIPOLOGIAS = [
   'Web',
   'Cupón',
+  'Generados web',
   'Club',
   'Coste',
   'Descuento',
@@ -109,14 +110,17 @@ export function formatEuro(value: number): string {
 
 export function parseEuro(value: string): number | null {
   const text = value.replace(/\s/g, '').replace(/€/gi, '');
-  if (!text) return null;
-  const normalized = text.includes(',') && text.includes('.')
-    ? text.replace(/\./g, '').replace(',', '.')
-    : text.includes(',')
-      ? text.replace(',', '.')
-      : /^\d{1,3}(\.\d{3})+$/.test(text)
-        ? text.replace(/\./g, '')
-        : text;
+  if (!text || text === '-' || text === ',' || text === '.' || text === '-,' || text === '-.') return null;
+  const negative = text.startsWith('-');
+  const unsigned = negative ? text.slice(1) : text;
+  const normalized = unsigned.includes(',') && unsigned.includes('.')
+    ? unsigned.replace(/\./g, '').replace(',', '.')
+    : unsigned.includes(',')
+      ? unsigned.replace(',', '.')
+      : /^\d{1,3}(\.\d{3})+$/.test(unsigned)
+        ? unsigned.replace(/\./g, '')
+        : unsigned;
   const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed)) return null;
+  return negative ? -parsed : parsed;
 }
