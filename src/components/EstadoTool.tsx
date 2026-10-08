@@ -11,6 +11,7 @@ import {
   parseEuro,
   tipologiasUsadas,
   type EstadoCaso,
+  type EstadoMovimiento,
   type EstadoState,
   type MovimientoLado,
 } from '@/lib/estado-model';
@@ -18,6 +19,47 @@ import { loadEstadoState, saveEstadoState, type EstadoBackend } from '@/lib/esta
 
 interface EstadoToolProps {
   onBack: () => void;
+}
+
+function ConceptoField({ value, onSave }: { value: string; onSave: (next: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setDraft(value);
+          setEditing(true);
+        }}
+        className="block w-full truncate rounded-sm text-left text-sm font-medium hover:bg-[var(--bg-soft)]"
+      >
+        {value || 'Sin concepto'}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next && next !== value) onSave(next);
+        setEditing(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur();
+        if (event.key === 'Escape') {
+          setDraft(value);
+          setEditing(false);
+        }
+      }}
+      className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-1.5 py-0.5 text-sm font-medium outline-none"
+    />
+  );
 }
 
 export default function EstadoTool({ onBack }: EstadoToolProps) {
@@ -106,11 +148,21 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
     });
   };
 
+  const actualizarMovimiento = (movimientoId: string, patch: Partial<EstadoMovimiento>) => {
+    const actual = state.casos.find((item) => item.id === casoId);
+    if (!actual) return;
+    patchCaso(actual, {
+      ...actual,
+      movimientos: actual.movimientos.map((item) => (item.id === movimientoId ? { ...item, ...patch } : item)),
+    });
+  };
+
   const borrarMovimiento = (movimientoId: string) => {
-    if (!caso) return;
-    patchCaso(caso, {
-      ...caso,
-      movimientos: caso.movimientos.filter((item) => item.id !== movimientoId),
+    const actual = state.casos.find((item) => item.id === casoId);
+    if (!actual) return;
+    patchCaso(actual, {
+      ...actual,
+      movimientos: actual.movimientos.filter((item) => item.id !== movimientoId),
     });
   };
 
@@ -250,7 +302,10 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                   {ingresos.map((item) => (
                     <li key={item.id} className="flex items-start justify-between gap-3 border-t border-[var(--border)] py-2.5 first:border-t-0">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium">{item.concepto}</p>
+                        <ConceptoField
+                          value={item.concepto}
+                          onSave={(next) => actualizarMovimiento(item.id, { concepto: next })}
+                        />
                         {item.tipologia && item.tipologia !== item.concepto && (
                           <p className="text-[11px] text-[var(--text-muted)]">{item.tipologia}</p>
                         )}
@@ -279,7 +334,10 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                   {gastos.map((item) => (
                     <li key={item.id} className="flex items-start justify-between gap-3 border-t border-[var(--border)] py-2.5 first:border-t-0">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium">{item.concepto}</p>
+                        <ConceptoField
+                          value={item.concepto}
+                          onSave={(next) => actualizarMovimiento(item.id, { concepto: next })}
+                        />
                         {item.tipologia && item.tipologia !== item.concepto && (
                           <p className="text-[11px] text-[var(--text-muted)]">{item.tipologia}</p>
                         )}
