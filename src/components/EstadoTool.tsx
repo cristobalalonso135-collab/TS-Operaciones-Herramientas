@@ -85,9 +85,14 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
 
   const addMovimiento = () => {
     if (!caso) return;
-    const importe = parseEuro(importeText);
+    const typed = importeText.trim();
+    if (!typed || typed === '0') {
+      setError(null);
+      return;
+    }
+    const importe = parseEuro(typed);
     if (importe === null || importe === 0) {
-      setError('Pon un importe.');
+      setError('Ese importe no se entiende.');
       return;
     }
     const etiqueta = concepto.trim() || tipologia.trim() || (lado === 'ingreso' ? 'Ingreso' : 'Gasto');
@@ -156,16 +161,8 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Beneficio</p>
             <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.beneficio)}</p>
-            <p className="mt-1 text-xs text-[var(--text-secondary)]">
-              {cuadra ? 'Ingresos y gastos se compensan.' : 'Lo que te entra: ingresos menos gastos.'}
-            </p>
           </div>
         </section>
-
-        <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
-          El club te paga 150 € de cupón y no hay gasto: beneficio 150 €. El pack al padre y los 50 € del club no entran aquí.
-          Si luego hay coste de material, o un padre paga en web en vez de usar el cupón y hay que liquidar, lo añades y el beneficio cambia.
-        </p>
 
         {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
 
@@ -218,7 +215,10 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
             Importe
             <input
               value={importeText}
-              onChange={(event) => setImporteText(event.target.value)}
+              onChange={(event) => {
+                setError(null);
+                setImporteText(event.target.value);
+              }}
               inputMode="decimal"
               placeholder="150"
               className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1.5 text-sm font-medium text-[var(--text-primary)]"
@@ -250,7 +250,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                     <li key={item.id} className="flex items-start justify-between gap-3 border-t border-[var(--border)] py-2.5 first:border-t-0">
                       <div className="min-w-0">
                         <p className="text-sm font-medium">{item.concepto}</p>
-                        {item.tipologia && (
+                        {item.tipologia && item.tipologia !== item.concepto && (
                           <p className="text-[11px] text-[var(--text-muted)]">{item.tipologia}</p>
                         )}
                       </div>
@@ -279,7 +279,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                     <li key={item.id} className="flex items-start justify-between gap-3 border-t border-[var(--border)] py-2.5 first:border-t-0">
                       <div className="min-w-0">
                         <p className="text-sm font-medium">{item.concepto}</p>
-                        {item.tipologia && (
+                        {item.tipologia && item.tipologia !== item.concepto && (
                           <p className="text-[11px] text-[var(--text-muted)]">{item.tipologia}</p>
                         )}
                       </div>
