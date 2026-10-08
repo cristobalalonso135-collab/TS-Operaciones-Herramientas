@@ -760,7 +760,7 @@ export default function Home() {
         id: 'estado' as const,
         number: '10',
         title: 'Estado',
-        description: 'Ingresos y gastos de un caso. Las tipologías que salgan y los movimientos que hagan falta, hasta ver el resultado.',
+        description: 'Ingresos, gastos y el beneficio que te entra. Cupón, coste, cobro duplicado: lo que salga.',
         tone: 'bg-[#efe8e2] text-[#6b4a32]',
         link: 'text-[#6b4a32]',
       },

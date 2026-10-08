@@ -89,7 +89,8 @@ export function casoTotales(caso: EstadoCaso) {
   const gastos = caso.movimientos
     .filter((mov) => mov.lado === 'gasto')
     .reduce((sum, mov) => sum + mov.importe, 0);
-  return { ingresos, gastos, resultado: ingresos - gastos };
+  const beneficio = ingresos - gastos;
+  return { ingresos, gastos, beneficio, resultado: beneficio };
 }
 
 export function tipologiasUsadas(state: EstadoState): string[] {

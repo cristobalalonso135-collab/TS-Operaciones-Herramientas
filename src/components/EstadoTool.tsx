@@ -26,7 +26,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
   const [casoId, setCasoId] = useState<string | null>(null);
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [lado, setLado] = useState<MovimientoLado>('ingreso');
-  const [tipologia, setTipologia] = useState('Web');
+  const [tipologia, setTipologia] = useState('Cupón');
   const [concepto, setConcepto] = useState('');
   const [importeText, setImporteText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -90,16 +90,13 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
       setError('Pon un importe.');
       return;
     }
-    if (!concepto.trim()) {
-      setError('Pon qué es este movimiento.');
-      return;
-    }
+    const etiqueta = concepto.trim() || tipologia.trim() || (lado === 'ingreso' ? 'Ingreso' : 'Gasto');
     setError(null);
     setConcepto('');
     setImporteText('');
     patchCaso(caso, {
       ...caso,
-      movimientos: [...caso.movimientos, emptyMovimiento(lado, tipologia, concepto, Math.abs(importe))],
+      movimientos: [...caso.movimientos, emptyMovimiento(lado, tipologia, etiqueta, Math.abs(importe))],
     });
   };
 
@@ -115,7 +112,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
     const totales = casoTotales(caso);
     const ingresos = caso.movimientos.filter((item) => item.lado === 'ingreso');
     const gastos = caso.movimientos.filter((item) => item.lado === 'gasto');
-    const cuadra = caso.movimientos.length > 0 && Math.abs(totales.resultado) < 0.005;
+    const cuadra = caso.movimientos.length > 0 && Math.abs(totales.beneficio) < 0.005;
 
     return (
       <div className="space-y-5">
@@ -145,10 +142,30 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
             onChange={(event) => patchCaso(caso, { ...caso, nombre: event.target.value })}
             className="mt-1 w-full bg-transparent font-display text-2xl font-semibold tracking-tight outline-none"
           />
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Ingresos a la izquierda, gastos a la derecha. Añade los movimientos que salgan: web, cupón, club, descuento, abono, DVC, lo que sea.
-          </p>
         </div>
+
+        <section className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Ingresos</p>
+            <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.ingresos)}</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Gastos</p>
+            <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.gastos)}</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Beneficio</p>
+            <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.beneficio)}</p>
+            <p className="mt-1 text-xs text-[var(--text-secondary)]">
+              {cuadra ? 'Ingresos y gastos se compensan.' : 'Lo que te entra: ingresos menos gastos.'}
+            </p>
+          </div>
+        </section>
+
+        <p className="text-sm leading-relaxed text-[var(--text-secondary)]">
+          El club te paga 150 € de cupón y no hay gasto: beneficio 150 €. El pack al padre y los 50 € del club no entran aquí.
+          Si luego hay coste de material, o un padre paga en web en vez de usar el cupón y hay que liquidar, lo añades y el beneficio cambia.
+        </p>
 
         {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
 
@@ -193,7 +210,7 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
             <input
               value={concepto}
               onChange={(event) => setConcepto(event.target.value)}
-              placeholder="Cupón club, camiseta web, abono doble cobro"
+              placeholder="Opcional"
               className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-2 py-1.5 text-sm font-medium text-[var(--text-primary)]"
             />
           </label>
@@ -283,17 +300,12 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] bg-[var(--bg-soft)] px-4 py-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">Resultado</p>
-              <p className="font-display text-2xl font-semibold tabular-nums tracking-tight">{formatEuro(totales.resultado)}</p>
-            </div>
-            {cuadra ? (
+            <p className="text-sm text-[var(--text-secondary)]">
+              Beneficio {formatEuro(totales.beneficio)}
+            </p>
+            {cuadra && (
               <span className="rounded-md bg-[var(--success-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--success)]">
                 Cuadra
-              </span>
-            ) : (
-              <span className="text-sm text-[var(--text-secondary)]">
-                Lo que queda después de restar gastos a ingresos.
               </span>
             )}
           </div>
@@ -317,9 +329,9 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
 
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">10 Estado</p>
-        <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Ingresos y gastos</h2>
+        <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Ingresos, gastos, beneficio</h2>
         <p className="mt-1 text-sm text-[var(--text-secondary)]">
-          Un caso por asunto. Da igual la tipología: web, cupones, club, DVC, doble cobro. Vas añadiendo movimientos y ves si el resultado tiene sentido.
+          Lo que quieres ver es el beneficio: ingresos menos gastos. Un cupón de 150 € sin coste son 150 € de beneficio. Luego añades el coste, un cobro de más o la liquidación.
         </p>
       </div>
 
@@ -363,10 +375,10 @@ export default function EstadoTool({ onBack }: EstadoToolProps) {
                 <div className="min-w-0">
                   <p className="font-display text-lg font-semibold tracking-tight">{item.nombre || 'Sin nombre'}</p>
                   <p className="mt-0.5 text-sm text-[var(--text-secondary)]">
-                    {item.movimientos.length} movimiento{item.movimientos.length === 1 ? '' : 's'}
+                    Beneficio {formatEuro(totales.beneficio)} · {item.movimientos.length === 1 ? '1 movimiento' : `${item.movimientos.length} movimientos`}
                   </p>
                 </div>
-                <p className="shrink-0 font-display text-xl font-semibold tabular-nums">{formatEuro(totales.resultado)}</p>
+                <p className="shrink-0 font-display text-xl font-semibold tabular-nums">{formatEuro(totales.beneficio)}</p>
               </button>
             );
           })}
