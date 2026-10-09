@@ -4,6 +4,7 @@ import {
   EMPTY_CATALOGS,
   asChannel,
   asModule,
+  asPrioritaria,
   asStatus,
   mergeCatalog,
   mejorasNeedRewrite,
@@ -55,6 +56,7 @@ function normalizeState(state: MejorasState): MejorasState {
     status: asStatus(row.status),
     comment: '',
     addedBy: 'Cristóbal',
+    prioritaria: asPrioritaria(row),
     attachments: normalizeAttachments(row.attachments),
     year: yearFromDates(row.requestedAt, row.createdAt, row.year),
   }));

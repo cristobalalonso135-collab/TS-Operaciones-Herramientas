@@ -43,10 +43,11 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
-type SortKey = 'registro' | 'title' | 'module' | 'requester' | 'requestedAt' | 'channel' | 'status';
+type SortKey = 'registro' | 'prioritaria' | 'title' | 'module' | 'requester' | 'requestedAt' | 'channel' | 'status';
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'registro', label: '#', width: 56 },
+  { key: 'prioritaria', label: 'Prioritaria', width: 92 },
   { key: 'title', label: 'Título', width: 240 },
   { key: 'module', label: 'Módulo', width: 88 },
   { key: 'requester', label: 'Solicitante', width: 130 },
@@ -55,7 +56,7 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'status', label: 'Estado', width: 110 },
 ];
 
-const COL_STORAGE = 'ts-mejoras-cols-v3';
+const COL_STORAGE = 'ts-mejoras-cols-v4';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
 const BLANK = '__blank__';
@@ -87,6 +88,8 @@ function renderMejoraCell(row: MejoraCase, key: SortKey) {
   switch (key) {
     case 'registro':
       return row.registro;
+    case 'prioritaria':
+      return row.prioritaria ? 'Sí' : '';
     case 'title':
       return displayDash(row.title);
     case 'module':
@@ -119,6 +122,7 @@ const emptyForm = (): Partial<MejoraCase> => ({
   status: 'Pendiente',
   comment: '',
   attachments: [],
+  prioritaria: false,
 });
 
 async function compressEvidenceImage(file: Blob, name: string): Promise<MejoraAttachment> {
@@ -367,6 +371,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
   const [filterModule, setFilterModule] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterRequester, setFilterRequester] = useState('');
+  const [filterPrioritaria, setFilterPrioritaria] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'registro', dir: 'asc' });
   const [columnOrder, setColumnOrder] = useState<SortKey[]>(DEFAULT_ORDER);
   const [columnWidths, setColumnWidths] = useState<Record<SortKey, number>>(DEFAULT_WIDTHS);
@@ -492,13 +497,15 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       if (filterModule && !matchesFilter(filterModule, row.module)) return false;
       if (filterStatus && !matchesFilter(filterStatus, row.status)) return false;
       if (filterRequester && !matchesFilter(filterRequester, row.requester)) return false;
+      if (filterPrioritaria === 'si' && !row.prioritaria) return false;
+      if (filterPrioritaria === 'no' && row.prioritaria) return false;
       if (query) {
         const blob = [row.registro, row.title, row.need, row.requester, row.area, row.module, row.channelNote, row.comment, row.informedBy].join(' ').toLocaleLowerCase('es');
         if (!blob.includes(query)) return false;
       }
       return true;
     });
-  }, [state, search, filterModule, filterStatus, filterRequester]);
+  }, [state, search, filterModule, filterStatus, filterRequester, filterPrioritaria]);
 
   const kpis = useMemo(() => mejorasKpis(state?.cases || []), [state]);
   const sorted = useMemo(() => {
@@ -509,7 +516,13 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
         const rightUnknown = !b.requestedAt;
         if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
       }
+      if (sort.key === 'prioritaria') {
+        const result = Number(Boolean(b.prioritaria)) - Number(Boolean(a.prioritaria));
+        return sort.dir === 'asc' ? -result : result;
+      }
       if (sort.key === 'registro') {
+        const byPriority = Number(Boolean(b.prioritaria)) - Number(Boolean(a.prioritaria));
+        if (byPriority !== 0) return byPriority;
         const result = (a.registro || 0) - (b.registro || 0);
         return sort.dir === 'asc' ? result : -result;
       }
@@ -528,6 +541,12 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       </div>
     );
   }
+
+  const togglePrioritaria = (id: string) => {
+    if (!state) return;
+    const cases = state.cases.map((row) => (row.id === id ? { ...row, prioritaria: !row.prioritaria } : row));
+    void persist({ ...state, cases }, backend);
+  };
 
   const closePanel = () => {
     setEditing(null);
@@ -587,6 +606,7 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
       status: (form.status || '') as MejoraStatus | '',
       comment: editing?.comment || '',
       attachments: form.attachments || [],
+      prioritaria: Boolean(form.prioritaria),
     };
     const cases = editing
       ? state.cases.map((item) => item.id === row.id ? row : item)
@@ -803,11 +823,12 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
 
       {tab === 'lista' && (
         <section className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-5">
             <Kpi label="Total" value={String(kpis.total)} />
             <Kpi label="ERP" value={String(kpis.erp)} />
             <Kpi label="Web" value={String(kpis.web)} />
             <Kpi label="Pendientes" value={String(kpis.open)} />
+            <Kpi label="Prioritarias" value={String(kpis.prioritarias)} />
           </div>
           <div className="flex flex-wrap gap-2">
             <label className="relative min-w-[220px] flex-1">
@@ -830,6 +851,11 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
             <select value={filterRequester} onChange={(event) => setFilterRequester(event.target.value)} className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
               <option value="">Solicitante</option>
               {requesters.map((person) => <option key={person} value={person}>{person}</option>)}
+            </select>
+            <select value={filterPrioritaria} onChange={(event) => setFilterPrioritaria(event.target.value)} className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+              <option value="">Prioridad</option>
+              <option value="si">Prioritarias</option>
+              <option value="no">El resto</option>
             </select>
           </div>
           <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
@@ -893,10 +919,33 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
               </thead>
               <tbody>
                 {sorted.map((row) => (
-                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer">
+                  <tr
+                    key={row.id}
+                    onClick={() => openEdit(row)}
+                    className={`cursor-pointer ${row.prioritaria ? 'bg-[var(--success-soft)]' : ''}`}
+                  >
                     {columnOrder.map((key) => (
                       <td key={key} className="border-b border-[var(--border)] px-1.5 py-1.5">
-                        <div className="abonos-cell" title={key === 'title' ? row.title || undefined : undefined}>{renderMejoraCell(row, key)}</div>
+                        {key === 'prioritaria' ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              togglePrioritaria(row.id);
+                            }}
+                            aria-pressed={row.prioritaria}
+                            aria-label={row.prioritaria ? 'Quitar prioritaria' : 'Marcar prioritaria'}
+                            className={`inline-flex h-7 w-7 items-center justify-center rounded-md border ${
+                              row.prioritaria
+                                ? 'border-[var(--success)] bg-[var(--success)] text-white'
+                                : 'border-[var(--border)] bg-white text-transparent hover:border-[var(--success)]'
+                            }`}
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </button>
+                        ) : (
+                          <div className="abonos-cell" title={key === 'title' ? row.title || undefined : undefined}>{renderMejoraCell(row, key)}</div>
+                        )}
                       </td>
                     ))}
                   </tr>
@@ -1041,6 +1090,16 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
                         </button>
                       )}
                     </div>
+                  </label>
+                  <label className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 py-2 md:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.prioritaria)}
+                      onChange={(event) => setForm({ ...form, prioritaria: event.target.checked })}
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm font-medium">Prioritaria</span>
+                    <span className="text-sm text-[var(--text-secondary)]">Las que hay que empujar ahora, como el generado web o el fraccionamiento.</span>
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Estado{editing ? '' : ' *'}</span>

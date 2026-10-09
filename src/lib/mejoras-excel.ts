@@ -1,6 +1,7 @@
 import {
   asChannel,
   asModule,
+  asPrioritaria,
   asStatus,
   cellToIso,
   formatIsoDate,
@@ -153,6 +154,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): MejoraCase[] {
     status: asStatus(row.status) || 'Pendiente',
     comment: '',
     attachments: [],
+    prioritaria: asPrioritaria({ title: row.title }),
   }));
 }
 
@@ -184,6 +186,7 @@ export function mejorasExportRows(cases: MejoraCase[]): unknown[][] {
     'Canal',
     'Detalle del canal',
     'Estado',
+    'Prioritaria',
     'Documentos',
     'Nº documentos',
     'Fecha de registro',
@@ -200,6 +203,7 @@ export function mejorasExportRows(cases: MejoraCase[]): unknown[][] {
     row.channel || '',
     row.channelNote || '',
     row.status || '',
+    row.prioritaria ? 'Sí' : '',
     row.attachments.map((item) => item.name).filter(Boolean).join(', '),
     row.attachments.length,
     row.createdAt ? formatIsoDate(row.createdAt.slice(0, 10)) : '',

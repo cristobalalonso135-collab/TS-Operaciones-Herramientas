@@ -49,6 +49,7 @@ export interface MejoraCase {
   status: MejoraStatus | '';
   comment: string;
   attachments: MejoraAttachment[];
+  prioritaria: boolean;
 }
 
 export interface MejorasCatalogs {
@@ -165,6 +166,31 @@ export function asChannel(value: unknown): MejoraChannel | '' {
   return '';
 }
 
+export const MEJORAS_PRIORITARIAS_TITLES = [
+  'Calcular generado web desde precio club',
+  'Panel de fraccionamiento de albaranes',
+  'Automatización de frees y generados web',
+  'Preorders por talla',
+];
+
+function normalizeTitle(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLocaleLowerCase('es');
+}
+
+export function titleLooksPrioritaria(title: string): boolean {
+  const text = normalizeTitle(title);
+  if (!text) return false;
+  return MEJORAS_PRIORITARIAS_TITLES.some((item) => {
+    const key = normalizeTitle(item);
+    return text === key || text.includes(key) || key.includes(text);
+  });
+}
+
+export function asPrioritaria(row: { title?: string | null; prioritaria?: unknown }): boolean {
+  if (typeof row.prioritaria === 'boolean') return row.prioritaria;
+  return titleLooksPrioritaria(String(row.title || ''));
+}
+
 export function asStatus(value: unknown): MejoraStatus | '' {
   if (isUnknownValue(value)) return '';
   const text = String(value ?? '').trim();
@@ -244,5 +270,6 @@ export function mejorasKpis(rows: MejoraCase[]) {
     erp: rows.filter((row) => row.module === 'ERP').length,
     web: rows.filter((row) => row.module === 'Web').length,
     open: open.length,
+    prioritarias: rows.filter((row) => row.prioritaria && isOpenMejora(row.status)).length,
   };
 }

@@ -1,4 +1,4 @@
-import type { MejoraCase } from '@/lib/mejoras-model';
+import { titleLooksPrioritaria, type MejoraCase } from '@/lib/mejoras-model';
 
 type SeedRow = Pick<MejoraCase, 'title' | 'need' | 'requester' | 'module' | 'area'>;
 
@@ -164,5 +164,6 @@ export function buildSeedCases(): MejoraCase[] {
     status: 'Pendiente',
     comment: '',
     attachments: [],
+    prioritaria: titleLooksPrioritaria(row.title),
   }));
 }
