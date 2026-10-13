@@ -171,13 +171,7 @@ export function fraccionarJoin(
   colectivos.forEach((item) => {
     if (item.codigo) byCode.set(normKey(item.codigo), item);
   });
-  const findListed = (id: string) => {
-    const direct = byId.get(id) || byNumber.get(normKey(id));
-    if (direct) return direct;
-    if (!/^\d+$/.test(id)) return undefined;
-    const n = Number(id);
-    return byId.get(String(n + 1)) || byId.get(String(n - 1));
-  };
+  const findListed = (id: string) => byId.get(id) || byNumber.get(normKey(id));
   return data.map((row, index) => {
     const listed = findListed(row.idAlbaran);
     if (!listed) {
