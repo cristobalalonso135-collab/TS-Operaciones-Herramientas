@@ -651,7 +651,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               <FileUpload
                 inputId="albaranes-emails"
                 label="Correos del grupo"
-                hint="Excel/CSV con Nombre, Email e Idioma (vale el de Outlook, Teams admin o Entra)."
+                hint="Cruce por nombre de agente. Intern 1 France EQI trae su correo aunque el mail no se parezca."
                 keepDropzone
                 compact
                 loaded={Boolean(state.emailsFileName) && isTodayStamp(state.emailsLoadedAt)}
@@ -661,7 +661,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               <Kpi
                 label="Agentes con email"
                 value={`${formatInt(state.agents.filter((item) => item.email.includes('@')).length)} / ${formatInt(uniqueAgentes(state).length)}`}
-                hint={state.emailsFileName || (uniqueAgentes(state).length ? 'Cruce con el maestro de colectivos' : 'Sube colectivos primero')}
+                hint={state.emailsFileName || (uniqueAgentes(state).length ? 'Cruce por nombre de agente' : 'Sube el Excel de correos')}
                 amount={state.emailsLoadedAt ? formatIsoDateTime(state.emailsLoadedAt) : undefined}
               />
             </div>

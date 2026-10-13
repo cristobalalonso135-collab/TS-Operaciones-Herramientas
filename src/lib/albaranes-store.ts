@@ -89,6 +89,9 @@ function normalize(state: AlbaranesState): AlbaranesState {
     colectivosLoadedAt: typeof state.colectivosLoadedAt === 'string' ? state.colectivosLoadedAt : '',
     emailsFileName: typeof state.emailsFileName === 'string' ? state.emailsFileName : '',
     emailsLoadedAt: typeof state.emailsLoadedAt === 'string' ? state.emailsLoadedAt : '',
+    emailContacts: Array.isArray(state.emailContacts)
+      ? state.emailContacts.filter((item) => item && typeof item.nombre === 'string' && typeof item.email === 'string' && item.email.includes('@'))
+      : [],
     cargas: Array.isArray(state.cargas) ? state.cargas : [],
     disappeared: [],
     evaluations: Array.isArray(state.evaluations) ? state.evaluations : [],

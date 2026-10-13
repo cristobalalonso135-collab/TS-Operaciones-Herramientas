@@ -115,7 +115,7 @@ export const DATA_INCIDENT_DETAIL: Record<DataIncidentReason, string> = {
   'Colectivo inactivo': 'El colectivo existe en el maestro pero está inactivo.',
   'Colectivo sin agente': 'El colectivo no tiene agente en el maestro; no se podrá enviar el correo.',
   'Varios códigos de colectivo': 'Hay más de un código en el mismo campo.',
-  'Agente sin email': 'Este agente no tiene correo. Súbelo en Carga con el Excel de emails o complétalo en el maestro.',
+  'Agente sin email': 'Este agente no tiene correo. El cruce es por nombre de agente: sube el Excel de emails o pon el correo en el maestro.',
 };
 
 export interface DataIncident {
@@ -216,6 +216,12 @@ export interface Comunicacion {
   generatedAt: string;
 }
 
+export interface EmailContact {
+  nombre: string;
+  email: string;
+  idioma?: string;
+}
+
 export interface AlbaranesState {
   rules: Regla[];
   agents: Agent[];
@@ -224,6 +230,7 @@ export interface AlbaranesState {
   colectivosLoadedAt?: string;
   emailsFileName?: string;
   emailsLoadedAt?: string;
+  emailContacts?: EmailContact[];
   cargas: Carga[];
   disappeared: DisappearedAlbaran[];
   evaluations: Evaluacion[];
@@ -239,6 +246,7 @@ export const EMPTY_ALBARANES_STATE: AlbaranesState = {
   colectivosLoadedAt: '',
   emailsFileName: '',
   emailsLoadedAt: '',
+  emailContacts: [],
   cargas: [],
   disappeared: [],
   evaluations: [],
@@ -693,8 +701,8 @@ export function uniqueAgentes(state: AlbaranesState): string[] {
   return out.sort((a, b) => a.localeCompare(b, 'es'));
 }
 
-function contactHitsName(name: string, contact: { nombre: string; email: string }): boolean {
-  return namesMatch(name, contact.nombre) || namesMatch(name, contact.email.split('@')[0].replace(/[._]/g, ' '));
+function contactHitsAgent(agentName: string, contact: { nombre: string }): boolean {
+  return namesMatch(agentName, contact.nombre);
 }
 
 export function mergeAgentEmails(
@@ -702,27 +710,24 @@ export function mergeAgentEmails(
   contacts: Array<{ nombre: string; email: string; idioma?: string }>,
 ): { state: AlbaranesState; matched: number; created: number; unmatched: string[] } {
   const names = uniqueAgentes(state);
-  const valid = contacts.filter((item) => item.email.includes('@'));
+  const valid = contacts.filter((item) => item.email.includes('@') && peopleKey(item.nombre));
+  const skipped = contacts.filter((item) => item.email.includes('@') && !peopleKey(item.nombre)).map((item) => item.email);
   const emailByName = new Map<string, string>();
   const idiomaByName = new Map<string, string>();
   const createdAgents: Agent[] = [];
-  const unmatched: string[] = [];
+  const unmatched: string[] = [...skipped];
 
   valid.forEach((item) => {
-    const hit = names.find((name) => contactHitsName(name, item))
-      || state.agents.find((agent) => contactHitsName(agent.agenteErp, item) || contactHitsName(agent.nombre, item))?.agenteErp
-      || state.agents.find((agent) => contactHitsName(agent.agenteErp, item) || contactHitsName(agent.nombre, item))?.nombre;
+    const hit = names.find((name) => contactHitsAgent(name, item))
+      || state.agents.find((agent) => contactHitsAgent(agent.agenteErp, item) || contactHitsAgent(agent.nombre, item))?.agenteErp
+      || state.agents.find((agent) => contactHitsAgent(agent.agenteErp, item) || contactHitsAgent(agent.nombre, item))?.nombre;
     if (hit) {
       const key = peopleKey(hit);
       emailByName.set(key, item.email.trim());
       if (item.idioma) idiomaByName.set(key, item.idioma);
       return;
     }
-    const nombre = item.nombre.trim() || item.email.split('@')[0].replace(/[._]/g, ' ');
-    if (!peopleKey(nombre) && !item.email.includes('@')) {
-      unmatched.push(item.nombre || item.email);
-      return;
-    }
+    const nombre = item.nombre.trim();
     createdAgents.push({
       id: newId('ag'),
       agenteErp: nombre,
@@ -765,11 +770,43 @@ export function mergeAgentEmails(
   });
 
   return {
-    state: { ...state, agents },
+    state: { ...state, agents, emailContacts: valid },
     matched: emailByName.size,
     created: createdAgents.filter((extra) => agents.some((agent) => agent.id === extra.id)).length,
     unmatched: unmatched.slice(0, 20),
   };
+}
+
+function seedAgentsFromIncoming(state: AlbaranesState, rows: AlbaranRow[]): AlbaranesState {
+  const seen = new Set(
+    state.agents.map((item) => peopleKey(item.agenteErp) || peopleKey(item.nombre)).filter(Boolean),
+  );
+  const extra: Agent[] = [];
+  rows.forEach((row) => {
+    const name = row.agente.trim();
+    if (!name || isInternetAgent(name)) return;
+    const key = peopleKey(name);
+    if (!key || seen.has(key)) return;
+    if (state.agents.some((agent) => namesMatch(agent.agenteErp, name) || namesMatch(agent.nombre, name))) return;
+    seen.add(key);
+    extra.push({
+      id: newId('ag'),
+      agenteErp: name,
+      nombre: name,
+      email: '',
+      idioma: '',
+      supervisor: '',
+      activo: true,
+    });
+  });
+  return extra.length ? { ...state, agents: [...state.agents, ...extra] } : state;
+}
+
+export function applyAgentEmails(state: AlbaranesState, incomingRows?: AlbaranRow[]): AlbaranesState {
+  const contacts = state.emailContacts || [];
+  const seeded = incomingRows?.length ? seedAgentsFromIncoming(state, incomingRows) : state;
+  if (!contacts.length) return seeded;
+  return mergeAgentEmails(seeded, contacts).state;
 }
 
 export function knownEstados(state: AlbaranesState): string[] {
@@ -1298,7 +1335,7 @@ export function reapplyRulesToLatestCarga(state: AlbaranesState): AlbaranesState
   return replaceCargaEvaluations(state, last, evaluations, previous?.id);
 }
 
-export function ingestCarga(state: AlbaranesState, input: {
+export function ingestCarga(rawState: AlbaranesState, input: {
   id: string;
   loadedAt: string;
   loadDate: string;
@@ -1306,6 +1343,7 @@ export function ingestCarga(state: AlbaranesState, input: {
   fileHash: string;
   rows: AlbaranRow[];
 }): { state: AlbaranesState; duplicate: boolean; carga: Carga | null } {
+  const state = applyAgentEmails(rawState, input.rows);
   const sameDay = state.cargas.filter((item) => item.loadDate === input.loadDate);
   if (sameDay.some((item) => item.fileHash === input.fileHash)) {
     const target = sameDay[sameDay.length - 1] || latestCarga(state);
