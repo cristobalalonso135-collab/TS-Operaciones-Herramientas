@@ -1091,7 +1091,11 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'enviar' && (
-        <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+        <div className="space-y-2">
+          <p className="text-xs text-[var(--text-muted)]">
+            Arrastra el borde de cada columna para definir el ancho. El texto se adapta y no se corta.
+          </p>
+          <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
           <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--border)] bg-white px-3 py-2">
             <p className="font-display text-base font-semibold tracking-tight">{state.nombre}</p>
             <p className="text-xs text-[var(--text-secondary)]">
@@ -1102,15 +1106,45 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           {weeklyRows.length === 0 ? (
             <p className="px-3 py-6 text-sm text-[var(--text-muted)]">No hay tareas.</p>
           ) : (
-            <table className="w-full text-left text-[13px]">
+            <table
+              className="text-left text-[13px]"
+              style={{
+                tableLayout: 'fixed',
+                width: ['area', 'titulo', 'deadline', 'prioridad', 'responsable', 'estado']
+                  .reduce((sum, key) => sum + (colWidths[key] || 0), 0),
+              }}
+            >
+              <colgroup>
+                {['area', 'titulo', 'deadline', 'prioridad', 'responsable', 'estado'].map((key) => (
+                  <col key={key} style={{ width: colWidths[key] }} />
+                ))}
+              </colgroup>
               <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
                 <tr>
-                  <th className="px-2.5 py-1.5 font-semibold">Área</th>
-                  <th className="px-2.5 py-1.5 font-semibold">Tarea</th>
-                  <th className="w-36 px-2.5 py-1.5 font-semibold">Deadline</th>
-                  <th className="w-20 px-2.5 py-1.5 font-semibold">Prioridad</th>
-                  <th className="px-2.5 py-1.5 font-semibold">Responsable</th>
-                  <th className="px-2.5 py-1.5 font-semibold">Estado</th>
+                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.area }}>
+                    Área
+                    <ColResize onMouseDown={(event) => resizeColumn('area', event)} />
+                  </th>
+                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.titulo }}>
+                    Tarea
+                    <ColResize onMouseDown={(event) => resizeColumn('titulo', event)} />
+                  </th>
+                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.deadline }}>
+                    Deadline
+                    <ColResize onMouseDown={(event) => resizeColumn('deadline', event)} />
+                  </th>
+                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.prioridad }}>
+                    Prioridad
+                    <ColResize onMouseDown={(event) => resizeColumn('prioridad', event)} />
+                  </th>
+                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.responsable }}>
+                    Responsable
+                    <ColResize onMouseDown={(event) => resizeColumn('responsable', event)} />
+                  </th>
+                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.estado }}>
+                    Estado
+                    <ColResize onMouseDown={(event) => resizeColumn('estado', event)} />
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1123,22 +1157,23 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                       className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : closed ? 'bg-[var(--bg-secondary)]' : 'bg-white'}`}
                       onClick={() => openTask(task)}
                     >
-                      <td className="whitespace-nowrap px-2.5 py-1 text-[var(--text-secondary)]">{task.area || '—'}</td>
-                      <td className={`px-2.5 py-1 ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
-                      <td className="whitespace-nowrap px-2.5 py-1">
+                      <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
+                      <td className={`break-words px-2.5 py-1.5 align-top ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
+                      <td className="break-words px-2.5 py-1.5 align-top">
                         <DeadlineMark iso={task.deadline} today={today} closed={closed} />
                       </td>
-                      <td className="px-2.5 py-1">
+                      <td className="break-words px-2.5 py-1.5 align-top">
                         <PriorityMark value={task.prioridad} muted={closed} />
                       </td>
-                      <td className="whitespace-nowrap px-2.5 py-1">{task.responsable || '—'}</td>
-                      <td className="whitespace-nowrap px-2.5 py-1 text-[var(--text-secondary)]">{task.estado}</td>
+                      <td className="break-words px-2.5 py-1.5 align-top">{task.responsable || '—'}</td>
+                      <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.estado}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           )}
+          </div>
         </div>
       )}
 
