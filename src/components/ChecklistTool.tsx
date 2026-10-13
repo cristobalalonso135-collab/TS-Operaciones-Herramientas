@@ -154,6 +154,30 @@ function ColResize({ onMouseDown }: { onMouseDown: (event: ReactMouseEvent) => v
   );
 }
 
+function StatusMark({ value }: { value: ChecklistStatus }) {
+  const tone = value === 'Completado'
+    ? 'bg-[var(--success-soft)] text-[var(--success)]'
+    : value === 'Caducada'
+      ? 'bg-[var(--bg-soft)] text-[var(--text-muted)]'
+      : value === 'Bloqueado'
+        ? 'bg-amber-50 text-[var(--warning)]'
+        : value === 'En curso'
+          ? 'bg-blue-50 text-blue-800'
+          : 'bg-[var(--bg-soft)] text-[var(--text-secondary)]';
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
+      {value === 'Completado' ? <Check className="h-3 w-3" /> : null}
+      {value}
+    </span>
+  );
+}
+
+function doneRowClass(estado: ChecklistStatus): string {
+  if (estado === 'Completado') return 'bg-emerald-50/90';
+  if (estado === 'Caducada') return 'bg-[var(--bg-secondary)]';
+  return '';
+}
+
 function PriorityMark({ value, muted }: { value?: ChecklistPriority | null; muted?: boolean }) {
   const prioridad = value || 'Media';
   const tone = muted
@@ -827,7 +851,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     return (
                       <li
                         key={task.id}
-                        className={`grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-start ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : ''}`}
+                        className={`grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-start ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : doneRowClass(task.estado)}`}
                         onDragOver={(event) => {
                           event.preventDefault();
                           setDropRow(task.id);
@@ -870,7 +894,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                         </button>
                         <div className="min-w-0 space-y-2">
                           <button type="button" onClick={() => openTask(task)} className="min-w-0 space-y-1 text-left">
-                            <p className={`text-sm ${task.estado === 'Completado' || task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</p>
+                            <p className={`text-sm ${task.estado === 'Completado' ? 'text-[var(--text-secondary)] line-through' : task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</p>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-secondary)]">
                               <span className="inline-flex items-center gap-1.5">
                                 <Clock className="h-3 w-3 text-[var(--text-muted)]" />
@@ -1003,10 +1027,11 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   <tbody>
                     {tableRows.map((task) => {
                       const closed = task.estado === 'Completado' || task.estado === 'Caducada';
+                      const done = task.estado === 'Completado';
                       return (
                         <tr
                           key={task.id}
-                          className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : ''} ${closed ? 'bg-[var(--bg-secondary)]' : ''}`}
+                          className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : ''} ${doneRowClass(task.estado)}`}
                           onClick={() => openTask(task)}
                           onDragOver={(event) => {
                             event.preventDefault();
@@ -1054,7 +1079,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             </div>
                           </td>
                           <td className="break-words px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className={`break-words px-3 py-2.5 align-top ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
+                          <td className={`break-words px-3 py-2.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
                             {task.titulo}
                             {(task.subtasks || []).length > 0 ? (
                               <ul className="mt-1.5 space-y-1 font-normal no-underline">
@@ -1073,10 +1098,10 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
                           </td>
                           <td className="break-words px-3 py-2.5 align-top">
-                            <PriorityMark value={task.prioridad} muted={closed} />
+                            <PriorityMark value={task.prioridad} muted={task.estado === 'Caducada'} />
                           </td>
                           <td className="break-words px-3 py-2.5 align-top">{task.responsable || '—'}</td>
-                          <td className="break-words px-3 py-2.5 align-top">{task.estado}</td>
+                          <td className="break-words px-3 py-2.5 align-top"><StatusMark value={task.estado} /></td>
                           <td className="break-words px-3 py-2.5 align-top text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
                         </tr>
                       );
@@ -1150,23 +1175,24 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               <tbody>
                 {weeklyRows.map((task) => {
                   const closed = isClosed(task);
+                  const done = task.estado === 'Completado';
                   const overdue = !closed && !!task.deadline && task.deadline < today;
                   return (
                     <tr
                       key={task.id}
-                      className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : closed ? 'bg-[var(--bg-secondary)]' : 'bg-white'}`}
+                      className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : doneRowClass(task.estado) || 'bg-white'}`}
                       onClick={() => openTask(task)}
                     >
                       <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
-                      <td className={`break-words px-2.5 py-1.5 align-top ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
+                      <td className={`break-words px-2.5 py-1.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
                       <td className="break-words px-2.5 py-1.5 align-top">
                         <DeadlineMark iso={task.deadline} today={today} closed={closed} />
                       </td>
                       <td className="break-words px-2.5 py-1.5 align-top">
-                        <PriorityMark value={task.prioridad} muted={closed} />
+                        <PriorityMark value={task.prioridad} muted={task.estado === 'Caducada'} />
                       </td>
                       <td className="break-words px-2.5 py-1.5 align-top">{task.responsable || '—'}</td>
-                      <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.estado}</td>
+                      <td className="break-words px-2.5 py-1.5 align-top"><StatusMark value={task.estado} /></td>
                     </tr>
                   );
                 })}
