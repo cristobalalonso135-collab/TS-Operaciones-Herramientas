@@ -170,13 +170,26 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
               <input type="checkbox" checked={onlyIssues} onChange={(event) => setOnlyIssues(event.target.checked)} />
               Solo incidencias
             </label>
-            <button
-              type="button"
-              className="ml-auto flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
-              onClick={() => downloadAoa(fraccionarToAoa(filtered), 'fraccionar.xlsx')}
-            >
-              <Download className="h-3.5 w-3.5" /> Excel
-            </button>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
+                onClick={() => {
+                  const clean = joined.filter((row) => !row.issue);
+                  downloadAoa(fraccionarToAoa(clean), 'fraccionar_sin_incidencias.xlsx');
+                }}
+                disabled={joined.every((row) => row.issue)}
+              >
+                <Download className="h-3.5 w-3.5" /> Excel sin incidencias
+              </button>
+              <button
+                type="button"
+                className="flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
+                onClick={() => downloadAoa(fraccionarToAoa(filtered), 'fraccionar.xlsx')}
+              >
+                <Download className="h-3.5 w-3.5" /> Excel
+              </button>
+            </div>
           </div>
           <p className="text-xs text-[var(--text-muted)]">{formatInt(filtered.length)} filas.</p>
           <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">

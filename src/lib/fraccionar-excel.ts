@@ -36,6 +36,14 @@ export function asAlbaranId(value: unknown): string {
   return text;
 }
 
+function isDataFooterRow(row: unknown[]): boolean {
+  const text = (row || []).map((cell) => String(cell ?? '').replace(/\u00a0/g, ' ').trim()).join(' ');
+  if (!text) return true;
+  if (/filtros aplicados/i.test(text)) return true;
+  const first = String(row?.[0] ?? '').replace(/\u00a0/g, ' ').trim();
+  return /^total$/i.test(first);
+}
+
 function findCol(header: string[], aliases: string[]): number | null {
   for (const alias of aliases) {
     const exact = header.findIndex((name) => name === alias);
@@ -59,7 +67,7 @@ export interface DataRow {
   unidades: number | null;
   udsBloqueadas: number | null;
   udsLiberables: number | null;
-  tsLiberable: string;
+  tsLiberable: number | null;
   raw: unknown[];
 }
 
@@ -92,7 +100,21 @@ export function parseDataSheet(rows: unknown[][]): DataRow[] {
     const num = Number(text);
     return Number.isFinite(num) ? num : null;
   };
+  const asRatio = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value > 1 ? value / 100 : value;
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    const hasPct = raw.includes('%');
+    const normalized = raw.replace('%', '').trim();
+    const num = normalized.includes(',') && normalized.includes('.')
+      ? Number(normalized.replace(/\./g, '').replace(',', '.'))
+      : Number(normalized.replace(',', '.'));
+    if (!Number.isFinite(num)) return null;
+    if (hasPct || num > 1) return num / 100;
+    return num;
+  };
   return rows.slice(start + 1).flatMap((row) => {
+    if (isDataFooterRow(row)) return [];
     const idAlbaran = asAlbaranId(pick(row, col.id));
     if (!idAlbaran && !(row || []).some((cell) => cellText(cell))) return [];
     return [{
@@ -106,7 +128,7 @@ export function parseDataSheet(rows: unknown[][]): DataRow[] {
       unidades: asNum(pick(row, col.unidades)),
       udsBloqueadas: asNum(pick(row, col.bloqueadas)),
       udsLiberables: asNum(pick(row, col.liberables)),
-      tsLiberable: cellText(pick(row, col.ts)),
+      tsLiberable: asRatio(pick(row, col.ts)),
       raw: row || [],
     }];
   });
@@ -130,7 +152,7 @@ export interface FraccionarRow {
   unidades: number | null;
   udsBloqueadas: number | null;
   udsLiberables: number | null;
-  tsLiberable: string;
+  tsLiberable: number | null;
   issue: FraccionarIssue | null;
 }
 
@@ -206,6 +228,11 @@ export function fraccionarJoin(
   });
 }
 
+export function formatPercentEs(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '';
+  return `${(value * 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
 export function parseAlbaranesForFraccionar(rows: unknown[][]): AlbaranRow[] {
   return parseAlbaranesSheet(rows);
 }
@@ -249,7 +276,7 @@ export function fraccionarToAoa(rows: FraccionarRow[]): unknown[][] {
       row.unidades ?? '',
       row.udsBloqueadas ?? '',
       row.udsLiberables ?? '',
-      row.tsLiberable,
+      formatPercentEs(row.tsLiberable),
       row.issue || '',
     ]),
   ];
