@@ -222,6 +222,11 @@ export interface EmailContact {
   idioma?: string;
 }
 
+export interface EstadoDepartamento {
+  estado: string;
+  departamentos: string[];
+}
+
 export interface AlbaranesState {
   rules: Regla[];
   agents: Agent[];
@@ -231,6 +236,9 @@ export interface AlbaranesState {
   emailsFileName?: string;
   emailsLoadedAt?: string;
   emailContacts?: EmailContact[];
+  estadoDepartamentos?: EstadoDepartamento[];
+  estadoDepartamentosFileName?: string;
+  estadoDepartamentosLoadedAt?: string;
   cargas: Carga[];
   disappeared: DisappearedAlbaran[];
   evaluations: Evaluacion[];
@@ -247,6 +255,9 @@ export const EMPTY_ALBARANES_STATE: AlbaranesState = {
   emailsFileName: '',
   emailsLoadedAt: '',
   emailContacts: [],
+  estadoDepartamentos: [],
+  estadoDepartamentosFileName: '',
+  estadoDepartamentosLoadedAt: '',
   cargas: [],
   disappeared: [],
   evaluations: [],
@@ -1678,6 +1689,44 @@ export function historyEstadoMatrix(state: AlbaranesState): {
     importe: carga.totalImporte || (carga.estadoCounts || []).reduce((sum, item) => sum + (item.importe || 0), 0),
   }));
   return { dates, rows, totals };
+}
+
+export function departamentosDeEstado(
+  map: EstadoDepartamento[] | undefined,
+  estado: string,
+): string[] {
+  const list = map || [];
+  const key = normKey(estado);
+  const exact = list.find((item) => normKey(item.estado) === key);
+  if (exact) return exact.departamentos.slice(0, 3);
+  const fuzzy = list.find((item) => namesMatch(item.estado, estado));
+  return fuzzy?.departamentos.slice(0, 3) || [];
+}
+
+export function uniqueDepartamentos(map: EstadoDepartamento[] | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  (map || []).forEach((item) => {
+    item.departamentos.forEach((dept) => {
+      const key = normKey(dept);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push(dept);
+    });
+  });
+  return out.sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+export function historicoEstados(state: AlbaranesState): string[] {
+  const fromHistory = historyEstadoMatrix(state).rows.map((row) => row.estado);
+  const seen = new Set(fromHistory.map((item) => normKey(item)));
+  knownEstados(state).forEach((estado) => {
+    const key = normKey(estado);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    fromHistory.push(estado);
+  });
+  return fromHistory;
 }
 
 export function averageAge(rows: AlbaranRow[], loadDate: string): number {

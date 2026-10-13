@@ -10,9 +10,12 @@ import {
   parseAlbaranesSheet,
   parseColectivosSheet,
   parseEmailsSheet,
+  parseEstadoDepartamentosSheet,
   parseRulesSheet,
   pickSheet,
   rulesToAoa,
+  estadoDepartamentosToAoa,
+  ESTADO_DEPARTAMENTOS_HELP,
 } from '@/lib/albaranes-excel';
 import {
   ALCANCE_ALBARANES,
@@ -39,6 +42,9 @@ import {
   knownEstados,
   knownSeries,
   historyEstadoMatrix,
+  historicoEstados,
+  departamentosDeEstado,
+  uniqueDepartamentos,
   latestCarga,
   mergeAgentEmails,
   mergeImportedRules,
@@ -155,6 +161,36 @@ async function downloadNamedExcelTable(input: {
   URL.revokeObjectURL(url);
 }
 
+const DEPT_CHIP_TONES = [
+  'bg-sky-100 text-sky-800',
+  'bg-violet-100 text-violet-800',
+  'bg-amber-100 text-amber-900',
+  'bg-emerald-100 text-emerald-800',
+  'bg-rose-100 text-rose-800',
+  'bg-slate-100 text-slate-700',
+];
+
+function deptChipClass(name: string): string {
+  const text = name.trim();
+  if (!text) return DEPT_CHIP_TONES[5];
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (hash + text.charCodeAt(i) * (i + 1)) % DEPT_CHIP_TONES.length;
+  return DEPT_CHIP_TONES[hash];
+}
+
+function DeptChips({ items }: { items: string[] }) {
+  if (!items.length) return <span className="text-[var(--text-muted)]">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {items.slice(0, 3).map((dept) => (
+        <span key={dept} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${deptChipClass(dept)}`}>
+          {dept}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function isTodayStamp(value?: string): boolean {
   if (!value) return false;
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value === todayIso();
@@ -220,6 +256,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [vistaEstado, setVistaEstado] = useState<string[]>([]);
   const [vistaAgente, setVistaAgente] = useState<string[]>([]);
   const [histMetric, setHistMetric] = useState<'count' | 'importe'>('count');
+  const [histDept, setHistDept] = useState('');
   const [vintageField, setVintageField] = useState<'albaran' | 'estado'>('albaran');
   const [incPage, setIncPage] = useState(0);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
@@ -329,6 +366,19 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const incPages = Math.max(1, Math.ceil(filteredIncidents.length / LIST_PAGE));
   const incidentsPage = filteredIncidents.slice(incPage * LIST_PAGE, incPage * LIST_PAGE + LIST_PAGE);
   const history = useMemo(() => (state ? historyEstadoMatrix(state) : { dates: [], rows: [], totals: [] }), [state]);
+  const estadoDepts = state?.estadoDepartamentos;
+  const historyDepts = useMemo(() => uniqueDepartamentos(estadoDepts), [estadoDepts]);
+  const historyRows = useMemo(() => {
+    if (!histDept) return history.rows;
+    return history.rows.filter((row) => departamentosDeEstado(estadoDepts, row.estado).some((item) => item === histDept));
+  }, [estadoDepts, histDept, history.rows]);
+  const historyTotals = useMemo(() => {
+    if (!histDept) return history.totals;
+    return history.dates.map((_, index) => historyRows.reduce((acc, row) => ({
+      count: acc.count + (row.values[index]?.count || 0),
+      importe: acc.importe + (row.values[index]?.importe || 0),
+    }), { count: 0, importe: 0 }));
+  }, [histDept, history.dates, history.totals, historyRows]);
 
   useEffect(() => {
     setListPage(0);
@@ -486,6 +536,29 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
     setAck({
       title: 'Correos cruzados',
       message: `He emparejado ${formatInt(result.matched)} agentes con email.${result.created ? ` He dado de alta ${formatInt(result.created)} nuevos.` : ''}${missing ? ` ${formatInt(missing)} agentes siguen sin correo: salen en Incidencias.` : ''}${result.unmatched.length ? ` Sin cruce del Excel: ${result.unmatched.slice(0, 8).join(', ')}.` : ''} Acciones ya usa estos correos, no hace falta volver a subir el CSV.`,
+    });
+  };
+
+  const handleEstadoDepartamentosFile = (data: unknown[][], fileName: string) => {
+    if (!state) return;
+    const rows = parseEstadoDepartamentosSheet(data);
+    if (rows.length === 0) {
+      setAck({
+        title: 'Sin departamentos',
+        message: 'Usa columnas Estado y Departamento 1, 2 y 3. Descarga la plantilla en Histórico si quieres partir de tus estados.',
+      });
+      return;
+    }
+    const filled = rows.filter((item) => item.departamentos.length > 0).length;
+    void persist({
+      ...state,
+      estadoDepartamentos: rows,
+      estadoDepartamentosFileName: fileName,
+      estadoDepartamentosLoadedAt: nowIso(),
+    }, backend);
+    setAck({
+      title: 'Control por estado',
+      message: `${formatInt(filled)} estados con departamento. Los chips ya salen en Histórico.`,
     });
   };
 
@@ -1044,6 +1117,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               </p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">
                 {formatInt(history.dates.length)} {history.dates.length === 1 ? 'día' : 'días'} con foto.
+                Control = quién se encarga de cada estado, hasta 3 departamentos.
               </p>
             </div>
             <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-1">
@@ -1066,18 +1140,24 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               type="button"
               className="flex items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold"
               onClick={() => {
-                const header = ['Estado', ...history.dates.map((date) => formatIsoDate(date)), 'Total'];
-                const rows = history.rows.map((row) => {
+                const header = ['Estado', 'Control', ...history.dates.map((date) => formatIsoDate(date)), 'Total'];
+                const rows = historyRows.map((row) => {
                   const cells = row.values.map((item) => (histMetric === 'count' ? item.count : Math.round(item.importe * 100) / 100));
                   const total = row.values.reduce((sum, item) => sum + (histMetric === 'count' ? item.count : item.importe), 0);
-                  return [row.estado, ...cells, histMetric === 'count' ? total : Math.round(total * 100) / 100];
+                  return [
+                    row.estado,
+                    departamentosDeEstado(estadoDepts, row.estado).join(', '),
+                    ...cells,
+                    histMetric === 'count' ? total : Math.round(total * 100) / 100,
+                  ];
                 });
                 const totalRow = [
                   'Total',
-                  ...history.totals.map((item) => (histMetric === 'count' ? item.count : Math.round(item.importe * 100) / 100)),
+                  '',
+                  ...historyTotals.map((item) => (histMetric === 'count' ? item.count : Math.round(item.importe * 100) / 100)),
                   histMetric === 'count'
-                    ? history.totals.reduce((sum, item) => sum + item.count, 0)
-                    : Math.round(history.totals.reduce((sum, item) => sum + item.importe, 0) * 100) / 100,
+                    ? historyTotals.reduce((sum, item) => sum + item.count, 0)
+                    : Math.round(historyTotals.reduce((sum, item) => sum + item.importe, 0) * 100) / 100,
                 ];
                 downloadAoa({ Historico: [header, ...rows, totalRow] }, `albaranes_historico_${histMetric}.xlsx`);
               }}
@@ -1085,6 +1165,52 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               <Download className="h-3.5 w-3.5" /> Excel
             </button>
           </div>
+          <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+            <FileUpload
+              inputId="albaranes-estado-dept"
+              label="Quién controla cada estado"
+              hint="Excel Estado + Departamento 1, 2 y 3. Descarga la plantilla con tus estados y rellena quién los controla."
+              keepDropzone
+              compact
+              loaded={(estadoDepts || []).some((item) => item.departamentos.length > 0)}
+              loadedName={state?.estadoDepartamentosFileName}
+              onFileLoaded={handleEstadoDepartamentosFile}
+            />
+            <button
+              type="button"
+              className="flex items-center justify-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold"
+              onClick={() => {
+                if (!state) return;
+                downloadAoa({
+                  Control: estadoDepartamentosToAoa(historicoEstados(state), estadoDepts || []),
+                  Ayuda: ESTADO_DEPARTAMENTOS_HELP,
+                }, 'albaranes_control_estados.xlsx');
+              }}
+            >
+              <Download className="h-3.5 w-3.5" /> Plantilla estados
+            </button>
+          </div>
+          {historyDepts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              <button
+                type="button"
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${histDept ? 'border border-[var(--border)]' : 'bg-[var(--text-primary)] text-white'}`}
+                onClick={() => setHistDept('')}
+              >
+                Todos
+              </button>
+              {historyDepts.map((dept) => (
+                <button
+                  key={dept}
+                  type="button"
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${histDept === dept ? 'bg-[var(--text-primary)] text-white' : deptChipClass(dept)}`}
+                  onClick={() => setHistDept((current) => (current === dept ? '' : dept))}
+                >
+                  {dept}
+                </button>
+              ))}
+            </div>
+          )}
           {history.dates.length === 0 ? (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               Aún no hay fotos. Sube Albaranes.csv en Carga.
@@ -1095,15 +1221,17 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                   <tr>
                     <th className="sticky left-0 z-20 whitespace-nowrap bg-[var(--bg-soft)] px-3 py-2 font-semibold">Estado</th>
+                    <th className="whitespace-nowrap px-3 py-2 font-semibold">Control</th>
                     {history.dates.map((date) => (
                       <th key={date} className="whitespace-nowrap px-2 py-2 text-right font-semibold">{formatIsoDate(date)}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {history.rows.map((row) => (
+                  {historyRows.map((row) => (
                     <tr key={row.estado} className="border-t border-[var(--border)]">
                       <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2 font-medium">{row.estado}</td>
+                      <td className="px-3 py-2"><DeptChips items={departamentosDeEstado(estadoDepts, row.estado)} /></td>
                       {row.values.map((item, index) => (
                         <td key={`${row.estado}-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
                           {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
@@ -1113,7 +1241,8 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                   ))}
                   <tr className="border-t-2 border-[var(--border)] font-semibold">
                     <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2">Total</td>
-                    {history.totals.map((item, index) => (
+                    <td className="px-3 py-2 text-[var(--text-muted)] font-normal">{histDept || '—'}</td>
+                    {historyTotals.map((item, index) => (
                       <td key={`total-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
                         {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
                       </td>

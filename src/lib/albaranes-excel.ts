@@ -7,7 +7,9 @@ import {
   type Agent,
   type AlbaranRow,
   type Colectivo,
+  type EstadoDepartamento,
   type Regla,
+  departamentosDeEstado,
   newId,
 } from '@/lib/albaranes-model';
 
@@ -286,6 +288,78 @@ export function rulesToAoa(rules: Regla[]): unknown[][] {
     ]),
   ];
 }
+
+function splitDepartamentos(value: string): string[] {
+  return value
+    .split(/[;,|/]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function parseEstadoDepartamentosSheet(rows: unknown[][]): EstadoDepartamento[] {
+  if (!rows.length) return [];
+  const headerIndex = rows.findIndex((row) => {
+    const joined = (row || []).map(normalizeHeader).join(' | ');
+    return joined.includes('estado') && (
+      joined.includes('departamento')
+      || joined.includes('control')
+      || joined.includes('area')
+      || joined.includes('área')
+    );
+  });
+  const start = headerIndex >= 0 ? headerIndex : 0;
+  const header = (rows[start] || []).map(normalizeHeader);
+  const colEstado = findColLoose(header, ['estado', 'estados', 'status']);
+  const deptCols = header
+    .map((name, index) => (
+      name.includes('departamento') || name.includes('control') || name.includes('area') || name.includes('área')
+        ? index
+        : -1
+    ))
+    .filter((index) => index >= 0 && index !== colEstado);
+  const estadoIndex = colEstado ?? 0;
+  const body = rows.slice(headerIndex >= 0 ? start + 1 : 0);
+  const seen = new Set<string>();
+  return body.flatMap((row) => {
+    const estado = cellText(pick(row, estadoIndex));
+    if (!estado) return [];
+    const key = normKey(estado);
+    if (!key || seen.has(key)) return [];
+    seen.add(key);
+    const cols = deptCols.length
+      ? deptCols
+      : (row || []).map((_, index) => index).filter((index) => index !== estadoIndex);
+    const departamentos: string[] = [];
+    cols.forEach((index) => {
+      splitDepartamentos(cellText(pick(row, index))).forEach((dept) => {
+        if (departamentos.some((item) => normKey(item) === normKey(dept))) return;
+        if (departamentos.length < 3) departamentos.push(dept);
+      });
+    });
+    return [{ estado, departamentos }];
+  });
+}
+
+export function estadoDepartamentosToAoa(
+  estados: string[],
+  map: EstadoDepartamento[],
+): unknown[][] {
+  return [
+    ['Estado', 'Departamento 1', 'Departamento 2', 'Departamento 3'],
+    ...estados.map((estado) => {
+      const deps = departamentosDeEstado(map, estado);
+      return [estado, deps[0] || '', deps[1] || '', deps[2] || ''];
+    }),
+  ];
+}
+
+export const ESTADO_DEPARTAMENTOS_HELP: unknown[][] = [
+  ['Cómo rellenar'],
+  ['Una fila por estado del histórico.'],
+  ['Hasta 3 departamentos por estado, en Departamento 1, 2 y 3.'],
+  ['Si un estado lo controlan dos áreas, rellena 1 y 2. Si tres, las tres columnas.'],
+  ['Luego súbelo en Histórico. Los chips salen al lado de cada estado.'],
+];
 
 export const AGENTES_TEMPLATE: unknown[][] = [
   ['IdAgente', 'AgenteERP', 'Nombre', 'Email', 'Idioma', 'Supervisor', 'Activo'],

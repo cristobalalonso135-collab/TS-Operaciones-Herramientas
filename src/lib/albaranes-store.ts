@@ -92,6 +92,17 @@ function normalize(state: AlbaranesState): AlbaranesState {
     emailContacts: Array.isArray(state.emailContacts)
       ? state.emailContacts.filter((item) => item && typeof item.nombre === 'string' && typeof item.email === 'string' && item.email.includes('@'))
       : [],
+    estadoDepartamentos: Array.isArray(state.estadoDepartamentos)
+      ? state.estadoDepartamentos.flatMap((item) => {
+        if (!item || typeof item.estado !== 'string' || !item.estado.trim()) return [];
+        const departamentos = Array.isArray(item.departamentos)
+          ? item.departamentos.map((dept) => String(dept || '').trim()).filter(Boolean).slice(0, 3)
+          : [];
+        return [{ estado: item.estado.trim(), departamentos }];
+      })
+      : [],
+    estadoDepartamentosFileName: typeof state.estadoDepartamentosFileName === 'string' ? state.estadoDepartamentosFileName : '',
+    estadoDepartamentosLoadedAt: typeof state.estadoDepartamentosLoadedAt === 'string' ? state.estadoDepartamentosLoadedAt : '',
     cargas: Array.isArray(state.cargas) ? state.cargas : [],
     disappeared: [],
     evaluations: Array.isArray(state.evaluations) ? state.evaluations : [],
