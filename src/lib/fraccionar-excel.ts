@@ -3,6 +3,7 @@ import {
   cellToIso,
   formatIsoDate,
   normKey,
+  splitColectivoCodes,
   type AlbaranRow,
   type Colectivo,
 } from '@/lib/albaranes-model';
@@ -172,6 +173,30 @@ export function fraccionarJoin(
     if (item.codigo) byCode.set(normKey(item.codigo), item);
   });
   const findListed = (id: string) => byId.get(id) || byNumber.get(normKey(id));
+  const resolveClubs = (codigo: string) => {
+    const parts = splitColectivoCodes(codigo);
+    const clubs: Colectivo[] = [];
+    let missing = false;
+    parts.forEach((part) => {
+      const club = byCode.get(normKey(part));
+      if (club) clubs.push(club);
+      else missing = true;
+    });
+    return { clubs, missing };
+  };
+  const uniqueJoin = (values: Array<string | undefined>) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    values.forEach((value) => {
+      const text = String(value || '').trim();
+      if (!text) return;
+      const key = text.toLocaleLowerCase('es');
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(text);
+    });
+    return out.join(', ');
+  };
   return data.map((row, index) => {
     const listed = findListed(row.idAlbaran);
     if (!listed) {
@@ -196,17 +221,17 @@ export function fraccionarJoin(
       };
     }
     const codigo = listed.colectivo.trim();
-    const club = codigo ? byCode.get(normKey(codigo)) : undefined;
+    const { clubs, missing } = resolveClubs(codigo);
     let issue: FraccionarIssue | null = null;
     if (!codigo) issue = 'Sin código de colectivo';
-    else if (!club) issue = 'Colectivo desconocido';
+    else if (missing || clubs.length === 0) issue = 'Colectivo desconocido';
     return {
       key: `${listed.id}-${index}`,
       idAlbaran: listed.id,
       albaran: listed.albaran,
       codigoColectivo: codigo,
-      nombreColectivo: club?.nombre || '',
-      agente: club?.agente || '',
+      nombreColectivo: uniqueJoin(clubs.map((club) => club.nombre)),
+      agente: uniqueJoin(clubs.map((club) => club.agente || club.idAgente)),
       medio: row.medio,
       zona: row.zona,
       fechaAlbaran: row.fechaAlbaran,
@@ -248,7 +273,7 @@ export type FraccionarCol = {
 export const FRACCIONAR_COLUMNS: FraccionarCol[] = [
   { key: 'medio', label: 'Medio de Venta', viewLabel: 'Medio', width: 110, min: 72, max: 360, excel: (row) => row.medio, display: (row) => dash(row.medio) },
   { key: 'zona', label: 'Zona', width: 88, min: 64, max: 280, excel: (row) => row.zona, display: (row) => dash(row.zona) },
-  { key: 'albaran', label: 'Albarán', width: 160, min: 110, max: 360, excel: (row) => row.albaran || row.idAlbaran, display: (row) => dash(row.albaran || row.idAlbaran) },
+  { key: 'albaran', label: 'Albarán', width: 160, min: 110, max: 360, excel: (row) => row.albaran, display: (row) => dash(row.albaran) },
   { key: 'fechaAlbaran', label: 'Fecha_albaran', viewLabel: 'F. alb', width: 86, min: 72, max: 220, excel: (row) => row.fechaAlbaran, display: (row) => dash(row.fechaAlbaran) },
   { key: 'fechaSalida', label: 'Fecha_informada_salida', viewLabel: 'F. salida', width: 86, min: 72, max: 260, excel: (row) => row.fechaSalida, display: (row) => dash(row.fechaSalida) },
   { key: 'estado', label: 'Estado', width: 78, min: 64, max: 220, excel: (row) => row.estado, display: (row) => dash(row.estado) },

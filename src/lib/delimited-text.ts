@@ -14,7 +14,20 @@ export function splitDelimitedRow(row: string, delimiter: string): string[] {
         i += 1;
         continue;
       }
-      quoted = !quoted;
+      if (!quoted) {
+        if (cur === '') {
+          quoted = true;
+          continue;
+        }
+        cur += '"';
+        continue;
+      }
+      const next = row[i + 1];
+      if (next === undefined || next === delimiter) {
+        quoted = false;
+        continue;
+      }
+      cur += '"';
       continue;
     }
     if (char === delimiter && !quoted) {
