@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   FRACCIONAR_COLUMNS,
+  defaultFraccionarColumnWidths,
   fraccionarJoin,
   fraccionarToAoa,
   parseAlbaranesForFraccionar,
@@ -14,6 +15,36 @@ import {
 } from '@/lib/fraccionar-excel';
 import { formatInt } from '@/lib/albaranes-model';
 import { Download, Search } from 'lucide-react';
+
+const COL_WIDTHS_KEY = 'fraccionar-col-widths';
+
+function loadColumnWidths(): Record<string, number> {
+  const fallback = defaultFraccionarColumnWidths();
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(COL_WIDTHS_KEY) || '');
+    if (!raw || typeof raw !== 'object') return fallback;
+    return FRACCIONAR_COLUMNS.reduce((acc, col) => {
+      const num = Number((raw as Record<string, unknown>)[col.key]);
+      acc[col.key] = Number.isFinite(num) ? Math.min(col.max, Math.max(col.min, Math.round(num))) : col.width;
+      return acc;
+    }, {} as Record<string, number>);
+  } catch {
+    return fallback;
+  }
+}
+
+function ColResize({ onMouseDown }: { onMouseDown: (event: ReactMouseEvent) => void }) {
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Ajustar columna"
+      className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-[var(--text-primary)]/25"
+      onMouseDown={onMouseDown}
+      onClick={(event) => event.stopPropagation()}
+    />
+  );
+}
 
 function downloadAoa(rows: unknown[][], fileName: string) {
   void import('xlsx').then((XLSX) => {
@@ -43,6 +74,13 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
   const [query, setQuery] = useState('');
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [ack, setAck] = useState<string | null>(null);
+  const [colWidths, setColWidths] = useState<Record<string, number>>(defaultFraccionarColumnWidths);
+  const colWidthsRef = useRef(colWidths);
+  colWidthsRef.current = colWidths;
+
+  useEffect(() => {
+    setColWidths(loadColumnWidths());
+  }, []);
 
   const joined = useMemo(
     () => (dataRows.length && albaranesRows.length ? fraccionarJoin(dataRows, albaranesRows, colectivosRows) : []),
@@ -65,6 +103,35 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
   const unknownClub = joined.filter((row) => row.issue === 'Colectivo desconocido').length;
 
   const ready = dataRows.length > 0 && albaranesRows.length > 0 && colectivosRows.length > 0;
+  const tableWidth = FRACCIONAR_COLUMNS.reduce((sum, col) => sum + (colWidths[col.key] ?? col.width), 0);
+
+  const resizeColumn = (key: string, event: ReactMouseEvent) => {
+    const spec = FRACCIONAR_COLUMNS.find((col) => col.key === key);
+    if (!spec) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startW = colWidthsRef.current[key] ?? spec.width;
+    const move = (moveEvent: MouseEvent) => {
+      const next = Math.min(spec.max, Math.max(spec.min, Math.round(startW + moveEvent.clientX - startX)));
+      setColWidths((current) => ({ ...current, [key]: next }));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        window.localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidthsRef.current));
+      } catch {
+        /* ignore quota */
+      }
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
 
   return (
     <div className="space-y-4">
@@ -192,13 +259,26 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
               </button>
             </div>
           </div>
-          <p className="text-xs text-[var(--text-muted)]">{formatInt(filtered.length)} filas.</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            {formatInt(filtered.length)} filas. Arrastra el borde de cada columna para el ancho. El texto se adapta y no se corta.
+          </p>
           <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="min-w-full text-left text-xs">
+            <table
+              className="text-left text-xs"
+              style={{ tableLayout: 'fixed', width: tableWidth }}
+            >
+              <colgroup>
+                {FRACCIONAR_COLUMNS.map((col) => (
+                  <col key={col.key} style={{ width: colWidths[col.key] ?? col.width }} />
+                ))}
+              </colgroup>
               <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                 <tr>
                   {FRACCIONAR_COLUMNS.map((col) => (
-                    <th key={col.key} className="whitespace-nowrap px-3 py-2 font-semibold">{col.label}</th>
+                    <th key={col.key} className="relative px-3 py-2 font-semibold align-top break-words">
+                      {col.label}
+                      <ColResize onMouseDown={(event) => resizeColumn(col.key, event)} />
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -208,7 +288,7 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
                     {FRACCIONAR_COLUMNS.map((col) => (
                       <td
                         key={col.key}
-                        className={`px-3 py-2 ${col.key === 'albaran' ? 'whitespace-nowrap font-medium' : ''} ${col.numeric ? 'whitespace-nowrap tabular-nums' : ''} ${col.key === 'issue' ? 'text-amber-900' : ''}`}
+                        className={`px-3 py-2 align-top break-words ${col.key === 'albaran' ? 'font-medium' : ''} ${col.numeric ? 'tabular-nums' : ''} ${col.key === 'issue' ? 'text-amber-900' : ''}`}
                       >
                         {col.display(row)}
                       </td>
