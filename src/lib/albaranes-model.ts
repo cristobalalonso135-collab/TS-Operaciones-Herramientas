@@ -1703,6 +1703,21 @@ export function departamentosDeEstado(
   return fuzzy?.departamentos.slice(0, 3) || [];
 }
 
+export function upsertEstadoDepartamentos(
+  map: EstadoDepartamento[] | undefined,
+  estado: string,
+  departamentos: string[],
+): EstadoDepartamento[] {
+  const wanted = estado.trim();
+  if (!wanted) return map || [];
+  const next = (map || []).filter((item) => normKey(item.estado) !== normKey(wanted));
+  next.push({
+    estado: wanted,
+    departamentos: departamentos.map((item) => item.trim()).filter(Boolean).slice(0, 3),
+  });
+  return next.sort((a, b) => a.estado.localeCompare(b.estado, 'es'));
+}
+
 export function uniqueDepartamentos(map: EstadoDepartamento[] | undefined): string[] {
   const seen = new Set<string>();
   const out: string[] = [];

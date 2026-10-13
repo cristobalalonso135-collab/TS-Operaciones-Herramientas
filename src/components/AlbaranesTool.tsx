@@ -45,6 +45,7 @@ import {
   historicoEstados,
   departamentosDeEstado,
   uniqueDepartamentos,
+  upsertEstadoDepartamentos,
   latestCarga,
   mergeAgentEmails,
   mergeImportedRules,
@@ -204,6 +205,72 @@ function DeptChips({ items }: { items: string[] }) {
   );
 }
 
+function DeptEditor({
+  selected,
+  options,
+  onChange,
+}: {
+  selected: string[];
+  options: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const palette = options.filter((item) => !selected.some((dept) => deptChipKey(dept) === deptChipKey(item)));
+  const toggle = (name: string) => {
+    if (selected.some((dept) => deptChipKey(dept) === deptChipKey(name))) {
+      onChange(selected.filter((dept) => deptChipKey(dept) !== deptChipKey(name)));
+      return;
+    }
+    if (selected.length >= 3) return;
+    onChange([...selected, name]);
+  };
+  const addDraft = () => {
+    const name = draft.trim();
+    if (!name) return;
+    toggle(name);
+    setDraft('');
+  };
+  return (
+    <div className="flex min-w-[12rem] flex-wrap items-center gap-1" onClick={(event) => event.stopPropagation()}>
+      {selected.map((dept) => (
+        <button
+          key={dept}
+          type="button"
+          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${deptChipClass(dept)}`}
+          onClick={() => toggle(dept)}
+        >
+          {dept} ×
+        </button>
+      ))}
+      {selected.length < 3 && palette.map((dept) => (
+        <button
+          key={dept}
+          type="button"
+          className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-semibold text-[var(--text-muted)]"
+          onClick={() => toggle(dept)}
+        >
+          {dept}
+        </button>
+      ))}
+      {selected.length < 3 && (
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              addDraft();
+            }
+          }}
+          onBlur={addDraft}
+          placeholder="Añadir"
+          className="w-20 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] outline-none"
+        />
+      )}
+    </div>
+  );
+}
+
 function isTodayStamp(value?: string): boolean {
   if (!value) return false;
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value === todayIso();
@@ -270,6 +337,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
   const [vistaAgente, setVistaAgente] = useState<string[]>([]);
   const [histMetric, setHistMetric] = useState<'count' | 'importe'>('count');
   const [histDept, setHistDept] = useState('');
+  const [histEditEstado, setHistEditEstado] = useState('');
   const [vintageField, setVintageField] = useState<'albaran' | 'estado'>('albaran');
   const [incPage, setIncPage] = useState(0);
   const [editingRule, setEditingRule] = useState<Regla | null>(null);
@@ -1130,7 +1198,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               </p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">
                 {formatInt(history.dates.length)} {history.dates.length === 1 ? 'día' : 'días'} con foto.
-                Control = quién se encarga de cada estado, hasta 3 departamentos.
+                Clic en una fila para asignar hasta 3 departamentos. No hace falta volver a subir el Excel.
               </p>
             </div>
             <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-1">
@@ -1178,31 +1246,34 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
               <Download className="h-3.5 w-3.5" /> Excel
             </button>
           </div>
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-            <FileUpload
-              inputId="albaranes-estado-dept"
-              label="Quién controla cada estado"
-              hint="Excel Estado + Departamento 1, 2 y 3. Descarga la plantilla con tus estados y rellena quién los controla."
-              keepDropzone
-              compact
-              loaded={(estadoDepts || []).some((item) => item.departamentos.length > 0)}
-              loadedName={state?.estadoDepartamentosFileName}
-              onFileLoaded={handleEstadoDepartamentosFile}
-            />
-            <button
-              type="button"
-              className="flex items-center justify-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold"
-              onClick={() => {
-                if (!state) return;
-                downloadAoa({
-                  Control: estadoDepartamentosToAoa(historicoEstados(state), estadoDepts || []),
-                  Ayuda: ESTADO_DEPARTAMENTOS_HELP,
-                }, 'albaranes_control_estados.xlsx');
-              }}
-            >
-              <Download className="h-3.5 w-3.5" /> Plantilla estados
-            </button>
-          </div>
+          <details className="text-xs text-[var(--text-muted)]">
+            <summary className="cursor-pointer">Importar o descargar Excel de control</summary>
+            <div className="mt-2 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+              <FileUpload
+                inputId="albaranes-estado-dept"
+                label="Quién controla cada estado"
+                hint="Opcional. También puedes asignar departamentos clicando una fila."
+                keepDropzone
+                compact
+                loaded={(estadoDepts || []).some((item) => item.departamentos.length > 0)}
+                loadedName={state?.estadoDepartamentosFileName}
+                onFileLoaded={handleEstadoDepartamentosFile}
+              />
+              <button
+                type="button"
+                className="flex items-center justify-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--text-primary)]"
+                onClick={() => {
+                  if (!state) return;
+                  downloadAoa({
+                    Control: estadoDepartamentosToAoa(historicoEstados(state), estadoDepts || []),
+                    Ayuda: ESTADO_DEPARTAMENTOS_HELP,
+                  }, 'albaranes_control_estados.xlsx');
+                }}
+              >
+                <Download className="h-3.5 w-3.5" /> Plantilla estados
+              </button>
+            </div>
+          </details>
           {historyDepts.length > 0 && (
             <div className="flex flex-wrap items-center gap-1">
               <button
@@ -1241,20 +1312,43 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {historyRows.map((row) => (
-                    <tr key={row.estado} className="border-t border-[var(--border)]">
-                      <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2 font-medium">{row.estado}</td>
-                      <td className="px-3 py-2"><DeptChips items={departamentosDeEstado(estadoDepts, row.estado)} /></td>
-                      {row.values.map((item, index) => (
-                        <td key={`${row.estado}-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
-                          {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
+                  {historyRows.map((row) => {
+                    const editing = histEditEstado === row.estado;
+                    const depts = departamentosDeEstado(estadoDepts, row.estado);
+                    return (
+                      <tr
+                        key={row.estado}
+                        className={`cursor-pointer border-t border-[var(--border)] ${editing ? 'bg-[var(--bg-soft)]' : ''}`}
+                        onClick={() => setHistEditEstado((current) => (current === row.estado ? '' : row.estado))}
+                      >
+                        <td className={`sticky left-0 z-10 whitespace-nowrap px-3 py-2 font-medium ${editing ? 'bg-[var(--bg-soft)]' : 'bg-[var(--bg-card)]'}`}>{row.estado}</td>
+                        <td className="px-3 py-2">
+                          {editing ? (
+                            <DeptEditor
+                              selected={depts}
+                              options={historyDepts}
+                              onChange={(next) => {
+                                void persist({
+                                  ...state,
+                                  estadoDepartamentos: upsertEstadoDepartamentos(estadoDepts, row.estado, next),
+                                }, backend);
+                              }}
+                            />
+                          ) : (
+                            <DeptChips items={depts} />
+                          )}
                         </td>
-                      ))}
-                    </tr>
-                  ))}
+                        {row.values.map((item, index) => (
+                          <td key={`${row.estado}-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
+                            {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                   <tr className="border-t-2 border-[var(--border)] font-semibold">
                     <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2">Total</td>
-                    <td className="px-3 py-2 text-[var(--text-muted)] font-normal">{histDept || '—'}</td>
+                    <td className="px-3 py-2" />
                     {historyTotals.map((item, index) => (
                       <td key={`total-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
                         {histMetric === 'count' ? formatInt(item.count) : formatEuro(item.importe)}
