@@ -163,10 +163,10 @@ async function downloadNamedExcelTable(input: {
 }
 
 const DEPT_CHIP_BY_NAME: Record<string, string> = {
-  comercial: 'border border-blue-200 bg-blue-50 text-blue-950',
+  comercial: 'border border-orange-200 bg-orange-50 text-orange-950',
   customer: 'border border-pink-200 bg-pink-50 text-pink-950',
   logistica: 'border border-emerald-200 bg-emerald-50 text-emerald-950',
-  operaciones: 'border border-orange-200 bg-orange-50 text-orange-950',
+  operaciones: 'border border-blue-200 bg-blue-50 text-blue-950',
   producto: 'border border-amber-200 bg-amber-50 text-amber-950',
 };
 
