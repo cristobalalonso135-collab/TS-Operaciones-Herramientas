@@ -32,6 +32,7 @@ export interface ChecklistState {
   nombre: string;
   fechaEvento: string;
   tasks: ChecklistTask[];
+  columnWidths?: Record<string, number>;
 }
 
 export interface ChecklistLibrary {
@@ -228,7 +229,37 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
     nombre: canonicalChecklistName(String(state?.nombre || '').trim() || seeded.nombre),
     fechaEvento: String(state?.fechaEvento || '').slice(0, 10) || seeded.fechaEvento,
     tasks,
+    columnWidths: normalizeColumnWidths(state?.columnWidths),
   };
+}
+
+export const CHECKLIST_TABLE_WIDTHS: Record<string, { width: number; min: number; max: number }> = {
+  grip: { width: 52, min: 52, max: 52 },
+  area: { width: 120, min: 72, max: 360 },
+  titulo: { width: 280, min: 140, max: 720 },
+  deadline: { width: 128, min: 88, max: 240 },
+  prioridad: { width: 96, min: 72, max: 180 },
+  responsable: { width: 140, min: 88, max: 280 },
+  estado: { width: 110, min: 80, max: 200 },
+  comentarios: { width: 240, min: 120, max: 720 },
+};
+
+export function defaultChecklistColumnWidths(): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(CHECKLIST_TABLE_WIDTHS).map(([key, item]) => [key, item.width]),
+  );
+}
+
+export function normalizeColumnWidths(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const next: Record<string, number> = {};
+  Object.entries(CHECKLIST_TABLE_WIDTHS).forEach(([key, spec]) => {
+    const num = Number(raw[key]);
+    if (!Number.isFinite(num)) return;
+    next[key] = Math.min(spec.max, Math.max(spec.min, Math.round(num)));
+  });
+  return Object.keys(next).length ? next : undefined;
 }
 
 function canonicalChecklistName(nombre: string): string {

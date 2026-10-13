@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -28,6 +28,8 @@ import {
   uniqueValues,
   upcomingTasks,
   effectiveDeadline,
+  CHECKLIST_TABLE_WIDTHS,
+  defaultChecklistColumnWidths,
   type ChecklistLibrary,
   type ChecklistPriority,
   type ChecklistState,
@@ -136,6 +138,19 @@ function DeadlineMark({
       <span className={closed ? 'text-[var(--text-muted)]' : 'text-[var(--text-secondary)]'}>{formatIsoDate(iso)}</span>
       {remainingChip(days, closed)}
     </span>
+  );
+}
+
+function ColResize({ onMouseDown }: { onMouseDown: (event: ReactMouseEvent) => void }) {
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Ajustar columna"
+      className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-[var(--text-primary)]/25"
+      onMouseDown={onMouseDown}
+      onClick={(event) => event.stopPropagation()}
+    />
   );
 }
 
@@ -249,6 +264,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
   const [sort, setSort] = useState<{ key: 'deadline' | 'prioridad' | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'asc' });
+  const [colWidths, setColWidths] = useState<Record<string, number>>(defaultChecklistColumnWidths);
+  const colWidthsRef = useRef(colWidths);
   const dragRow = useRef<string | null>(null);
   const dragStep = useRef<string | null>(null);
   const [dropRow, setDropRow] = useState<string | null>(null);
@@ -270,18 +287,28 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     }
   }, []);
 
+  useEffect(() => {
+    colWidthsRef.current = colWidths;
+  }, [colWidths]);
+
+  useEffect(() => {
+    if (!state) return;
+    setColWidths({ ...defaultChecklistColumnWidths(), ...(state.columnWidths || {}) });
+  }, [state?.id]);
+
   const persist = useCallback(async (next: ChecklistState, currentBackend: ChecklistBackend) => {
+    const withCols = { ...next, columnWidths: colWidthsRef.current };
     const lib = libraryRef.current;
     const lists = lib
-      ? (lib.lists.some((item) => item.id === next.id)
-        ? lib.lists.map((item) => (item.id === next.id ? next : item))
-        : [...lib.lists, next])
-      : [next];
+      ? (lib.lists.some((item) => item.id === withCols.id)
+        ? lib.lists.map((item) => (item.id === withCols.id ? withCols : item))
+        : [...lib.lists, withCols])
+      : [withCols];
     const nextLib = { lists };
     libraryRef.current = nextLib;
-    stateRef.current = next;
+    stateRef.current = withCols;
     setLibrary(nextLib);
-    setState(next);
+    setState(withCols);
     setError(null);
     try {
       await saveChecklistLibrary(nextLib, currentBackend);
@@ -307,6 +334,31 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       });
     return () => { cancelled = true; };
   }, []);
+
+  const resizeColumn = (key: string, event: ReactMouseEvent) => {
+    const spec = CHECKLIST_TABLE_WIDTHS[key];
+    if (!spec || spec.min === spec.max) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startW = colWidthsRef.current[key] ?? spec.width;
+    const move = (moveEvent: MouseEvent) => {
+      const next = Math.min(spec.max, Math.max(spec.min, Math.round(startW + moveEvent.clientX - startX)));
+      setColWidths((current) => ({ ...current, [key]: next }));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const current = stateRef.current;
+      if (current) void persist(current, backend);
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
 
   const tasks = state?.tasks || [];
   const kpis = useMemo(() => checklistKpis(tasks, today), [tasks, today]);
@@ -872,17 +924,35 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           )}
 
           {tab === 'tabla' && (
-            <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+            <div className="space-y-2">
+              <p className="text-xs text-[var(--text-muted)]">
+                Arrastra el borde de cada columna para definir el ancho. El texto se adapta y no se corta.
+              </p>
+              <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
               {tableRows.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
               ) : (
-                <table className="min-w-[920px] w-full text-left text-sm">
+                <table
+                  className="text-left text-sm"
+                  style={{ tableLayout: 'fixed', width: Object.values(colWidths).reduce((sum, item) => sum + item, 0) }}
+                >
+                  <colgroup>
+                    {Object.keys(CHECKLIST_TABLE_WIDTHS).map((key) => (
+                      <col key={key} style={{ width: colWidths[key] }} />
+                    ))}
+                  </colgroup>
                   <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-[0.08em] text-[var(--text-muted)]">
                     <tr>
-                      <th className="w-14 px-3 py-2" />
-                      <th className="px-3 py-2 font-semibold">Área</th>
-                      <th className="px-3 py-2 font-semibold">Tarea</th>
-                      <th className="px-3 py-2 font-semibold">
+                      <th className="relative px-3 py-2" style={{ width: colWidths.grip }} />
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.area }}>
+                        Área
+                        <ColResize onMouseDown={(event) => resizeColumn('area', event)} />
+                      </th>
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.titulo }}>
+                        Tarea
+                        <ColResize onMouseDown={(event) => resizeColumn('titulo', event)} />
+                      </th>
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.deadline }}>
                         <button
                           type="button"
                           className="inline-flex items-center gap-1"
@@ -897,8 +967,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />
                           ) : null}
                         </button>
+                        <ColResize onMouseDown={(event) => resizeColumn('deadline', event)} />
                       </th>
-                      <th className="px-3 py-2 font-semibold">
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.prioridad }}>
                         <button
                           type="button"
                           className="inline-flex items-center gap-1"
@@ -913,10 +984,20 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                             sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />
                           ) : null}
                         </button>
+                        <ColResize onMouseDown={(event) => resizeColumn('prioridad', event)} />
                       </th>
-                      <th className="px-3 py-2 font-semibold">Responsable</th>
-                      <th className="px-3 py-2 font-semibold">Estado</th>
-                      <th className="px-3 py-2 font-semibold">Comentarios</th>
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.responsable }}>
+                        Responsable
+                        <ColResize onMouseDown={(event) => resizeColumn('responsable', event)} />
+                      </th>
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.estado }}>
+                        Estado
+                        <ColResize onMouseDown={(event) => resizeColumn('estado', event)} />
+                      </th>
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.comentarios }}>
+                        Comentarios
+                        <ColResize onMouseDown={(event) => resizeColumn('comentarios', event)} />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -972,14 +1053,14 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               </button>
                             </div>
                           </td>
-                          <td className="px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className={`px-3 py-2.5 align-top ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
+                          <td className="break-words px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
+                          <td className={`break-words px-3 py-2.5 align-top ${closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
                             {task.titulo}
                             {(task.subtasks || []).length > 0 ? (
                               <ul className="mt-1.5 space-y-1 font-normal no-underline">
                                 {task.subtasks.map((step) => (
                                   <li key={step.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                    <span className={step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)]'}>
+                                    <span className={`break-words ${step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)]'}`}>
                                       {step.done ? '✓ ' : '· '}{step.titulo}
                                     </span>
                                     <DeadlineMark iso={step.deadline} today={today} closed={step.done || closed} />
@@ -988,21 +1069,22 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               </ul>
                             ) : null}
                           </td>
-                          <td className="px-3 py-2.5 align-top">
+                          <td className="break-words px-3 py-2.5 align-top">
                             <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
                           </td>
-                          <td className="px-3 py-2.5 align-top">
+                          <td className="break-words px-3 py-2.5 align-top">
                             <PriorityMark value={task.prioridad} muted={closed} />
                           </td>
-                          <td className="px-3 py-2.5 align-top">{task.responsable || '—'}</td>
-                          <td className="px-3 py-2.5 align-top">{task.estado}</td>
-                          <td className="max-w-[16rem] truncate px-3 py-2.5 align-top text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
+                          <td className="break-words px-3 py-2.5 align-top">{task.responsable || '—'}</td>
+                          <td className="break-words px-3 py-2.5 align-top">{task.estado}</td>
+                          <td className="break-words px-3 py-2.5 align-top text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               )}
+              </div>
             </div>
           )}
         </div>
