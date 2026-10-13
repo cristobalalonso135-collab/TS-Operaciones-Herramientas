@@ -161,20 +161,33 @@ async function downloadNamedExcelTable(input: {
   URL.revokeObjectURL(url);
 }
 
+const DEPT_CHIP_BY_NAME: Record<string, string> = {
+  comercial: 'bg-indigo-600 text-white',
+  customer: 'bg-fuchsia-600 text-white',
+  logistica: 'bg-cyan-600 text-white',
+  operaciones: 'bg-emerald-600 text-white',
+  producto: 'bg-amber-500 text-amber-950',
+};
+
 const DEPT_CHIP_TONES = [
-  'bg-sky-100 text-sky-800',
-  'bg-violet-100 text-violet-800',
-  'bg-amber-100 text-amber-900',
-  'bg-emerald-100 text-emerald-800',
-  'bg-rose-100 text-rose-800',
-  'bg-slate-100 text-slate-700',
+  'bg-orange-500 text-white',
+  'bg-teal-600 text-white',
+  'bg-violet-600 text-white',
+  'bg-lime-600 text-white',
+  'bg-rose-600 text-white',
+  'bg-sky-600 text-white',
 ];
 
+function deptChipKey(name: string): string {
+  return name.trim().toLocaleLowerCase('es').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 function deptChipClass(name: string): string {
-  const text = name.trim();
-  if (!text) return DEPT_CHIP_TONES[5];
+  const key = deptChipKey(name);
+  if (!key) return 'bg-slate-500 text-white';
+  if (DEPT_CHIP_BY_NAME[key]) return DEPT_CHIP_BY_NAME[key];
   let hash = 0;
-  for (let i = 0; i < text.length; i += 1) hash = (hash + text.charCodeAt(i) * (i + 1)) % DEPT_CHIP_TONES.length;
+  for (let i = 0; i < key.length; i += 1) hash = (hash + key.charCodeAt(i) * (i + 1)) % DEPT_CHIP_TONES.length;
   return DEPT_CHIP_TONES[hash];
 }
 
