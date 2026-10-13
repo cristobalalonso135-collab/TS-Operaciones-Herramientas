@@ -20,14 +20,13 @@ function cellText(value: unknown): string {
 }
 
 function excelSerialFromDate(value: Date): string {
-  const utc = Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
   const epoch = Date.UTC(1899, 11, 30);
-  return String(Math.round((utc - epoch) / 86400000));
+  return String(Math.round((value.getTime() - epoch) / 86400000));
 }
 
 export function asAlbaranId(value: unknown): string {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    if (value.getUTCFullYear() > 2500) return excelSerialFromDate(value);
+    if (value.getFullYear() > 2500 || value.getUTCFullYear() > 2500) return excelSerialFromDate(value);
     return String(value.getTime());
   }
   if (typeof value === 'number' && Number.isFinite(value)) return String(Math.round(value));
@@ -150,8 +149,15 @@ export function fraccionarJoin(
   colectivos.forEach((item) => {
     if (item.codigo) byCode.set(normKey(item.codigo), item);
   });
+  const findListed = (id: string) => {
+    const direct = byId.get(id) || byNumber.get(normKey(id));
+    if (direct) return direct;
+    if (!/^\d+$/.test(id)) return undefined;
+    const n = Number(id);
+    return byId.get(String(n + 1)) || byId.get(String(n - 1));
+  };
   return data.map((row, index) => {
-    const listed = byId.get(row.idAlbaran) || byNumber.get(normKey(row.idAlbaran));
+    const listed = findListed(row.idAlbaran);
     if (!listed) {
       return {
         key: `${row.idAlbaran || 'row'}-${index}`,

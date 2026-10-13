@@ -81,7 +81,22 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
             compact
             loaded={dataRows.length > 0}
             loadedName={dataName}
+            onRawFile={(file) => {
+              if (!/\.xlsx?$/i.test(file.name)) return;
+              void (async () => {
+                const XLSX = await import('xlsx');
+                const buffer = await file.arrayBuffer();
+                const wb = XLSX.read(buffer, { type: 'array', cellDates: false, raw: true });
+                const sheet = wb.Sheets[wb.SheetNames[0]];
+                const data = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' }) as unknown[][];
+                const rows = parseDataSheet(data);
+                setDataRows(rows);
+                setDataName(file.name);
+                setAck(rows.length ? `${formatInt(rows.length)} filas de Data.` : 'No he encontrado Id_albaran en Data.');
+              })();
+            }}
             onFileLoaded={(data, fileName) => {
+              if (/\.xlsx?$/i.test(fileName)) return;
               const rows = parseDataSheet(data);
               setDataRows(rows);
               setDataName(fileName);
