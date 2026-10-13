@@ -241,6 +241,8 @@ function dash(value: string | number | null | undefined): string {
 export type FraccionarCol = {
   key: string;
   label: string;
+  viewLabel?: string;
+  hideInView?: boolean;
   numeric?: boolean;
   width: number;
   min: number;
@@ -250,22 +252,24 @@ export type FraccionarCol = {
 };
 
 export const FRACCIONAR_COLUMNS: FraccionarCol[] = [
-  { key: 'medio', label: 'Medio de Venta', width: 150, min: 90, max: 360, excel: (row) => row.medio, display: (row) => dash(row.medio) },
-  { key: 'zona', label: 'Zona', width: 130, min: 80, max: 280, excel: (row) => row.zona, display: (row) => dash(row.zona) },
-  { key: 'albaran', label: 'Albarán', width: 180, min: 120, max: 360, excel: (row) => row.albaran || row.idAlbaran, display: (row) => dash(row.albaran || row.idAlbaran) },
-  { key: 'fechaAlbaran', label: 'Fecha_albaran', width: 120, min: 90, max: 220, excel: (row) => row.fechaAlbaran, display: (row) => dash(row.fechaAlbaran) },
-  { key: 'fechaSalida', label: 'Fecha_informada_salida', width: 150, min: 100, max: 260, excel: (row) => row.fechaSalida, display: (row) => dash(row.fechaSalida) },
-  { key: 'estado', label: 'Estado', width: 110, min: 80, max: 220, excel: (row) => row.estado, display: (row) => dash(row.estado) },
-  { key: 'diasRetraso', label: 'Días retraso', numeric: true, width: 90, min: 70, max: 160, excel: (row) => row.diasRetraso, display: (row) => dash(row.diasRetraso) },
-  { key: 'unidades', label: 'Unidades', numeric: true, width: 90, min: 70, max: 160, excel: (row) => row.unidades ?? '', display: (row) => dash(row.unidades) },
-  { key: 'udsBloqueadas', label: 'Uds bloqueadas', numeric: true, width: 110, min: 80, max: 180, excel: (row) => row.udsBloqueadas ?? '', display: (row) => dash(row.udsBloqueadas) },
-  { key: 'udsLiberables', label: 'Uds liberables', numeric: true, width: 110, min: 80, max: 180, excel: (row) => row.udsLiberables ?? '', display: (row) => dash(row.udsLiberables) },
-  { key: 'tsLiberable', label: 'TS % liberable', numeric: true, width: 120, min: 90, max: 200, excel: (row) => formatPercentEs(row.tsLiberable), display: (row) => formatPercentEs(row.tsLiberable) || '—' },
-  { key: 'nombreColectivo', label: 'Nombre colectivo', width: 220, min: 120, max: 480, excel: (row) => row.nombreColectivo, display: (row) => dash(row.nombreColectivo) },
-  { key: 'codigoColectivo', label: 'Código colectivo', width: 120, min: 80, max: 240, excel: (row) => row.codigoColectivo, display: (row) => dash(row.codigoColectivo) },
-  { key: 'agente', label: 'Agente', width: 180, min: 110, max: 360, excel: (row) => row.agente, display: (row) => dash(row.agente) },
-  { key: 'issue', label: 'Incidencia', width: 220, min: 140, max: 520, excel: (row) => row.issue || '', display: (row) => row.issue || '' },
+  { key: 'medio', label: 'Medio de Venta', viewLabel: 'Medio', width: 110, min: 72, max: 360, excel: (row) => row.medio, display: (row) => dash(row.medio) },
+  { key: 'zona', label: 'Zona', width: 88, min: 64, max: 280, excel: (row) => row.zona, display: (row) => dash(row.zona) },
+  { key: 'albaran', label: 'Albarán', width: 160, min: 110, max: 360, excel: (row) => row.albaran || row.idAlbaran, display: (row) => dash(row.albaran || row.idAlbaran) },
+  { key: 'fechaAlbaran', label: 'Fecha_albaran', viewLabel: 'F. alb', width: 86, min: 72, max: 220, excel: (row) => row.fechaAlbaran, display: (row) => dash(row.fechaAlbaran) },
+  { key: 'fechaSalida', label: 'Fecha_informada_salida', viewLabel: 'F. salida', width: 86, min: 72, max: 260, excel: (row) => row.fechaSalida, display: (row) => dash(row.fechaSalida) },
+  { key: 'estado', label: 'Estado', width: 78, min: 64, max: 220, excel: (row) => row.estado, display: (row) => dash(row.estado) },
+  { key: 'diasRetraso', label: 'Días retraso', viewLabel: 'Retraso', numeric: true, width: 64, min: 52, max: 160, excel: (row) => row.diasRetraso, display: (row) => dash(row.diasRetraso) },
+  { key: 'unidades', label: 'Unidades', viewLabel: '#', numeric: true, width: 44, min: 36, max: 120, excel: (row) => row.unidades ?? '', display: (row) => dash(row.unidades) },
+  { key: 'udsBloqueadas', label: 'Uds bloqueadas', viewLabel: '# bloq', numeric: true, width: 56, min: 44, max: 140, excel: (row) => row.udsBloqueadas ?? '', display: (row) => dash(row.udsBloqueadas) },
+  { key: 'udsLiberables', label: 'Uds liberables', viewLabel: '# lib', numeric: true, width: 56, min: 44, max: 140, excel: (row) => row.udsLiberables ?? '', display: (row) => dash(row.udsLiberables) },
+  { key: 'tsLiberable', label: 'TS % liberable', viewLabel: '% lib', numeric: true, width: 64, min: 52, max: 160, excel: (row) => formatPercentEs(row.tsLiberable), display: (row) => formatPercentEs(row.tsLiberable) || '—' },
+  { key: 'nombreColectivo', label: 'Nombre colectivo', viewLabel: 'Colectivo', width: 180, min: 110, max: 480, excel: (row) => row.nombreColectivo, display: (row) => dash(row.nombreColectivo) },
+  { key: 'codigoColectivo', label: 'Código colectivo', hideInView: true, width: 120, min: 80, max: 240, excel: (row) => row.codigoColectivo, display: (row) => dash(row.codigoColectivo) },
+  { key: 'agente', label: 'Agente', width: 140, min: 90, max: 360, excel: (row) => row.agente, display: (row) => dash(row.agente) },
+  { key: 'issue', label: 'Incidencia', width: 160, min: 100, max: 520, excel: (row) => row.issue || '', display: (row) => row.issue || '' },
 ];
+
+export const FRACCIONAR_VIEW_COLUMNS = FRACCIONAR_COLUMNS.filter((col) => !col.hideInView);
 
 export function defaultFraccionarColumnWidths(): Record<string, number> {
   return Object.fromEntries(FRACCIONAR_COLUMNS.map((col) => [col.key, col.width]));

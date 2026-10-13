@@ -5,6 +5,7 @@ import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   FRACCIONAR_COLUMNS,
+  FRACCIONAR_VIEW_COLUMNS,
   defaultFraccionarColumnWidths,
   fraccionarJoin,
   fraccionarToAoa,
@@ -16,7 +17,7 @@ import {
 import { formatInt } from '@/lib/albaranes-model';
 import { Download, Search } from 'lucide-react';
 
-const COL_WIDTHS_KEY = 'fraccionar-col-widths';
+const COL_WIDTHS_KEY = 'fraccionar-col-widths-v2';
 
 function loadColumnWidths(): Record<string, number> {
   const fallback = defaultFraccionarColumnWidths();
@@ -103,7 +104,7 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
   const unknownClub = joined.filter((row) => row.issue === 'Colectivo desconocido').length;
 
   const ready = dataRows.length > 0 && albaranesRows.length > 0 && colectivosRows.length > 0;
-  const tableWidth = FRACCIONAR_COLUMNS.reduce((sum, col) => sum + (colWidths[col.key] ?? col.width), 0);
+  const tableWidth = FRACCIONAR_VIEW_COLUMNS.reduce((sum, col) => sum + (colWidths[col.key] ?? col.width), 0);
 
   const resizeColumn = (key: string, event: ReactMouseEvent) => {
     const spec = FRACCIONAR_COLUMNS.find((col) => col.key === key);
@@ -268,15 +269,15 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
               style={{ tableLayout: 'fixed', width: tableWidth }}
             >
               <colgroup>
-                {FRACCIONAR_COLUMNS.map((col) => (
+                {FRACCIONAR_VIEW_COLUMNS.map((col) => (
                   <col key={col.key} style={{ width: colWidths[col.key] ?? col.width }} />
                 ))}
               </colgroup>
               <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                 <tr>
-                  {FRACCIONAR_COLUMNS.map((col) => (
-                    <th key={col.key} className="relative px-3 py-2 font-semibold align-top break-words">
-                      {col.label}
+                  {FRACCIONAR_VIEW_COLUMNS.map((col) => (
+                    <th key={col.key} className={`relative py-2 font-semibold align-top break-words ${col.numeric ? 'px-1.5' : 'px-2'}`}>
+                      {col.viewLabel || col.label}
                       <ColResize onMouseDown={(event) => resizeColumn(col.key, event)} />
                     </th>
                   ))}
@@ -285,10 +286,10 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
               <tbody>
                 {filtered.slice(0, 400).map((row: FraccionarRow) => (
                   <tr key={row.key} className={`border-t border-[var(--border)] ${row.issue ? 'bg-amber-50/70' : ''}`}>
-                    {FRACCIONAR_COLUMNS.map((col) => (
+                    {FRACCIONAR_VIEW_COLUMNS.map((col) => (
                       <td
                         key={col.key}
-                        className={`px-3 py-2 align-top break-words ${col.key === 'albaran' ? 'font-medium' : ''} ${col.numeric ? 'tabular-nums' : ''} ${col.key === 'issue' ? 'text-amber-900' : ''}`}
+                        className={`py-2 align-top break-words ${col.numeric ? 'px-1.5 tabular-nums' : 'px-2'} ${col.key === 'albaran' ? 'font-medium' : ''} ${col.key === 'issue' ? 'text-amber-900' : ''}`}
                       >
                         {col.display(row)}
                       </td>
