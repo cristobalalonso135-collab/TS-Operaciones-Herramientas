@@ -233,6 +233,37 @@ export function formatPercentEs(value: number | null | undefined): string {
   return `${(value * 100).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
+function dash(value: string | number | null | undefined): string {
+  if (value == null || value === '') return '—';
+  return String(value);
+}
+
+export type FraccionarCol = {
+  key: string;
+  label: string;
+  numeric?: boolean;
+  excel: (row: FraccionarRow) => string | number;
+  display: (row: FraccionarRow) => string;
+};
+
+export const FRACCIONAR_COLUMNS: FraccionarCol[] = [
+  { key: 'medio', label: 'Medio de Venta', excel: (row) => row.medio, display: (row) => dash(row.medio) },
+  { key: 'zona', label: 'Zona', excel: (row) => row.zona, display: (row) => dash(row.zona) },
+  { key: 'albaran', label: 'Albarán', excel: (row) => row.albaran || row.idAlbaran, display: (row) => dash(row.albaran || row.idAlbaran) },
+  { key: 'fechaAlbaran', label: 'Fecha_albaran', excel: (row) => row.fechaAlbaran, display: (row) => dash(row.fechaAlbaran) },
+  { key: 'fechaSalida', label: 'Fecha_informada_salida', excel: (row) => row.fechaSalida, display: (row) => dash(row.fechaSalida) },
+  { key: 'estado', label: 'Estado', excel: (row) => row.estado, display: (row) => dash(row.estado) },
+  { key: 'diasRetraso', label: 'Días retraso', numeric: true, excel: (row) => row.diasRetraso, display: (row) => dash(row.diasRetraso) },
+  { key: 'unidades', label: 'Unidades', numeric: true, excel: (row) => row.unidades ?? '', display: (row) => dash(row.unidades) },
+  { key: 'udsBloqueadas', label: 'Uds bloqueadas', numeric: true, excel: (row) => row.udsBloqueadas ?? '', display: (row) => dash(row.udsBloqueadas) },
+  { key: 'udsLiberables', label: 'Uds liberables', numeric: true, excel: (row) => row.udsLiberables ?? '', display: (row) => dash(row.udsLiberables) },
+  { key: 'tsLiberable', label: 'TS % liberable', numeric: true, excel: (row) => formatPercentEs(row.tsLiberable), display: (row) => formatPercentEs(row.tsLiberable) || '—' },
+  { key: 'nombreColectivo', label: 'Nombre colectivo', excel: (row) => row.nombreColectivo, display: (row) => dash(row.nombreColectivo) },
+  { key: 'codigoColectivo', label: 'Código colectivo', excel: (row) => row.codigoColectivo, display: (row) => dash(row.codigoColectivo) },
+  { key: 'agente', label: 'Agente', excel: (row) => row.agente, display: (row) => dash(row.agente) },
+  { key: 'issue', label: 'Incidencia', excel: (row) => row.issue || '', display: (row) => row.issue || '' },
+];
+
 export function parseAlbaranesForFraccionar(rows: unknown[][]): AlbaranRow[] {
   return parseAlbaranesSheet(rows);
 }
@@ -243,41 +274,7 @@ export function parseColectivosForFraccionar(rows: unknown[][]): Colectivo[] {
 
 export function fraccionarToAoa(rows: FraccionarRow[]): unknown[][] {
   return [
-    [
-      'Id_albaran',
-      'Albarán',
-      'Código colectivo',
-      'Nombre colectivo',
-      'Agente',
-      'Medio de Venta',
-      'Zona',
-      'Fecha_albaran',
-      'Fecha_informada_salida',
-      'Estado',
-      'Días retraso',
-      'Unidades',
-      'Uds bloqueadas',
-      'Uds liberables',
-      'TS % liberable',
-      'Incidencia',
-    ],
-    ...rows.map((row) => [
-      row.idAlbaran,
-      row.albaran,
-      row.codigoColectivo,
-      row.nombreColectivo,
-      row.agente,
-      row.medio,
-      row.zona,
-      row.fechaAlbaran,
-      row.fechaSalida,
-      row.estado,
-      row.diasRetraso,
-      row.unidades ?? '',
-      row.udsBloqueadas ?? '',
-      row.udsLiberables ?? '',
-      formatPercentEs(row.tsLiberable),
-      row.issue || '',
-    ]),
+    FRACCIONAR_COLUMNS.map((col) => col.label),
+    ...rows.map((row) => FRACCIONAR_COLUMNS.map((col) => col.excel(row))),
   ];
 }

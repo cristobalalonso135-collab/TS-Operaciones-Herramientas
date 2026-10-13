@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
+  FRACCIONAR_COLUMNS,
   fraccionarJoin,
   fraccionarToAoa,
   parseAlbaranesForFraccionar,
@@ -53,7 +54,7 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
     return joined.filter((row) => {
       if (onlyIssues && !row.issue) return false;
       if (!q) return true;
-      const hay = `${row.albaran} ${row.idAlbaran} ${row.codigoColectivo} ${row.nombreColectivo} ${row.agente} ${row.zona} ${row.estado} ${row.issue || ''}`.toLocaleLowerCase('es');
+      const hay = `${row.albaran} ${row.idAlbaran} ${row.codigoColectivo} ${row.nombreColectivo} ${row.agente} ${row.medio} ${row.zona} ${row.fechaAlbaran} ${row.fechaSalida} ${row.estado} ${row.issue || ''}`.toLocaleLowerCase('es');
       return hay.includes(q);
     });
   }, [joined, onlyIssues, query]);
@@ -196,23 +197,22 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
             <table className="min-w-full text-left text-xs">
               <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
                 <tr>
-                  {['Albarán', 'Código', 'Colectivo', 'Agente', 'Zona', 'Estado', 'Uds', 'Liberables', 'Incidencia'].map((col) => (
-                    <th key={col} className="whitespace-nowrap px-3 py-2 font-semibold">{col}</th>
+                  {FRACCIONAR_COLUMNS.map((col) => (
+                    <th key={col.key} className="whitespace-nowrap px-3 py-2 font-semibold">{col.label}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.slice(0, 400).map((row: FraccionarRow) => (
                   <tr key={row.key} className={`border-t border-[var(--border)] ${row.issue ? 'bg-amber-50/70' : ''}`}>
-                    <td className="whitespace-nowrap px-3 py-2 font-medium">{row.albaran || row.idAlbaran || '—'}</td>
-                    <td className="whitespace-nowrap px-3 py-2">{row.codigoColectivo || '—'}</td>
-                    <td className="px-3 py-2">{row.nombreColectivo || '—'}</td>
-                    <td className="px-3 py-2">{row.agente || '—'}</td>
-                    <td className="px-3 py-2">{row.zona || '—'}</td>
-                    <td className="px-3 py-2">{row.estado || '—'}</td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{row.unidades ?? '—'}</td>
-                    <td className="whitespace-nowrap px-3 py-2 tabular-nums">{row.udsLiberables ?? '—'}</td>
-                    <td className="px-3 py-2 text-amber-900">{row.issue || ''}</td>
+                    {FRACCIONAR_COLUMNS.map((col) => (
+                      <td
+                        key={col.key}
+                        className={`px-3 py-2 ${col.key === 'albaran' ? 'whitespace-nowrap font-medium' : ''} ${col.numeric ? 'whitespace-nowrap tabular-nums' : ''} ${col.key === 'issue' ? 'text-amber-900' : ''}`}
+                      >
+                        {col.display(row)}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
