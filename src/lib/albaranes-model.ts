@@ -684,50 +684,90 @@ export function uniqueAgentes(state: AlbaranesState): string[] {
     seen.add(key);
     out.push(text);
   };
-  state.colectivos.forEach((item) => push(item.agente || item.idAgente));
+  latestCarga(state)?.listing?.forEach((row) => push(row.agente));
   state.agents.forEach((item) => {
     push(item.agenteErp);
     push(item.nombre);
   });
-  latestCarga(state)?.listing?.forEach((row) => push(row.agente));
+  state.colectivos.forEach((item) => push(item.agente || item.idAgente));
   return out.sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+function contactHitsName(name: string, contact: { nombre: string; email: string }): boolean {
+  return namesMatch(name, contact.nombre) || namesMatch(name, contact.email.split('@')[0].replace(/[._]/g, ' '));
 }
 
 export function mergeAgentEmails(
   state: AlbaranesState,
   contacts: Array<{ nombre: string; email: string; idioma?: string }>,
-): { state: AlbaranesState; matched: number; unmatched: string[] } {
+): { state: AlbaranesState; matched: number; created: number; unmatched: string[] } {
   const names = uniqueAgentes(state);
-  const unmatched: string[] = [];
+  const valid = contacts.filter((item) => item.email.includes('@'));
   const emailByName = new Map<string, string>();
   const idiomaByName = new Map<string, string>();
-  contacts.forEach((item) => {
-    if (!item.email.includes('@')) return;
-    const hit = names.find((name) => namesMatch(name, item.nombre) || namesMatch(name, item.email.split('@')[0].replace(/[._]/g, ' ')));
-    if (!hit) {
+  const createdAgents: Agent[] = [];
+  const unmatched: string[] = [];
+
+  valid.forEach((item) => {
+    const hit = names.find((name) => contactHitsName(name, item))
+      || state.agents.find((agent) => contactHitsName(agent.agenteErp, item) || contactHitsName(agent.nombre, item))?.agenteErp
+      || state.agents.find((agent) => contactHitsName(agent.agenteErp, item) || contactHitsName(agent.nombre, item))?.nombre;
+    if (hit) {
+      const key = peopleKey(hit);
+      emailByName.set(key, item.email.trim());
+      if (item.idioma) idiomaByName.set(key, item.idioma);
+      return;
+    }
+    const nombre = item.nombre.trim() || item.email.split('@')[0].replace(/[._]/g, ' ');
+    if (!peopleKey(nombre) && !item.email.includes('@')) {
       unmatched.push(item.nombre || item.email);
       return;
     }
-    const key = peopleKey(hit);
-    emailByName.set(key, item.email.trim());
-    if (item.idioma) idiomaByName.set(key, item.idioma);
+    createdAgents.push({
+      id: newId('ag'),
+      agenteErp: nombre,
+      nombre,
+      email: item.email.trim(),
+      idioma: item.idioma || '',
+      supervisor: '',
+      activo: true,
+    });
   });
-  const agents = names.map((name) => {
+
+  const agents: Agent[] = names.map((name) => {
     const key = peopleKey(name);
     const prior = state.agents.find((item) => namesMatch(item.agenteErp, name) || namesMatch(item.nombre, name));
+    const created = createdAgents.find((item) => namesMatch(item.agenteErp, name) || namesMatch(item.nombre, name));
     return {
-      id: prior?.id || newId('ag'),
-      agenteErp: prior?.agenteErp || name,
-      nombre: prior?.nombre || name,
-      email: emailByName.get(key) || prior?.email || '',
-      idioma: idiomaByName.get(key) || prior?.idioma || '',
+      id: prior?.id || created?.id || newId('ag'),
+      agenteErp: name,
+      nombre: prior?.nombre || created?.nombre || name,
+      email: emailByName.get(key) || created?.email || prior?.email || '',
+      idioma: idiomaByName.get(key) || created?.idioma || prior?.idioma || '',
       supervisor: prior?.supervisor || '',
       activo: prior?.activo ?? true,
     };
   });
+
+  createdAgents.forEach((extra) => {
+    if (agents.some((agent) => namesMatch(agent.agenteErp, extra.nombre) || namesMatch(agent.nombre, extra.nombre))) return;
+    agents.push(extra);
+  });
+
+  state.agents.forEach((prior) => {
+    if (!prior.agenteErp.trim() && !prior.nombre.trim() && !prior.email.includes('@')) return;
+    const exists = agents.some((agent) => (
+      agent.id === prior.id
+      || namesMatch(agent.agenteErp, prior.agenteErp || prior.nombre)
+      || namesMatch(agent.nombre, prior.nombre || prior.agenteErp)
+    ));
+    if (!exists) agents.push(prior);
+  });
+
   return {
     state: { ...state, agents },
     matched: emailByName.size,
+    created: createdAgents.filter((extra) => agents.some((agent) => agent.id === extra.id)).length,
     unmatched: unmatched.slice(0, 20),
   };
 }
@@ -772,9 +812,20 @@ export function latestCarga(state: AlbaranesState): Carga | null {
   return state.cargas[state.cargas.length - 1] || null;
 }
 
+function preferEmailedAgents(agents: Agent[]): Agent[] {
+  const withMail = agents.filter((agent) => agent.activo && agent.email.includes('@'));
+  if (withMail.length) return withMail;
+  const active = agents.filter((agent) => agent.activo);
+  return active.length ? active : agents;
+}
+
 export function findAgentByErp(agents: Agent[], agenteErp: string): Agent[] {
-  const key = normKey(agenteErp);
-  return agents.filter((agent) => normKey(agent.agenteErp) === key);
+  const wanted = agenteErp.trim();
+  if (!wanted) return [];
+  const exact = agents.filter((agent) => normKey(agent.agenteErp) === normKey(wanted));
+  if (exact.length) return preferEmailedAgents(exact);
+  const fuzzy = agents.filter((agent) => namesMatch(agent.agenteErp, wanted) || namesMatch(agent.nombre, wanted));
+  return preferEmailedAgents(fuzzy);
 }
 
 export function findColectivos(colectivos: Colectivo[], codigo: string): Colectivo[] {
@@ -1066,9 +1117,9 @@ export function resolveAssignment(
   const wanted = uniqueAgents[0];
   const agent = agents.find((item) => (
     item.id === wanted
-    || normKey(item.agenteErp) === normKey(wanted)
-    || normKey(item.nombre) === normKey(wanted)
-  ));
+    || namesMatch(item.agenteErp, wanted)
+    || namesMatch(item.nombre, wanted)
+  )) || findAgentByErp(agents, wanted)[0];
   return finish(agent, mapped[0].nombre || codes[0]);
 }
 
@@ -1161,7 +1212,7 @@ function evaluateRules(
           ? 'omitido-duplicado'
           : options.bumpMail
             ? 'pendiente'
-            : (priorEval?.envio || 'pendiente');
+            : (priorEval?.envio && priorEval.envio !== 'incidencia' ? priorEval.envio : 'pendiente');
       nextEvaluations.push({
         key: `${input.cargaId}|${evalKey}`,
         cargaId: input.cargaId,

@@ -93,29 +93,66 @@ function normalizeIdioma(value: string): string {
   return value.trim().toUpperCase().slice(0, 8);
 }
 
+function findColLoose(header: string[], aliases: string[]): number | null {
+  const exact = findCol(header, aliases);
+  if (exact !== null) return exact;
+  for (const alias of aliases) {
+    if (alias.length < 4) continue;
+    const idx = header.findIndex((name) => name.includes(alias));
+    if (idx >= 0) return idx;
+  }
+  return null;
+}
+
+function looksLikeCountry(value: string): boolean {
+  return /^[A-Z]{2}$/i.test(value.trim());
+}
+
+function displayNameFromRow(row: unknown[], namedCol: number | null, email: string): string {
+  const named = cellText(pick(row, namedCol));
+  if (named && !named.includes('@') && !looksLikeCountry(named)) return named;
+  const candidates = (row || [])
+    .map(cellText)
+    .filter((item) => item && !item.includes('@') && !looksLikeCountry(item));
+  const best = [...candidates].sort((a, b) => b.length - a.length)[0];
+  if (best) return best;
+  return email.split('@')[0].replace(/[._]/g, ' ');
+}
+
+function idiomaFromRow(row: unknown[], idiomaCol: number | null): string {
+  const direct = normalizeIdioma(cellText(pick(row, idiomaCol)));
+  if (direct) return direct;
+  const code = (row || []).map(cellText).find((item) => looksLikeCountry(item));
+  return code ? code.trim().toUpperCase() : '';
+}
+
 export function parseEmailsSheet(rows: unknown[][]): Array<{ nombre: string; email: string; idioma: string }> {
   if (!rows.length) return [];
   const headerIndex = rows.findIndex((row) => {
-    const joined = (row || []).map(normalizeHeader).join(' | ');
+    const cells = (row || []).map(normalizeHeader);
+    if (cells.some((cell) => cell.includes('@'))) return false;
+    const joined = cells.join(' | ');
     return joined.includes('mail') || joined.includes('correo') || joined.includes('email') || joined.includes('upn');
   });
   const start = headerIndex >= 0 ? headerIndex : 0;
   const header = (rows[start] || []).map(normalizeHeader);
   const col = {
-    nombre: findCol(header, ['display name', 'displayname', 'nombre para mostrar', 'nombre completo', 'full name', 'name', 'nombre', 'agente']),
-    email: findCol(header, ['user principal name', 'userprincipalname', 'correo electrónico', 'email address', 'mail', 'email', 'correo', 'upn']),
-    idioma: findCol(header, ['idioma', 'language', 'lang', 'lengua']),
+    nombre: findColLoose(header, ['display name', 'displayname', 'nombre para mostrar', 'nombre completo', 'full name', 'member', 'miembro', 'contacto', 'usuario', 'name', 'nombre', 'agente']),
+    email: findColLoose(header, ['user principal name', 'userprincipalname', 'correo electrónico', 'email address', 'e-mail', 'mail', 'email', 'correo', 'upn']),
+    idioma: findColLoose(header, ['idioma', 'language', 'lang', 'lengua', 'country', 'país', 'pais', 'usage location']),
   };
   const body = rows.slice(headerIndex >= 0 ? start + 1 : 0);
   return body.flatMap((row) => {
-    const named = cellText(pick(row, col.nombre));
     let email = cellText(pick(row, col.email));
     if (!email.includes('@')) {
-      const fromRow = (row || []).map(cellText).find((item) => item.includes('@')) || '';
-      email = fromRow;
+      email = (row || []).map(cellText).find((item) => item.includes('@')) || '';
     }
     if (!email.includes('@')) return [];
-    return [{ nombre: named || email.split('@')[0], email, idioma: normalizeIdioma(cellText(pick(row, col.idioma))) }];
+    return [{
+      nombre: displayNameFromRow(row, col.nombre, email),
+      email,
+      idioma: idiomaFromRow(row, col.idioma),
+    }];
   });
 }
 

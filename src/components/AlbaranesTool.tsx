@@ -476,15 +476,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
       return;
     }
     const result = mergeAgentEmails(state, contacts);
-    void persist({
+    const next = reapplyRulesToLatestCarga({
       ...result.state,
       emailsFileName: fileName,
       emailsLoadedAt: nowIso(),
-    }, backend);
-    const missing = agentEmailIncidents(result.state).length;
+    });
+    void persist(next, backend);
+    const missing = agentEmailIncidents(next).length;
     setAck({
       title: 'Correos cruzados',
-      message: `He emparejado ${formatInt(result.matched)} agentes con email.${missing ? ` ${formatInt(missing)} agentes siguen sin correo: salen en Incidencias.` : ''}${result.unmatched.length ? ` Sin cruce del Excel: ${result.unmatched.slice(0, 8).join(', ')}.` : ''}`,
+      message: `He emparejado ${formatInt(result.matched)} agentes con email.${result.created ? ` He dado de alta ${formatInt(result.created)} nuevos.` : ''}${missing ? ` ${formatInt(missing)} agentes siguen sin correo: salen en Incidencias.` : ''}${result.unmatched.length ? ` Sin cruce del Excel: ${result.unmatched.slice(0, 8).join(', ')}.` : ''} Acciones ya usa estos correos, no hace falta volver a subir el CSV.`,
     });
   };
 
@@ -507,7 +508,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
         return { ...item, idAgente: byId?.id || byErp?.id || item.idAgente };
       });
     }
-    void persist({ ...state, agents: nextAgents, colectivos: nextColectivos }, backend);
+    void persist(reapplyRulesToLatestCarga({ ...state, agents: nextAgents, colectivos: nextColectivos }), backend);
     setAck({
       title: 'Directorio actualizado',
       message: `${nextAgents.length} agentes y ${nextColectivos.length} colectivos.`,
@@ -1149,7 +1150,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
           {dirTab === 'agentes' ? (
             <AgentTable
               agents={state.agents}
-              onChange={(agents) => void persist({ ...state, agents }, backend)}
+              onChange={(agents) => void persist(reapplyRulesToLatestCarga({ ...state, agents }), backend)}
             />
           ) : (
             <ColectivoTable
