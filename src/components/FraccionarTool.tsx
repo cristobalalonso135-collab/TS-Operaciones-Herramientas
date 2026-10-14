@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
@@ -14,8 +14,23 @@ import {
   parseDataSheet,
   type FraccionarRow,
 } from '@/lib/fraccionar-excel';
-import { formatInt } from '@/lib/albaranes-model';
+import {
+  emptyFraccionarState,
+  historyZonaMatrix,
+  sameFraccionarPhoto,
+  snapshotFraccionarCarga,
+  upsertFraccionarCarga,
+  type FraccionarState,
+} from '@/lib/fraccionar-model';
+import { loadFraccionarState, saveFraccionarState, type FraccionarBackend } from '@/lib/fraccionar-store';
+import { formatInt, formatIsoDate } from '@/lib/albaranes-model';
 import { Download, Search } from 'lucide-react';
+
+const TABS = [
+  { id: 'carga', label: 'Carga' },
+  { id: 'historico', label: 'Histórico' },
+] as const;
+type TabId = (typeof TABS)[number]['id'];
 
 const COL_WIDTHS_KEY = 'fraccionar-col-widths-v2';
 
@@ -66,6 +81,7 @@ function Kpi({ label, value, hint }: { label: string; value: string | number; hi
 }
 
 export default function FraccionarTool({ onBack }: { onBack: () => void }) {
+  const [tab, setTab] = useState<TabId>('carga');
   const [albaranesRows, setAlbaranesRows] = useState<ReturnType<typeof parseAlbaranesForFraccionar>>([]);
   const [colectivosRows, setColectivosRows] = useState<ReturnType<typeof parseColectivosForFraccionar>>([]);
   const [dataRows, setDataRows] = useState<ReturnType<typeof parseDataSheet>>([]);
@@ -76,11 +92,41 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
   const [onlyIssues, setOnlyIssues] = useState(false);
   const [ack, setAck] = useState<string | null>(null);
   const [colWidths, setColWidths] = useState<Record<string, number>>(defaultFraccionarColumnWidths);
+  const [state, setState] = useState<FraccionarState>(emptyFraccionarState);
+  const [backend, setBackend] = useState<FraccionarBackend>('local');
+  const [hydrated, setHydrated] = useState(false);
+  const [histMetric, setHistMetric] = useState<'count' | 'liberables'>('count');
   const colWidthsRef = useRef(colWidths);
   colWidthsRef.current = colWidths;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const persist = useCallback(async (next: FraccionarState, currentBackend: FraccionarBackend) => {
+    setState(next);
+    try {
+      await saveFraccionarState(next, currentBackend);
+    } catch {
+      /* local already written inside save */
+    }
+  }, []);
 
   useEffect(() => {
     setColWidths(loadColumnWidths());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadFraccionarState()
+      .then((result) => {
+        if (cancelled) return;
+        setState(result.state);
+        setBackend(result.backend);
+        setHydrated(true);
+      })
+      .catch(() => {
+        if (!cancelled) setHydrated(true);
+      });
+    return () => { cancelled = true; };
   }, []);
 
   const joined = useMemo(
@@ -105,6 +151,16 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
 
   const ready = dataRows.length > 0 && albaranesRows.length > 0 && colectivosRows.length > 0;
   const tableWidth = FRACCIONAR_VIEW_COLUMNS.reduce((sum, col) => sum + (colWidths[col.key] ?? col.width), 0);
+  const history = useMemo(() => historyZonaMatrix(state), [state]);
+
+  useEffect(() => {
+    if (!hydrated || !dataRows.length) return;
+    const carga = snapshotFraccionarCarga(dataRows, joined, dataName);
+    const current = stateRef.current;
+    const existing = current.cargas.find((item) => item.loadDate === carga.loadDate);
+    if (existing && sameFraccionarPhoto(existing, carga)) return;
+    void persist(upsertFraccionarCarga(current, carga), backend);
+  }, [backend, dataName, dataRows, hydrated, joined, persist]);
 
   const resizeColumn = (key: string, event: ReactMouseEvent) => {
     const spec = FRACCIONAR_COLUMNS.find((col) => col.key === key);
@@ -136,9 +192,11 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="space-y-4">
-      <WorkspaceChrome onBack={onBack} tabs={[{ id: 'carga', label: 'Fraccionar' }]} active="carga" onSelect={() => {}} />
+      <WorkspaceChrome onBack={onBack} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
+      {tab === 'carga' && (
+      <>
       <p className="text-sm text-[var(--text-secondary)]">
-        Sube Data, Albaranes y Colectivos. El Id de Data se cruza con Albaranes para traer el número de albarán y el código del colectivo; con ese código salen el nombre y el agente.
+        Sube Data, Albaranes y Colectivos. El Id de Data se cruza con Albaranes para traer el número de albarán y el código del colectivo; con ese código salen el nombre y el agente. Cada subida deja foto en Histórico por zona.
       </p>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-3">
@@ -310,6 +368,97 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
           Sube los tres ficheros. Con Data y Albaranes ya se ve el cruce; Colectivos completa nombre y agente.
         </p>
       ) : null}
+      </>
+      )}
+
+      {tab === 'historico' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-sm text-[var(--text-secondary)]">
+                Filas = zona. Columnas = día de subida. Si hay varias cargas el mismo día, cuenta la última.
+              </p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                {formatInt(history.dates.length)} {history.dates.length === 1 ? 'día' : 'días'} con foto de albaranes fraccionables.
+              </p>
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-1">
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold ${histMetric === 'count' ? 'bg-[var(--text-primary)] text-white' : ''}`}
+                onClick={() => setHistMetric('count')}
+              >
+                Nº albaranes
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold ${histMetric === 'liberables' ? 'bg-[var(--text-primary)] text-white' : ''}`}
+                onClick={() => setHistMetric('liberables')}
+              >
+                Uds liberables
+              </button>
+            </div>
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-md border border-[var(--border)] px-3 py-2 text-xs font-semibold"
+              onClick={() => {
+                const header = ['Zona', ...history.dates.map((date) => formatIsoDate(date)), 'Total'];
+                const rows = history.rows.map((row) => {
+                  const cells = row.values.map((item) => (histMetric === 'count' ? item.count : item.udsLiberables));
+                  const total = cells.reduce((sum, item) => sum + item, 0);
+                  return [row.zona, ...cells, total];
+                });
+                const totalRow = [
+                  'Total',
+                  ...history.totals.map((item) => (histMetric === 'count' ? item.count : item.udsLiberables)),
+                  history.totals.reduce((sum, item) => sum + (histMetric === 'count' ? item.count : item.udsLiberables), 0),
+                ];
+                downloadAoa([header, ...rows, totalRow], `fraccionar_historico_${histMetric}.xlsx`);
+              }}
+            >
+              <Download className="h-3.5 w-3.5" /> Excel
+            </button>
+          </div>
+          {history.dates.length === 0 ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Aún no hay fotos. Sube Data en Carga para dejar el recuento del día por zona.
+            </p>
+          ) : (
+            <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+              <table className="min-w-full text-left text-xs">
+                <thead className="bg-[var(--bg-soft)] uppercase tracking-wide text-[var(--text-muted)]">
+                  <tr>
+                    <th className="sticky left-0 z-20 whitespace-nowrap bg-[var(--bg-soft)] px-3 py-2 font-semibold">Zona</th>
+                    {history.dates.map((date) => (
+                      <th key={date} className="whitespace-nowrap px-2 py-2 text-right font-semibold">{formatIsoDate(date)}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.rows.map((row) => (
+                    <tr key={row.zona} className="border-t border-[var(--border)]">
+                      <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2 font-medium">{row.zona}</td>
+                      {row.values.map((item, index) => (
+                        <td key={`${row.zona}-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
+                          {formatInt(histMetric === 'count' ? item.count : item.udsLiberables)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-[var(--border)] font-semibold">
+                    <td className="sticky left-0 z-10 whitespace-nowrap bg-[var(--bg-card)] px-3 py-2">Total</td>
+                    {history.totals.map((item, index) => (
+                      <td key={`total-${history.dates[index]}`} className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
+                        {formatInt(histMetric === 'count' ? item.count : item.udsLiberables)}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
