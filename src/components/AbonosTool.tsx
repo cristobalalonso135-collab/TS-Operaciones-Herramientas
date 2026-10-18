@@ -86,7 +86,8 @@ type SortKey =
   | 'receivedTotal'
   | 'pending'
   | 'status'
-  | 'comment';
+  | 'comment'
+  | 'attachments';
 
 const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
 
@@ -102,10 +103,11 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'pending', label: 'Importe pendiente', width: 118 },
   { key: 'status', label: 'Estado', width: 140 },
   { key: 'comment', label: 'Comentario', width: 180 },
+  { key: 'attachments', label: 'Adjuntos', width: 80 },
   { key: 'responsible', label: 'Responsable', width: 108 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v8';
+const COL_STORAGE = 'ts-abonos-cols-v9';
 const BLANK = '__blank__';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
@@ -179,6 +181,10 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
       return <StatusPill row={row} />;
     case 'comment':
       return displayDash(row.comment);
+    case 'attachments': {
+      const count = (row.attachments || []).length;
+      return count > 0 ? String(count) : '—';
+    }
     default:
       return null;
   }
@@ -201,6 +207,7 @@ const emptyFilters = {
   duePeriod: '',
   dueFrom: '',
   dueTo: '',
+  attachments: '',
   addedBy: '',
   responsible: '',
   source: '',
@@ -620,6 +627,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
       if (filters.source && !matchesFilter(filters.source, row.source)) return false;
       if (filters.amountMode && !matchesFilter(filters.amountMode, row.amountModeResolved)) return false;
+      if (filters.attachments === 'Sí' && (row.attachments || []).length === 0) return false;
+      if (filters.attachments === 'No' && (row.attachments || []).length > 0) return false;
       if (filters.duePeriod && !matchesDuePeriod(row.dueDate || '', filters.duePeriod, todayIso())) return false;
       if (!matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
       if (search) {
@@ -641,6 +650,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (sort.key === 'amountMode') {
         const result = a.amountModeResolved.localeCompare(b.amountModeResolved, 'es');
         return sort.dir === 'asc' ? result : -result;
+      }
+      if (sort.key === 'attachments') {
+        const left = (a.attachments || []).length;
+        const right = (b.attachments || []).length;
+        return sort.dir === 'asc' ? left - right : right - left;
       }
       const left = a[sort.key];
       const right = b[sort.key];
@@ -1356,6 +1370,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterSelect value={filters.amountMode} options={[...ABONO_AMOUNT_MODES]} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
+            <FilterSelect value={filters.attachments} options={['Sí', 'No']} placeholder="Adjuntos" onChange={(attachments) => setFilters({ ...filters, attachments })} />
             <FilterSelect value={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
             <label className="flex h-10 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white">
               <span className="shrink-0 px-2 text-[11px] text-[var(--text-muted)]">Desde</span>
