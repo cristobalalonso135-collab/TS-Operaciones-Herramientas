@@ -13,6 +13,7 @@ import {
   excessAmount,
   normalizeAttachments,
   receivedTotalFor,
+  resolveManualStatus,
   shortPersonName,
   type AbonosCatalogs,
   type AbonosState,
@@ -65,6 +66,7 @@ function seedState(state: AbonosState): AbonosState {
     const received = receivedTotalFor(row.id, receipts);
     const estimated = typeof row.estimated === 'boolean' ? row.estimated : status === 'A cuenta';
     if (estimated && received > 0.009) status = 'A cuenta';
+    else if (status === 'Exceso') status = resolveManualStatus(status, row.expectedAmount, received, estimated);
     else if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) status = 'Exceso';
     return {
       ...row,

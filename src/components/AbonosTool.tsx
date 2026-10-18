@@ -926,6 +926,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received, estimated);
     const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus, estimated } : row);
     await persist({ ...state, receipts, cases }, backend);
+    setEditing({ ...editing, status: nextStatus, estimated });
+    setForm((current) => ({ ...current, status: nextStatus, estimated }));
   };
 
   const saveTerm = async () => {
