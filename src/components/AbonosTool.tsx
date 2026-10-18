@@ -197,12 +197,52 @@ const emptyFilters = {
   teamMotivo: '',
   origin: '',
   status: '',
-  year: '',
+  amountMode: '',
+  duePeriod: '',
+  dueFrom: '',
+  dueTo: '',
   addedBy: '',
   responsible: '',
   source: '',
   search: '',
 };
+
+const MONTHS_SHORT_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+function monthLabel(yearMonth: string): string {
+  const [year, month] = yearMonth.split('-');
+  const index = Number(month) - 1;
+  if (!year || Number.isNaN(index) || index < 0 || index > 11) return yearMonth;
+  return `${MONTHS_SHORT_ES[index]} ${year}`;
+}
+
+function matchesDuePeriod(dueDate: string, period: string, today: string): boolean {
+  if (!period) return true;
+  if (period === BLANK) return !dueDate.trim();
+  if (!dueDate) return false;
+  if (period === 'overdue') return dueDate < today;
+  if (period === 'next30') {
+    const end = addDaysIso(today, 30);
+    return dueDate >= today && dueDate <= end;
+  }
+  if (period.startsWith('year:')) return dueDate.startsWith(period.slice(5));
+  if (period.startsWith('month:')) return dueDate.startsWith(period.slice(6));
+  if (period.startsWith('h1:')) {
+    const year = period.slice(3);
+    return dueDate >= `${year}-01-01` && dueDate <= `${year}-06-30`;
+  }
+  if (period.startsWith('h2:')) {
+    const year = period.slice(3);
+    return dueDate >= `${year}-07-01` && dueDate <= `${year}-12-31`;
+  }
+  return true;
+}
+
+function matchesDueRange(dueDate: string, from: string, to: string): boolean {
+  if (from && (!dueDate || dueDate < from)) return false;
+  if (to && (!dueDate || dueDate > to)) return false;
+  return true;
+}
 
 const emptyForm = (): Partial<AbonoCase> => ({
   addedBy: DEFAULT_NEW_AUTHOR,
@@ -579,7 +619,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.addedBy && !matchesPersonFilter(filters.addedBy, row.addedBy)) return false;
       if (filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
       if (filters.source && !matchesFilter(filters.source, row.source)) return false;
-      if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
+      if (filters.amountMode && !matchesFilter(filters.amountMode, row.amountModeResolved)) return false;
+      if (filters.duePeriod && !matchesDuePeriod(row.dueDate || '', filters.duePeriod, todayIso())) return false;
+      if (!matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
       if (search) {
         const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible, row.amountModeResolved, row.amountConditionResolved].join(' ').toLocaleLowerCase('es');
         if (!blob.includes(search)) return false;
@@ -660,8 +702,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const addedBy = uniquePresent(computed.map((row) => shortPersonName(row.addedBy)));
     const responsibles = uniquePresent(computed.map((row) => shortPersonName(row.responsible)));
     const sources = uniquePresent(computed.map((row) => row.source));
-    const years = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
-    return { brands, types, areas, teams, origins, statuses, addedBy, responsibles, sources, years };
+    const modes = uniquePresent(computed.map((row) => row.amountModeResolved));
+    const yearParts = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
+    const months = Array.from(new Set(computed.map((row) => (row.dueDate || '').slice(0, 7)).filter((value) => value.length === 7))).sort().reverse();
+    const periods: Array<{ value: string; label: string }> = [
+      { value: 'overdue', label: 'Vencidos' },
+      { value: 'next30', label: 'Próximos 30 días' },
+      ...yearParts.options.slice().sort().reverse().flatMap((year) => [
+        { value: `year:${year}`, label: `Año ${year}` },
+        { value: `h1:${year}`, label: `H1 ${year}` },
+        { value: `h2:${year}`, label: `H2 ${year}` },
+      ]),
+      ...months.map((month) => ({ value: `month:${month}`, label: monthLabel(month) })),
+    ];
+    return { brands, types, areas, teams, origins, statuses, addedBy, responsibles, sources, modes, periods, datesBlank: yearParts.hasBlank };
   }, [computed]);
 
   if (!state) {
@@ -1301,7 +1355,26 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
             <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
-            <FilterSelect value={filters.year} options={filterOptions.years.options} includeBlank={filterOptions.years.hasBlank} placeholder="Año" onChange={(year) => setFilters({ ...filters, year })} />
+            <FilterSelect value={filters.amountMode} options={[...ABONO_AMOUNT_MODES]} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
+            <FilterSelect value={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
+            <label className="flex h-10 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white">
+              <span className="shrink-0 px-2 text-[11px] text-[var(--text-muted)]">Desde</span>
+              <input
+                type="date"
+                value={filters.dueFrom}
+                onChange={(event) => setFilters({ ...filters, dueFrom: event.target.value })}
+                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none"
+              />
+            </label>
+            <label className="flex h-10 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white">
+              <span className="shrink-0 px-2 text-[11px] text-[var(--text-muted)]">Hasta</span>
+              <input
+                type="date"
+                value={filters.dueTo}
+                onChange={(event) => setFilters({ ...filters, dueTo: event.target.value })}
+                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none"
+              />
+            </label>
             <FilterSelect value={filters.addedBy} options={filterOptions.addedBy.options} includeBlank={filterOptions.addedBy.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
             <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
             <FilterSelect value={filters.source} options={filterOptions.sources.options} includeBlank={filterOptions.sources.hasBlank} placeholder="Canal" onChange={(source) => setFilters({ ...filters, source })} />
@@ -2137,16 +2210,17 @@ function FilterSelect({
   includeBlank,
 }: {
   value: string;
-  options: string[];
+  options: Array<string | { value: string; label: string }>;
   placeholder: string;
   onChange: (value: string) => void;
   includeBlank?: boolean;
 }) {
+  const items = options.map((option) => (typeof option === 'string' ? { value: option, label: option } : option));
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
       <option value="">{placeholder}</option>
       {includeBlank && <option value={BLANK}>—</option>}
-      {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      {items.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
   );
 }
