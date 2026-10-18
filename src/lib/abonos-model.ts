@@ -350,6 +350,8 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     overdueDays: overdue && row.dueDate ? daysBetween(row.dueDate, today) : null,
     reviewOverdue,
     tradeTermName: term?.name ?? null,
+    estimated: amount.mode === 'Variable',
+    amountMode: amount.mode,
     amountModeResolved: amount.mode,
     amountConditionResolved: amount.condition,
     ...payments,
@@ -417,8 +419,8 @@ export function asStatus(value: string): AbonoStatus | '' {
 export function asEstimated(value: unknown): boolean | null {
   const text = String(value ?? '').trim().toLocaleLowerCase('es');
   if (!text) return null;
-  if (text === 'real' || text === 'cerrado' || text === 'definitivo' || text === 'no' || text === 'false' || text === '0') return false;
-  if (text === 'estimado' || text === 'estimada' || text === 'a cuenta' || text === 'sí' || text === 'si' || text === 'true' || text === '1' || text === 'yes') return true;
+  if (text === 'real' || text === 'cerrado' || text === 'definitivo' || text === 'fijo' || text === 'fixed' || text === 'no' || text === 'false' || text === '0') return false;
+  if (text === 'estimado' || text === 'estimada' || text === 'a cuenta' || text === 'variable' || text === 'condicionado' || text === 'sí' || text === 'si' || text === 'true' || text === '1' || text === 'yes') return true;
   return null;
 }
 
@@ -442,15 +444,15 @@ export function looksVariableCompensation(value: string | null | undefined): boo
 }
 
 export function resolveAmountDetails(
-  row: Pick<AbonoCase, 'amountMode' | 'amountCondition'>,
+  row: Pick<AbonoCase, 'amountMode' | 'amountCondition' | 'estimated' | 'status'>,
   term: TradeTerm | null,
 ): { mode: AbonoAmountMode; condition: string } {
-  const storedMode = asAmountMode(row.amountMode);
   const storedCondition = String(row.amountCondition || '').trim();
-  if (storedMode === 'Fijo') return { mode: 'Fijo', condition: storedCondition };
-  if (storedMode === 'Variable') {
+  const declared = declaredAmountMode(row);
+  if (declared === 'Variable') {
     return { mode: 'Variable', condition: storedCondition || term?.triggerText || term?.name || '' };
   }
+  if (declared === 'Fijo') return { mode: 'Fijo', condition: storedCondition };
   if (term && looksVariableCompensation(term.compensation)) {
     return { mode: 'Variable', condition: storedCondition || term.triggerText || term.name };
   }
@@ -462,6 +464,29 @@ export function hintsFromTradeTerm(term: TradeTerm): { amountMode: AbonoAmountMo
     return { amountMode: 'Variable', amountCondition: term.triggerText || term.name };
   }
   return { amountMode: 'Fijo', amountCondition: '' };
+}
+
+export function declaredAmountMode(row: {
+  amountMode?: unknown;
+  estimated?: boolean | null;
+  status?: string | null;
+}): AbonoAmountMode | '' {
+  const storedMode = asAmountMode(row.amountMode);
+  if (storedMode) return storedMode === 'Fijo' && (row.estimated === true || asStatus(String(row.status || '')) === 'A cuenta')
+    ? 'Variable'
+    : storedMode;
+  if (row.estimated === true || asStatus(String(row.status || '')) === 'A cuenta') return 'Variable';
+  if (row.estimated === false) return 'Fijo';
+  return '';
+}
+
+export function syncAmountEstimate(row: {
+  amountMode?: unknown;
+  estimated?: boolean | null;
+  status?: string | null;
+}): { amountMode: AbonoAmountMode; estimated: boolean } {
+  const amountMode = declaredAmountMode(row) || 'Fijo';
+  return { amountMode, estimated: amountMode === 'Variable' };
 }
 
 export function abonoRequiredGaps(row: {
@@ -477,6 +502,7 @@ export function abonoRequiredGaps(row: {
   informedBy?: string | null;
   status?: string | null;
   estimated?: boolean | null;
+  amountMode?: string | null;
   origin?: string | null;
   tradeTermId?: string | null;
 }): string[] {
@@ -486,7 +512,7 @@ export function abonoRequiredGaps(row: {
   if (!String(row.teamMotivo || '').trim()) gaps.push('Equipo');
   if (!String(row.type || '').trim()) gaps.push('Tipo');
   if (row.expectedAmount === null || row.expectedAmount === undefined || !Number.isFinite(row.expectedAmount)) gaps.push('Importe previsto');
-  if (row.estimated !== true && row.estimated !== false) gaps.push('Real o estimado');
+  if (!declaredAmountMode({ amountMode: row.amountMode, estimated: row.estimated, status: row.status })) gaps.push('Cálculo');
   if (!String(row.dueDate || '').trim()) gaps.push('Fecha prevista');
   if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
   if (!String(row.responsible || '').trim()) gaps.push('Responsable');
@@ -817,8 +843,9 @@ export function abonosNeedRewrite(state: Pick<AbonosState, 'cases' | 'receipts'>
   const receipts = state.receipts || [];
   return state.cases.some((row) => {
     const received = receivedTotalFor(row.id, receipts);
-    if (typeof row.estimated !== 'boolean') return true;
-    if (row.estimated === true && received > 0.009 && asStatus(row.status) !== 'A cuenta') return true;
+    const synced = syncAmountEstimate(row);
+    if (asAmountMode(row.amountMode) !== synced.amountMode || row.estimated !== synced.estimated) return true;
+    if (synced.estimated && received > 0.009 && asStatus(row.status) !== 'A cuenta') return true;
     const stored = asStatus(row.status);
     if (stored === 'Exceso') {
       return stored !== resolveManualStatus(stored, row.expectedAmount, received, row.estimated === true);

@@ -5,7 +5,6 @@ import {
   EMPTY_ABONOS_STATE,
   EMPTY_CATALOGS,
   mergeCatalog,
-  asAmountMode,
   asOrigin,
   asSource,
   asStatus,
@@ -14,6 +13,7 @@ import {
   normalizeAttachments,
   receivedTotalFor,
   resolveManualStatus,
+  syncAmountEstimate,
   shortPersonName,
   type AbonosCatalogs,
   type AbonosState,
@@ -64,7 +64,12 @@ function seedState(state: AbonosState): AbonosState {
     const responsible = shortPersonName(row.responsible || row.addedBy);
     let status: AbonosState['cases'][number]['status'] = asStatus(row.status) || (isPablo(responsible) ? '' : 'Pendiente');
     const received = receivedTotalFor(row.id, receipts);
-    const estimated = typeof row.estimated === 'boolean' ? row.estimated : status === 'A cuenta';
+    const synced = syncAmountEstimate({
+      amountMode: row.amountMode,
+      estimated: typeof row.estimated === 'boolean' ? row.estimated : null,
+      status,
+    });
+    const estimated = synced.estimated;
     if (estimated && received > 0.009) status = 'A cuenta';
     else if (status === 'Exceso') status = resolveManualStatus(status, row.expectedAmount, received, estimated);
     else if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) status = 'Exceso';
@@ -78,7 +83,7 @@ function seedState(state: AbonosState): AbonosState {
       informedBy: String(row.informedBy || '').trim(),
       attachments: normalizeAttachments(row.attachments),
       estimated,
-      amountMode: asAmountMode(row.amountMode),
+      amountMode: synced.amountMode,
       amountCondition: String(row.amountCondition || '').trim(),
       status,
       communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,

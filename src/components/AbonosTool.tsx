@@ -7,7 +7,6 @@ import {
   ABONO_ORIGINS,
   ABONO_SOURCES,
   ABONO_STATUSES,
-  ABONO_AMOUNT_KINDS,
   ABONO_AMOUNT_MODES,
   ABONOS_PEOPLE,
   addDaysIso,
@@ -222,7 +221,7 @@ const emptyForm = (): Partial<AbonoCase> => ({
   status: 'Pendiente',
   nextReview: '',
   comment: '',
-  estimated: null,
+  estimated: false,
   amountMode: 'Fijo',
   amountCondition: '',
   attachments: [],
@@ -686,11 +685,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const openNewFromTerm = (term: TradeTerm) => {
+    const hints = hintsFromTradeTerm(term);
     openNew({
       brand: term.brand,
       origin: 'Acuerdo',
       tradeTermId: term.id,
-      ...hintsFromTradeTerm(term),
+      ...hints,
+      estimated: hints.amountMode === 'Variable',
     }, true);
   };
 
@@ -713,7 +714,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       dueDate: row.dueDate || '',
       nextReview: row.nextReview || '',
       attachments: row.attachments || [],
-      estimated: typeof row.estimated === 'boolean' ? row.estimated : null,
+      estimated: amount.mode === 'Variable',
       amountMode: row.amountMode || amount.mode,
       amountCondition: row.amountCondition || amount.condition,
     });
@@ -772,7 +773,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       source: form.source,
       informedBy: form.informedBy,
       status: form.status,
-      estimated: typeof form.estimated === 'boolean' ? form.estimated : null,
+      estimated: form.amountMode === 'Variable',
+      amountMode: form.amountMode,
       origin: form.origin || '',
       tradeTermId: form.tradeTermId || null,
     });
@@ -785,7 +787,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       return;
     }
     setError(null);
-    const estimated = form.estimated === true;
+    const estimated = form.amountMode === 'Variable';
     const received = editing
       ? receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0)
       : 0;
@@ -907,7 +909,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     };
     const receipts = [...state.receipts, receipt];
     const received = receipts.filter((item) => item.caseId === editing.id).reduce((sum, item) => sum + item.amount, 0);
-    const estimated = form.estimated === true;
+    const estimated = form.amountMode === 'Variable';
     const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received, estimated);
     const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus, estimated } : row);
     await persist({ ...state, receipts, cases }, backend);
@@ -922,7 +924,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     if (!editing) return;
     const receipts = state.receipts.filter((row) => row.id !== id);
     const received = receipts.filter((item) => item.caseId === editing.id).reduce((sum, item) => sum + item.amount, 0);
-    const estimated = form.estimated === true;
+    const estimated = form.amountMode === 'Variable';
     const nextStatus = statusAfterReceipts(editing.status, editing.expectedAmount, received, estimated);
     const cases = state.cases.map((row) => row.id === editing.id ? { ...row, status: nextStatus, estimated } : row);
     await persist({ ...state, receipts, cases }, backend);
@@ -1769,38 +1771,30 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   />
                 </label>
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Real o estimado *</span>
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Cálculo del importe *</span>
                   <select
-                    value={form.estimated === true ? 'Estimado' : form.estimated === false ? 'Real' : ''}
+                    value={form.amountMode || ''}
                     onChange={(event) => {
-                      const estimated = event.target.value === 'Estimado' ? true : event.target.value === 'Real' ? false : null;
+                      const amountMode = event.target.value as AbonoAmountMode | '';
+                      const estimated = amountMode === 'Variable';
                       const received = currentComputed?.receivedTotal ?? 0;
                       setForm({
                         ...form,
+                        amountMode,
                         estimated,
-                        status: estimated === null
-                          ? form.status
-                          : statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated),
+                        amountCondition: amountMode === 'Variable' ? form.amountCondition : '',
+                        status: amountMode
+                          ? statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated)
+                          : form.status,
                       });
                     }}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  >
-                    <option value="">—</option>
-                    {ABONO_AMOUNT_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Cálculo del importe</span>
-                  <select
-                    value={form.amountMode || ''}
-                    onChange={(event) => setForm({ ...form, amountMode: event.target.value as AbonoAmountMode | '' })}
                     className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                   >
                     <option value="">—</option>
                     {ABONO_AMOUNT_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
                   </select>
                   <p className="text-[11px] text-[var(--text-muted)]">
-                    Fijo es un euro cerrado. Variable depende de una condición (un %, market share, data sharing…).
+                    Fijo es un euro cerrado. Variable aún puede moverse (un %, escalado, market share…); si entra dinero queda a cuenta.
                   </p>
                 </label>
                 {form.amountMode === 'Variable' && (
@@ -1835,6 +1829,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         tradeTermId: origin === 'Acuerdo' ? form.tradeTermId : null,
                         amountMode: origin === 'Puntual' ? 'Fijo' : form.amountMode,
                         amountCondition: origin === 'Puntual' ? '' : form.amountCondition,
+                        estimated: origin === 'Puntual' ? false : form.estimated,
                       });
                     }}
                     className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
@@ -1852,7 +1847,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         const tradeTermId = event.target.value || null;
                         const term = brandTerms.find((item) => item.id === tradeTermId);
                         const hints = term ? hintsFromTradeTerm(term) : { amountMode: form.amountMode, amountCondition: form.amountCondition };
-                        setForm({ ...form, tradeTermId, amountMode: hints.amountMode, amountCondition: hints.amountCondition });
+                        setForm({
+                          ...form,
+                          tradeTermId,
+                          amountMode: hints.amountMode,
+                          amountCondition: hints.amountCondition,
+                          estimated: hints.amountMode === 'Variable',
+                        });
                       }}
                       className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                     >
@@ -1973,8 +1974,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     value={form.status || ''}
                     onChange={(event) => {
                       const status = event.target.value as AbonoStatus | '';
-                      const estimated = status === 'A cuenta' ? true : form.estimated;
-                      setForm({ ...form, status, estimated });
+                      const estimated = status === 'A cuenta' ? true : form.amountMode === 'Variable';
+                      const amountMode = status === 'A cuenta' ? 'Variable' : form.amountMode;
+                      setForm({ ...form, status, estimated, amountMode });
                       if (!editing || !state) return;
                       const received = receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0);
                       const nextStatus = resolveManualStatus(
@@ -1984,9 +1986,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         estimated === true,
                       );
                       const cases = state.cases.map((row) => (
-                        row.id === editing.id ? { ...row, status: nextStatus, estimated: estimated === true } : row
+                        row.id === editing.id ? { ...row, status: nextStatus, estimated: estimated === true, amountMode: amountMode || row.amountMode } : row
                       ));
-                      setEditing({ ...editing, status: nextStatus, estimated: estimated === true });
+                      setEditing({ ...editing, status: nextStatus, estimated: estimated === true, amountMode: amountMode || editing.amountMode });
                       setPanelNote('Estado guardado.');
                       void persist({ ...state, cases }, backend);
                     }}
