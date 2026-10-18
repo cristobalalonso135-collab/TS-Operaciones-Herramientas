@@ -98,7 +98,7 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'area', label: 'Área', width: 108 },
   { key: 'teamMotivo', label: 'Equipo', width: 150 },
   { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
-  { key: 'amountMode', label: 'Cálculo', width: 168 },
+  { key: 'amountMode', label: 'Cálculo', width: 96 },
   { key: 'receivedTotal', label: 'Importe liquidado', width: 118 },
   { key: 'pending', label: 'Importe pendiente', width: 118 },
   { key: 'status', label: 'Estado', width: 140 },
@@ -106,7 +106,7 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'responsible', label: 'Responsable', width: 108 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v7';
+const COL_STORAGE = 'ts-abonos-cols-v8';
 const BLANK = '__blank__';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
@@ -171,14 +171,7 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
     case 'expectedAmount':
       return formatMoney(row.expectedAmount);
     case 'amountMode':
-      return (
-        <span className="block min-w-0">
-          <span className="font-medium">{row.amountModeResolved}</span>
-          {row.amountModeResolved === 'Variable' && row.amountConditionResolved ? (
-            <span className="mt-0.5 block text-[10px] font-normal leading-snug text-[var(--text-secondary)]">{row.amountConditionResolved}</span>
-          ) : null}
-        </span>
-      );
+      return row.amountModeResolved;
     case 'receivedTotal':
       return formatMoney(row.receivedTotal);
     case 'pending':
@@ -605,9 +598,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
       }
       if (sort.key === 'amountMode') {
-        const left = `${a.amountModeResolved} ${a.amountConditionResolved}`;
-        const right = `${b.amountModeResolved} ${b.amountConditionResolved}`;
-        const result = left.localeCompare(right, 'es');
+        const result = a.amountModeResolved.localeCompare(b.amountModeResolved, 'es');
         return sort.dir === 'asc' ? result : -result;
       }
       const left = a[sort.key];
@@ -1417,7 +1408,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       >
                         <div
                           className="abonos-cell"
-                          title={key === 'comment' ? row.comment || undefined : key === 'amountMode' ? row.amountConditionResolved || row.amountModeResolved : undefined}
+                          title={key === 'comment' ? row.comment || undefined : undefined}
                         >
                           {renderAbonoCell(row, key)}
                         </div>
