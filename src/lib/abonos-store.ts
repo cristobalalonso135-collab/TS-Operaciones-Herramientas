@@ -5,6 +5,7 @@ import {
   EMPTY_ABONOS_STATE,
   EMPTY_CATALOGS,
   mergeCatalog,
+  asAmountMode,
   asOrigin,
   asSource,
   asStatus,
@@ -75,6 +76,8 @@ function seedState(state: AbonosState): AbonosState {
       informedBy: String(row.informedBy || '').trim(),
       attachments: normalizeAttachments(row.attachments),
       estimated,
+      amountMode: asAmountMode(row.amountMode),
+      amountCondition: String(row.amountCondition || '').trim(),
       status,
       communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,
     };

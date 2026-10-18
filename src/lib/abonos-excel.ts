@@ -241,6 +241,8 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       tradeTermId: null,
       informedBy: row.informedBy,
       expectedAmount: row.expectedAmount,
+      amountMode: '',
+      amountCondition: '',
       communicatedAmount: row.communicatedAmount,
       status: importedTotal > 0
         ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
@@ -286,6 +288,8 @@ export function abonosExportRows(cases: Array<{
   informedBy: string;
   expectedAmount: number | null;
   estimated?: boolean | null;
+  amountModeResolved?: string;
+  amountConditionResolved?: string;
   communicatedAmount: number | null;
   receivedTotal: number;
   pending: number;
@@ -308,6 +312,8 @@ export function abonosExportRows(cases: Array<{
     'Persona',
     'Trade Term',
     'Importe previsto',
+    'Cálculo',
+    'Condición',
     'Real o estimado',
     'Importe comunicado',
     'Total liquidado',
@@ -331,6 +337,8 @@ export function abonosExportRows(cases: Array<{
     row.informedBy,
     row.tradeTermName || '',
     row.expectedAmount ?? '',
+    row.amountModeResolved || '',
+    row.amountConditionResolved || '',
     row.estimated === true ? 'Estimado' : 'Real',
     row.communicatedAmount ?? '',
     row.receivedTotal,

@@ -5,6 +5,7 @@ export const ABONO_ORIGINS = ['Puntual', 'Acuerdo'] as const;
 export const ABONO_SOURCES = ['Correo', 'Teams', 'Conversación', 'Excel', 'Otro'] as const;
 export const ABONO_STATUSES = ['Pendiente', 'Pago comunicado', 'Liquidado parcialmente', 'Liquidado', 'Exceso', 'A cuenta'] as const;
 export const ABONO_AMOUNT_KINDS = ['Real', 'Estimado'] as const;
+export const ABONO_AMOUNT_MODES = ['Fijo', 'Variable'] as const;
 
 export const DEFAULT_BRANDS = ['Adidas', 'Nike', 'Puma', 'Aneyron', 'Textprint'];
 export const DEFAULT_TYPES = ['VIK Cash', 'Credit Notes', 'Fee Pro Clubs', 'Dto FRA', 'Dto pedido', 'Off Invoice', 'Material gratuito', 'Otro'];
@@ -26,6 +27,7 @@ export type AbonoOrigin = (typeof ABONO_ORIGINS)[number];
 export type AbonoSource = (typeof ABONO_SOURCES)[number];
 export type AbonoStatus = (typeof ABONO_STATUSES)[number];
 export type AbonoAmountKind = (typeof ABONO_AMOUNT_KINDS)[number];
+export type AbonoAmountMode = (typeof ABONO_AMOUNT_MODES)[number];
 export type CatalogKind = 'brand' | 'type' | 'area' | 'team';
 
 export interface AbonoCase {
@@ -44,6 +46,8 @@ export interface AbonoCase {
   tradeTermId: string | null;
   informedBy: string;
   expectedAmount: number | null;
+  amountMode: AbonoAmountMode | '';
+  amountCondition: string;
   communicatedAmount: number | null;
   status: AbonoStatus | '';
   nextReview: string | null;
@@ -110,6 +114,8 @@ export interface AbonoComputed extends AbonoCase {
   overdueDays: number | null;
   reviewOverdue: boolean;
   tradeTermName: string | null;
+  amountModeResolved: AbonoAmountMode;
+  amountConditionResolved: string;
   pay1Date: string | null;
   pay1Amount: number | null;
   pay2Date: string | null;
@@ -329,6 +335,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
   const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
   const reviewOverdue = !closed && !!row.nextReview && row.nextReview <= today && (pending > 0 || row.estimated === true);
   const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
+  const amount = resolveAmountDetails(row, term);
   const payments = paymentSlots(receipts, row.id);
   return {
     ...row,
@@ -338,6 +345,8 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     overdueDays: overdue && row.dueDate ? daysBetween(row.dueDate, today) : null,
     reviewOverdue,
     tradeTermName: term?.name ?? null,
+    amountModeResolved: amount.mode,
+    amountConditionResolved: amount.condition,
     ...payments,
   };
 }
@@ -412,6 +421,42 @@ export function amountKindLabel(estimated: boolean | null | undefined): string {
   if (estimated === true) return 'Estimado';
   if (estimated === false) return 'Real';
   return '';
+}
+
+export function asAmountMode(value: unknown): AbonoAmountMode | '' {
+  const text = String(value ?? '').trim().toLocaleLowerCase('es');
+  if (text === 'fijo' || text === 'fixed' || text === 'cerrado') return 'Fijo';
+  if (text === 'variable' || text === 'condicionado' || text === '%') return 'Variable';
+  return '';
+}
+
+export function looksVariableCompensation(value: string | null | undefined): boolean {
+  const text = String(value ?? '').trim();
+  if (!text) return false;
+  return /%|nsi|sobre\s|en función|en funcion/i.test(text);
+}
+
+export function resolveAmountDetails(
+  row: Pick<AbonoCase, 'amountMode' | 'amountCondition'>,
+  term: TradeTerm | null,
+): { mode: AbonoAmountMode; condition: string } {
+  const storedMode = asAmountMode(row.amountMode);
+  const storedCondition = String(row.amountCondition || '').trim();
+  if (storedMode === 'Fijo') return { mode: 'Fijo', condition: storedCondition };
+  if (storedMode === 'Variable') {
+    return { mode: 'Variable', condition: storedCondition || term?.triggerText || term?.name || '' };
+  }
+  if (term && looksVariableCompensation(term.compensation)) {
+    return { mode: 'Variable', condition: storedCondition || term.triggerText || term.name };
+  }
+  return { mode: 'Fijo', condition: storedCondition };
+}
+
+export function hintsFromTradeTerm(term: TradeTerm): { amountMode: AbonoAmountMode; amountCondition: string } {
+  if (looksVariableCompensation(term.compensation)) {
+    return { amountMode: 'Variable', amountCondition: term.triggerText || term.name };
+  }
+  return { amountMode: 'Fijo', amountCondition: '' };
 }
 
 export function abonoRequiredGaps(row: {

@@ -8,6 +8,7 @@ import {
   ABONO_SOURCES,
   ABONO_STATUSES,
   ABONO_AMOUNT_KINDS,
+  ABONO_AMOUNT_MODES,
   ABONOS_PEOPLE,
   addDaysIso,
   abonoRequiredGaps,
@@ -16,6 +17,8 @@ import {
   DEFAULT_NEW_AUTHOR,
   displayDash,
   formatIsoDate,
+  hintsFromTradeTerm,
+  resolveAmountDetails,
   formatMoney,
   formatMoneyInput,
   formatRequiredGaps,
@@ -37,6 +40,7 @@ import {
   type AbonoAttachment,
   type AbonoCase,
   type AbonoComputed,
+  type AbonoAmountMode,
   type AbonoOrigin,
   type AbonoReceipt,
   type AbonoSource,
@@ -79,6 +83,7 @@ type SortKey =
   | 'area'
   | 'teamMotivo'
   | 'expectedAmount'
+  | 'amountMode'
   | 'receivedTotal'
   | 'pending'
   | 'status'
@@ -93,6 +98,7 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'area', label: 'Área', width: 108 },
   { key: 'teamMotivo', label: 'Equipo', width: 150 },
   { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
+  { key: 'amountMode', label: 'Cálculo', width: 168 },
   { key: 'receivedTotal', label: 'Importe liquidado', width: 118 },
   { key: 'pending', label: 'Importe pendiente', width: 118 },
   { key: 'status', label: 'Estado', width: 140 },
@@ -164,6 +170,15 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
       return displayDash(row.teamMotivo);
     case 'expectedAmount':
       return formatMoney(row.expectedAmount);
+    case 'amountMode':
+      return (
+        <span className="block min-w-0">
+          <span className="font-medium">{row.amountModeResolved}</span>
+          {row.amountModeResolved === 'Variable' && row.amountConditionResolved ? (
+            <span className="mt-0.5 block text-[10px] font-normal leading-snug text-[var(--text-secondary)]">{row.amountConditionResolved}</span>
+          ) : null}
+        </span>
+      );
     case 'receivedTotal':
       return formatMoney(row.receivedTotal);
     case 'pending':
@@ -215,6 +230,8 @@ const emptyForm = (): Partial<AbonoCase> => ({
   nextReview: '',
   comment: '',
   estimated: null,
+  amountMode: 'Fijo',
+  amountCondition: '',
   attachments: [],
 });
 
@@ -572,7 +589,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.source && !matchesFilter(filters.source, row.source)) return false;
       if (filters.year && !matchesFilter(filters.year, (row.dueDate || '').slice(0, 4))) return false;
       if (search) {
-        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible].join(' ').toLocaleLowerCase('es');
+        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible, row.amountModeResolved, row.amountConditionResolved].join(' ').toLocaleLowerCase('es');
         if (!blob.includes(search)) return false;
       }
       return true;
@@ -586,6 +603,12 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         const leftUnknown = !a.dueDate;
         const rightUnknown = !b.dueDate;
         if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
+      }
+      if (sort.key === 'amountMode') {
+        const left = `${a.amountModeResolved} ${a.amountConditionResolved}`;
+        const right = `${b.amountModeResolved} ${b.amountConditionResolved}`;
+        const result = left.localeCompare(right, 'es');
+        return sort.dir === 'asc' ? result : -result;
       }
       const left = a[sort.key];
       const right = b[sort.key];
@@ -676,6 +699,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       brand: term.brand,
       origin: 'Acuerdo',
       tradeTermId: term.id,
+      ...hintsFromTradeTerm(term),
     }, true);
   };
 
@@ -690,6 +714,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   const openEdit = (row: AbonoCase) => {
+    const term = state.tradeTerms.find((item) => item.id === row.tradeTermId) || null;
+    const amount = resolveAmountDetails(row, term);
     setEditing(row);
     setForm({
       ...row,
@@ -697,6 +723,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       nextReview: row.nextReview || '',
       attachments: row.attachments || [],
       estimated: typeof row.estimated === 'boolean' ? row.estimated : null,
+      amountMode: row.amountMode || amount.mode,
+      amountCondition: row.amountCondition || amount.condition,
     });
     setExpectedAmountText(formatMoneyInput(row.expectedAmount));
     setCommunicatedAmountText(formatMoneyInput(row.communicatedAmount));
@@ -761,6 +789,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       setError(formatRequiredGaps(gaps));
       return;
     }
+    if (form.amountMode === 'Variable' && !String(form.amountCondition || '').trim()) {
+      setError('Si el importe es variable, indica la condición.');
+      return;
+    }
     setError(null);
     const estimated = form.estimated === true;
     const received = editing
@@ -793,6 +825,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       nextReview: form.nextReview || null,
       comment: form.comment || '',
       estimated,
+      amountMode: form.amountMode === 'Variable' || form.amountMode === 'Fijo' ? form.amountMode : '',
+      amountCondition: form.amountMode === 'Variable' ? String(form.amountCondition || '').trim() : '',
       attachments: form.attachments || [],
     };
     const cases = editing
@@ -1381,7 +1415,12 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         key={key}
                         className={`border-b border-[var(--border)] px-1.5 py-1.5 ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''}`}
                       >
-                        <div className="abonos-cell" title={key === 'comment' ? row.comment || undefined : undefined}>{renderAbonoCell(row, key)}</div>
+                        <div
+                          className="abonos-cell"
+                          title={key === 'comment' ? row.comment || undefined : key === 'amountMode' ? row.amountConditionResolved || row.amountModeResolved : undefined}
+                        >
+                          {renderAbonoCell(row, key)}
+                        </div>
                       </td>
                     ))}
                   </tr>
@@ -1398,7 +1437,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
             <p className="text-sm font-semibold">Nuevo trade term</p>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Aquí viven los acuerdos. Desde cada uno generas el abono ya vinculado. Completa en la ficha el importe, si es real o estimado y el resto de campos.
+              Aquí viven los acuerdos. Desde cada uno generas el abono ya vinculado. En la ficha se marca si el importe es fijo o variable y, si es variable, la condición.
             </p>
             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               <CatalogField label="Marca" value={termForm.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setTermForm({ ...termForm, brand })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
@@ -1775,6 +1814,31 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   </select>
                 </label>
                 <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">Cálculo del importe</span>
+                  <select
+                    value={form.amountMode || ''}
+                    onChange={(event) => setForm({ ...form, amountMode: event.target.value as AbonoAmountMode | '' })}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  >
+                    <option value="">—</option>
+                    {ABONO_AMOUNT_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                  </select>
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Fijo es un euro cerrado. Variable depende de una condición (un %, market share, data sharing…).
+                  </p>
+                </label>
+                {form.amountMode === 'Variable' && (
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Condición</span>
+                    <input
+                      value={form.amountCondition || ''}
+                      onChange={(event) => setForm({ ...form, amountCondition: event.target.value })}
+                      placeholder="Market Share >40%, Data Sharing H1…"
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    />
+                  </label>
+                )}
+                <label className="block space-y-1">
                   <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
                   <input
                     type="date"
@@ -1785,7 +1849,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 </label>
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
-                  <select value={form.origin || ''} onChange={(event) => setForm({ ...form, origin: event.target.value as AbonoOrigin | '', tradeTermId: event.target.value === 'Acuerdo' ? form.tradeTermId : null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                  <select
+                    value={form.origin || ''}
+                    onChange={(event) => {
+                      const origin = event.target.value as AbonoOrigin | '';
+                      setForm({
+                        ...form,
+                        origin,
+                        tradeTermId: origin === 'Acuerdo' ? form.tradeTermId : null,
+                        amountMode: origin === 'Puntual' ? 'Fijo' : form.amountMode,
+                        amountCondition: origin === 'Puntual' ? '' : form.amountCondition,
+                      });
+                    }}
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  >
                     <option value="">—</option>
                     {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
                   </select>
@@ -1793,7 +1870,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 {form.origin === 'Acuerdo' && (
                   <label className="block space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term *</span>
-                    <select value={form.tradeTermId || ''} onChange={(event) => setForm({ ...form, tradeTermId: event.target.value || null })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                    <select
+                      value={form.tradeTermId || ''}
+                      onChange={(event) => {
+                        const tradeTermId = event.target.value || null;
+                        const term = brandTerms.find((item) => item.id === tradeTermId);
+                        const hints = term ? hintsFromTradeTerm(term) : { amountMode: form.amountMode, amountCondition: form.amountCondition };
+                        setForm({ ...form, tradeTermId, amountMode: hints.amountMode, amountCondition: hints.amountCondition });
+                      }}
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    >
                       <option value="">Selecciona</option>
                       {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
                     </select>
