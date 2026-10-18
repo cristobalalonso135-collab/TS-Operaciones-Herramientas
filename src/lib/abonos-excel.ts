@@ -67,7 +67,7 @@ export interface ImportPreviewRow {
 const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   registro: ['registro', 'id', 'nº', 'n°'],
   dueDate: ['fecha prevista', 'fecha'],
-  brand: ['empresa', 'marca'],
+  brand: ['marca', 'empresa'],
   type: ['tipo'],
   teamMotivo: ['equipo/motivo', 'equipo / motivo', 'equipo', 'motivo'],
   area: ['área', 'area'],
@@ -303,7 +303,7 @@ export function abonosExportRows(cases: Array<{
     'Añadido por',
     'Responsable de seguimiento',
     'Fecha prevista',
-    'Empresa',
+    'Marca',
     'Tipo',
     'Área',
     'Equipo',
@@ -351,7 +351,7 @@ export function abonosExportRows(cases: Array<{
 }
 
 export function receiptsExportRows(cases: Array<{ registro: number; brand: string; id: string }>, receipts: AbonoReceipt[]) {
-  const header = ['Registro', 'Empresa', 'Fecha recepción', 'Importe', 'Referencia', 'Comentario'];
+  const header = ['Registro', 'Marca', 'Fecha recepción', 'Importe', 'Referencia', 'Comentario'];
   const byId = new Map(cases.map((row) => [row.id, row]));
   const body = receipts.map((receipt) => {
     const parent = byId.get(receipt.caseId);
@@ -369,7 +369,7 @@ export function receiptsExportRows(cases: Array<{ registro: number; brand: strin
 
 export const ABONOS_TEMPLATE_HEADERS = [
   'Registro',
-  'Empresa',
+  'Marca',
   'Tipo',
   'Área',
   'Equipo',
@@ -392,7 +392,7 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   [''],
   ['Rellena la hoja Abonos y súbela en Importar. El registro es opcional; si falta, lo asigna la herramienta.'],
   [''],
-  ['Empresa', 'Obligatoria. Adidas, Nike, Puma…'],
+  ['Marca', 'Obligatoria. Adidas, Nike, Puma…'],
   ['Tipo', 'Obligatorio. Credit Notes, VIK Cash, Fee Pro Clubs, Dto FRA (factura), Dto pedido, Off Invoice…'],
   ['Área', 'Obligatoria. Solo B2B, Grassroots, Pro Clubs o Teamsports.'],
   ['Equipo', 'Obligatorio. Levante, Mallorca, GAP Plan, Kings League…'],

@@ -476,7 +476,7 @@ export function abonoRequiredGaps(row: {
   tradeTermId?: string | null;
 }): string[] {
   const gaps: string[] = [];
-  if (!String(row.brand || '').trim()) gaps.push('Empresa');
+  if (!String(row.brand || '').trim()) gaps.push('Marca');
   if (!String(row.area || '').trim()) gaps.push('Área');
   if (!String(row.teamMotivo || '').trim()) gaps.push('Equipo');
   if (!String(row.type || '').trim()) gaps.push('Tipo');

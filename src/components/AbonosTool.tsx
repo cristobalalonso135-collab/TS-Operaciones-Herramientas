@@ -93,7 +93,7 @@ const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'dueDate', label: 'Cuándo', width: 120 },
-  { key: 'brand', label: 'Empresa', width: 108 },
+  { key: 'brand', label: 'Marca', width: 108 },
   { key: 'type', label: 'Tipo', width: 120 },
   { key: 'area', label: 'Área', width: 108 },
   { key: 'teamMotivo', label: 'Equipo', width: 150 },
@@ -1261,7 +1261,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 <table className="w-full min-w-[520px] border-collapse text-sm">
                   <thead className="text-left text-xs text-[var(--text-secondary)]">
                     <tr>
-                      <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Empresa</th>
+                      <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Marca</th>
                       <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Abonos</th>
                       <th className="border-b border-[var(--border)] px-2 py-2 text-right font-medium">Pendiente</th>
                     </tr>
@@ -1628,7 +1628,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <thead className="bg-[var(--bg-soft)] text-left text-xs">
                     <tr>
                       <th className="px-2 py-2">Reg.</th>
-                      <th className="px-2 py-2">Empresa</th>
+                      <th className="px-2 py-2">Marca</th>
                       <th className="px-2 py-2">Tipo</th>
                       <th className="px-2 py-2">Equipo</th>
                       <th className="px-2 py-2">Área</th>
