@@ -201,16 +201,11 @@ const emptyFilters = {
   type: '',
   area: '',
   teamMotivo: '',
-  origin: '',
   status: '',
-  amountMode: '',
   duePeriod: '',
   dueFrom: '',
   dueTo: '',
-  attachments: '',
-  addedBy: '',
   responsible: '',
-  source: '',
   search: '',
 };
 
@@ -621,14 +616,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       if (filters.type && !matchesFilter(filters.type, row.type)) return false;
       if (filters.area && !matchesFilter(filters.area, row.area)) return false;
       if (filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
-      if (filters.origin && !matchesFilter(filters.origin, row.origin)) return false;
       if (filters.status && !matchesFilter(filters.status, row.status)) return false;
-      if (filters.addedBy && !matchesPersonFilter(filters.addedBy, row.addedBy)) return false;
       if (filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
-      if (filters.source && !matchesFilter(filters.source, row.source)) return false;
-      if (filters.amountMode && !matchesFilter(filters.amountMode, row.amountModeResolved)) return false;
-      if (filters.attachments === 'Sí' && (row.attachments || []).length === 0) return false;
-      if (filters.attachments === 'No' && (row.attachments || []).length > 0) return false;
       if (filters.duePeriod && !matchesDuePeriod(row.dueDate || '', filters.duePeriod, todayIso())) return false;
       if (!matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
       if (search) {
@@ -711,12 +700,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const types = uniquePresent(computed.map((row) => row.type));
     const areas = uniquePresent(computed.map((row) => row.area));
     const teams = uniquePresent(computed.map((row) => row.teamMotivo));
-    const origins = uniquePresent(computed.map((row) => row.origin));
     const statuses = uniquePresent(computed.map((row) => row.status));
-    const addedBy = uniquePresent(computed.map((row) => shortPersonName(row.addedBy)));
     const responsibles = uniquePresent(computed.map((row) => shortPersonName(row.responsible)));
-    const sources = uniquePresent(computed.map((row) => row.source));
-    const modes = uniquePresent(computed.map((row) => row.amountModeResolved));
     const yearParts = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
     const months = Array.from(new Set(computed.map((row) => (row.dueDate || '').slice(0, 7)).filter((value) => value.length === 7))).sort().reverse();
     const periods: Array<{ value: string; label: string }> = [
@@ -729,7 +714,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       ]),
       ...months.map((month) => ({ value: `month:${month}`, label: monthLabel(month) })),
     ];
-    return { brands, types, areas, teams, origins, statuses, addedBy, responsibles, sources, modes, periods, datesBlank: yearParts.hasBlank };
+    return { brands, types, areas, teams, statuses, responsibles, periods, datesBlank: yearParts.hasBlank };
   }, [computed]);
 
   if (!state) {
@@ -1367,32 +1352,28 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
             <FilterSelect value={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
             <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
-            <FilterSelect value={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
-            <FilterSelect value={filters.amountMode} options={[...ABONO_AMOUNT_MODES]} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
-            <FilterSelect value={filters.attachments} options={['Sí', 'No']} placeholder="Adjuntos" onChange={(attachments) => setFilters({ ...filters, attachments })} />
             <FilterSelect value={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
-            <label className="flex h-10 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white">
-              <span className="shrink-0 px-2 text-[11px] text-[var(--text-muted)]">Desde</span>
+            <label className="flex h-10 min-w-0 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white md:col-span-2">
               <input
                 type="date"
+                aria-label="Desde"
+                title="Desde"
                 value={filters.dueFrom}
                 onChange={(event) => setFilters({ ...filters, dueFrom: event.target.value })}
-                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none"
+                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm outline-none"
               />
-            </label>
-            <label className="flex h-10 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white">
-              <span className="shrink-0 px-2 text-[11px] text-[var(--text-muted)]">Hasta</span>
+              <span className="shrink-0 text-[11px] text-[var(--text-muted)]">–</span>
               <input
                 type="date"
+                aria-label="Hasta"
+                title="Hasta"
                 value={filters.dueTo}
                 onChange={(event) => setFilters({ ...filters, dueTo: event.target.value })}
-                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1 text-sm outline-none"
+                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm outline-none"
               />
             </label>
-            <FilterSelect value={filters.addedBy} options={filterOptions.addedBy.options} includeBlank={filterOptions.addedBy.hasBlank} placeholder="Añadido por" onChange={(addedBy) => setFilters({ ...filters, addedBy })} />
             <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
-            <FilterSelect value={filters.source} options={filterOptions.sources.options} includeBlank={filterOptions.sources.hasBlank} placeholder="Canal" onChange={(source) => setFilters({ ...filters, source })} />
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
