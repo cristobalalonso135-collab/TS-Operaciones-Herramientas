@@ -298,18 +298,14 @@ export function isClosedStatus(status: string): boolean {
 }
 
 export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number, estimated = false): AbonoStatus | '' {
-  if (estimated) {
-    if (receivedTotal > 0.009) return 'A cuenta';
-    return current === 'Pago comunicado' ? current : 'Pendiente';
-  }
   if (expectedAmount === null) {
-    if (receivedTotal > 0) return 'Liquidado parcialmente';
+    if (receivedTotal > 0.009) return estimated ? 'A cuenta' : 'Liquidado parcialmente';
     return current === 'Pago comunicado' ? current : 'Pendiente';
   }
   if (receivedTotal > 0 && excessAmount(expectedAmount, receivedTotal) > 0.009) return 'Exceso';
   const pending = pendingAmount(expectedAmount, receivedTotal);
   if (receivedTotal > 0 && pending <= 0.009) return 'Liquidado';
-  if (receivedTotal > 0 && pending > 0) return 'Liquidado parcialmente';
+  if (receivedTotal > 0 && pending > 0) return estimated ? 'A cuenta' : 'Liquidado parcialmente';
   return current === 'Pago comunicado' ? current : 'Pendiente';
 }
 
@@ -328,8 +324,11 @@ export function resolveManualStatus(
 
 export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms: TradeTerm[], today = todayIso()): AbonoComputed {
   const recordedTotal = receivedTotalFor(row.id, receipts);
-  const status = row.status === 'Exceso'
-    ? resolveManualStatus(row.status, row.expectedAmount, recordedTotal, row.estimated === true)
+  const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
+  const amount = resolveAmountDetails(row, term);
+  const estimated = amount.mode === 'Variable';
+  const status = row.status === 'Exceso' || row.status === 'A cuenta'
+    ? resolveManualStatus(row.status, row.expectedAmount, recordedTotal, estimated)
     : row.status;
   const receivedTotal = status === 'Liquidado' && row.expectedAmount !== null
     ? Math.max(recordedTotal, row.expectedAmount)
@@ -337,9 +336,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
   const pending = pendingAmount(row.expectedAmount, receivedTotal);
   const closed = isClosedStatus(status);
   const overdue = !closed && pending > 0 && !!row.dueDate && row.dueDate < today;
-  const reviewOverdue = !closed && !!row.nextReview && row.nextReview <= today && (pending > 0 || row.estimated === true);
-  const term = tradeTerms.find((item) => item.id === row.tradeTermId) || null;
-  const amount = resolveAmountDetails(row, term);
+  const reviewOverdue = !closed && !!row.nextReview && row.nextReview <= today && (pending > 0 || estimated);
   const payments = paymentSlots(receipts, row.id);
   return {
     ...row,
@@ -350,7 +347,7 @@ export function computeCase(row: AbonoCase, receipts: AbonoReceipt[], tradeTerms
     overdueDays: overdue && row.dueDate ? daysBetween(row.dueDate, today) : null,
     reviewOverdue,
     tradeTermName: term?.name ?? null,
-    estimated: amount.mode === 'Variable',
+    estimated,
     amountMode: amount.mode,
     amountModeResolved: amount.mode,
     amountConditionResolved: amount.condition,
@@ -472,9 +469,7 @@ export function declaredAmountMode(row: {
   status?: string | null;
 }): AbonoAmountMode | '' {
   const storedMode = asAmountMode(row.amountMode);
-  if (storedMode) return storedMode === 'Fijo' && (row.estimated === true || asStatus(String(row.status || '')) === 'A cuenta')
-    ? 'Variable'
-    : storedMode;
+  if (storedMode) return storedMode;
   if (row.estimated === true || asStatus(String(row.status || '')) === 'A cuenta') return 'Variable';
   if (row.estimated === false) return 'Fijo';
   return '';
@@ -845,11 +840,9 @@ export function abonosNeedRewrite(state: Pick<AbonosState, 'cases' | 'receipts'>
     const received = receivedTotalFor(row.id, receipts);
     const synced = syncAmountEstimate(row);
     if (asAmountMode(row.amountMode) !== synced.amountMode || row.estimated !== synced.estimated) return true;
-    if (synced.estimated && received > 0.009 && asStatus(row.status) !== 'A cuenta') return true;
     const stored = asStatus(row.status);
-    if (stored === 'Exceso') {
-      return stored !== resolveManualStatus(stored, row.expectedAmount, received, row.estimated === true);
-    }
+    const derived = resolveManualStatus(stored, row.expectedAmount, received, synced.estimated);
+    if ((stored === 'A cuenta' || stored === 'Exceso' || synced.estimated) && stored !== derived) return true;
     if (stored !== 'Liquidado') return false;
     return excessAmount(row.expectedAmount, received) > 0.009;
   });

@@ -872,7 +872,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       comment: form.comment || '',
       estimated,
       amountMode: form.amountMode === 'Variable' || form.amountMode === 'Fijo' ? form.amountMode : '',
-      amountCondition: form.amountMode === 'Variable' ? String(form.amountCondition || '').trim() : '',
+      amountCondition: String(form.amountCondition || '').trim(),
       attachments: form.attachments || [],
     };
     const cases = editing
@@ -1851,7 +1851,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         ...form,
                         amountMode,
                         estimated,
-                        amountCondition: amountMode === 'Variable' ? form.amountCondition : '',
                         status: amountMode
                           ? statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated)
                           : form.status,
@@ -1863,20 +1862,23 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                     {ABONO_AMOUNT_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
                   </select>
                   <p className="text-[11px] text-[var(--text-muted)]">
-                    Fijo es un euro cerrado. Variable aún puede moverse (un %, escalado, market share…); si entra dinero queda a cuenta.
+                    Variable mientras el importe puede moverse (un %, escalado…). Cuando te confirman el euro, actualiza el previsto y pásalo a Fijo. La condición se queda.
                   </p>
                 </label>
-                {form.amountMode === 'Variable' && (
-                  <label className="block space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Condición</span>
-                    <input
-                      value={form.amountCondition || ''}
-                      onChange={(event) => setForm({ ...form, amountCondition: event.target.value })}
-                      placeholder="Market Share >40%, Data Sharing H1…"
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                    />
-                  </label>
-                )}
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-[var(--text-secondary)]">
+                    Condición{form.amountMode === 'Variable' ? ' *' : ''}
+                  </span>
+                  <input
+                    value={form.amountCondition || ''}
+                    onChange={(event) => setForm({ ...form, amountCondition: event.target.value })}
+                    placeholder="4% NS, Market Share >40%, Data Sharing H1…"
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                  />
+                  {form.amountMode === 'Fijo' && (
+                    <p className="text-[11px] text-[var(--text-muted)]">Si venía de un %, déjala aunque el importe ya sea fijo.</p>
+                  )}
+                </label>
                 <label className="block space-y-1">
                   <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
                   <input
@@ -1897,7 +1899,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         origin,
                         tradeTermId: origin === 'Acuerdo' ? form.tradeTermId : null,
                         amountMode: origin === 'Puntual' ? 'Fijo' : form.amountMode,
-                        amountCondition: origin === 'Puntual' ? '' : form.amountCondition,
                         estimated: origin === 'Puntual' ? false : form.estimated,
                       });
                     }}
@@ -2226,12 +2227,23 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   if (!row.status) {
     return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-muted)]`}>—</span>;
   }
-  if (row.estimated === true || row.status === 'A cuenta') {
+  if (row.status === 'Liquidado') {
+    return <span className={`${pill} bg-[var(--success-soft)] text-[var(--success)]`}>{row.status}</span>;
+  }
+  if (row.status === 'Exceso') {
     return (
       <span className="inline-flex max-w-full flex-wrap items-center gap-1">
-        <span className={`${pill} bg-[var(--account-soft)] text-[var(--account)]`}>
-          {row.status === 'A cuenta' || row.receivedTotal > 0.009 ? 'A cuenta' : 'Estimado'}
-        </span>
+        <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>Exceso</span>
+        {row.excessAmount > 0.009 && (
+          <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>+{formatMoney(row.excessAmount)}</span>
+        )}
+      </span>
+    );
+  }
+  if (row.status === 'A cuenta' || (row.estimated === true && row.pending > 0.009 && row.receivedTotal > 0.009)) {
+    return (
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
+        <span className={`${pill} bg-[var(--account-soft)] text-[var(--account)]`}>A cuenta</span>
         {row.pending > 0.009 && (
           <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>
             {row.overdueDays !== null ? 'Vencido · ' : ''}Quedan {formatMoney(row.pending)}
@@ -2239,6 +2251,9 @@ function StatusPill({ row }: { row: AbonoComputed }) {
         )}
       </span>
     );
+  }
+  if (row.estimated === true && row.receivedTotal <= 0.009) {
+    return <span className={`${pill} bg-[var(--account-soft)] text-[var(--account)]`}>Estimado</span>;
   }
   if (row.status === 'Liquidado parcialmente') {
     return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>{row.overdueDays !== null ? 'Vencido · ' : ''}{row.status}</span>;
@@ -2257,19 +2272,6 @@ function StatusPill({ row }: { row: AbonoComputed }) {
   }
   if (row.reviewOverdue) {
     return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Revisar · {row.status}</span>;
-  }
-  if (row.status === 'Exceso') {
-    return (
-      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
-        <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>Exceso</span>
-        {row.excessAmount > 0.009 && (
-          <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>+{formatMoney(row.excessAmount)}</span>
-        )}
-      </span>
-    );
-  }
-  if (row.status === 'Liquidado') {
-    return <span className={`${pill} bg-[var(--success-soft)] text-[var(--success)]`}>{row.status}</span>;
   }
   return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-secondary)]`}>{row.status}</span>;
 }

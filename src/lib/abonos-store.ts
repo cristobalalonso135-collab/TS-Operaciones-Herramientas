@@ -70,9 +70,11 @@ function seedState(state: AbonosState): AbonosState {
       status,
     });
     const estimated = synced.estimated;
-    if (estimated && received > 0.009) status = 'A cuenta';
-    else if (status === 'Exceso') status = resolveManualStatus(status, row.expectedAmount, received, estimated);
-    else if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) status = 'Exceso';
+    if (status === 'A cuenta' || status === 'Exceso' || (estimated && received > 0.009)) {
+      status = resolveManualStatus(status, row.expectedAmount, received, estimated);
+    } else if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) {
+      status = 'Exceso';
+    }
     return {
       ...row,
       addedBy: shortPersonName(row.addedBy),
