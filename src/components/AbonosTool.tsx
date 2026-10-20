@@ -146,7 +146,7 @@ function matchesFilter(selected: string, actual: string): boolean {
   return actual === selected;
 }
 
-function matchesStatusFilter(selected: string[], actual: string): boolean {
+function matchesAnyFilter(selected: string[], actual: string): boolean {
   if (!selected.length) return true;
   return selected.some((value) => matchesFilter(value, actual));
 }
@@ -158,6 +158,17 @@ function matchesPersonFilter(selected: string, actual: string): boolean {
   const s = selected.trim().toLocaleLowerCase('es');
   if (!a) return false;
   return a === s || a.startsWith(`${s} `) || s.startsWith(`${a} `) || a.startsWith(s) || s.startsWith(a);
+}
+
+function matchesAnyPersonFilter(selected: string[], actual: string): boolean {
+  if (!selected.length) return true;
+  return selected.some((value) => matchesPersonFilter(value, actual));
+}
+
+function matchesAttachmentFilter(selected: string[], count: number): boolean {
+  if (!selected.length) return true;
+  const has = count > 0;
+  return selected.some((value) => (value === 'Sí' && has) || (value === 'No' && !has));
 }
 
 function renderAbonoCell(row: AbonoComputed, key: SortKey) {
@@ -204,28 +215,30 @@ function paymentLabel(index: number): string {
 type FilterOption = { value: string; label: string; group?: string };
 
 type AbonoFilters = {
-  brand: string;
-  type: string;
-  area: string;
-  teamMotivo: string;
+  brand: string[];
+  type: string[];
+  area: string[];
+  teamMotivo: string[];
   status: string[];
   duePeriod: string[];
-  dueFrom: string;
-  dueTo: string;
-  responsible: string;
+  amountMode: string[];
+  attachments: string[];
+  origin: string[];
+  responsible: string[];
   search: string;
 };
 
 const emptyFilters: AbonoFilters = {
-  brand: '',
-  type: '',
-  area: '',
-  teamMotivo: '',
+  brand: [],
+  type: [],
+  area: [],
+  teamMotivo: [],
   status: [],
   duePeriod: [],
-  dueFrom: '',
-  dueTo: '',
-  responsible: '',
+  amountMode: [],
+  attachments: [],
+  origin: [],
+  responsible: [],
   search: '',
 };
 
@@ -258,26 +271,22 @@ function matchesDuePeriods(selected: string[], dueDate: string, today: string): 
   return selected.some((period) => matchesDuePeriod(dueDate, period, today));
 }
 
-function matchesDueRange(dueDate: string, from: string, to: string): boolean {
-  if (from && (!dueDate || dueDate < from)) return false;
-  if (to && (!dueDate || dueDate > to)) return false;
-  return true;
-}
-
 function rowMatchesFilters(
   row: AbonoComputed,
   filters: AbonoFilters,
   today: string,
   except?: keyof AbonoFilters,
 ): boolean {
-  if (except !== 'brand' && filters.brand && !matchesFilter(filters.brand, row.brand)) return false;
-  if (except !== 'type' && filters.type && !matchesFilter(filters.type, row.type)) return false;
-  if (except !== 'area' && filters.area && !matchesFilter(filters.area, row.area)) return false;
-  if (except !== 'teamMotivo' && filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
-  if (except !== 'status' && !matchesStatusFilter(filters.status, row.status)) return false;
-  if (except !== 'responsible' && filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
+  if (except !== 'brand' && !matchesAnyFilter(filters.brand, row.brand)) return false;
+  if (except !== 'type' && !matchesAnyFilter(filters.type, row.type)) return false;
+  if (except !== 'area' && !matchesAnyFilter(filters.area, row.area)) return false;
+  if (except !== 'teamMotivo' && !matchesAnyFilter(filters.teamMotivo, row.teamMotivo)) return false;
+  if (except !== 'status' && !matchesAnyFilter(filters.status, row.status)) return false;
+  if (except !== 'responsible' && !matchesAnyPersonFilter(filters.responsible, row.responsible)) return false;
   if (except !== 'duePeriod' && !matchesDuePeriods(filters.duePeriod, row.dueDate || '', today)) return false;
-  if (except !== 'dueFrom' && except !== 'dueTo' && !matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
+  if (except !== 'amountMode' && !matchesAnyFilter(filters.amountMode, row.amountModeResolved)) return false;
+  if (except !== 'origin' && !matchesAnyFilter(filters.origin, row.origin)) return false;
+  if (except !== 'attachments' && !matchesAttachmentFilter(filters.attachments, (row.attachments || []).length)) return false;
   if (except !== 'search') {
     const search = filters.search.trim().toLocaleLowerCase('es');
     if (search) {
@@ -751,34 +760,34 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const teams = uniquePresent(forKey('teamMotivo').map((row) => row.teamMotivo));
     const statuses = uniquePresent(forKey('status').map((row) => row.status));
     const responsibles = uniquePresent(forKey('responsible').map((row) => shortPersonName(row.responsible)));
+    const modes = uniquePresent(forKey('amountMode').map((row) => row.amountModeResolved));
+    const origins = uniquePresent(forKey('origin').map((row) => row.origin));
+    const attachments = uniquePresent(forKey('attachments').map((row) => ((row.attachments || []).length > 0 ? 'Sí' : 'No')));
     const dateRows = forKey('duePeriod');
     const { periods, datesBlank } = duePeriodOptions(dateRows, today);
-    return { brands, types, areas, teams, statuses, responsibles, periods, datesBlank };
+    return { brands, types, areas, teams, statuses, responsibles, modes, origins, attachments, periods, datesBlank };
   }, [computed, filters]);
 
   useEffect(() => {
     setFilters((current) => {
       const next = { ...current };
       let changed = false;
-      const clearIfGone = (key: 'brand' | 'type' | 'area' | 'teamMotivo' | 'responsible', present: { options: string[]; hasBlank?: boolean }) => {
-        const value = current[key];
-        if (!value) return;
-        const ok = value === BLANK ? Boolean(present.hasBlank) : present.options.includes(value);
-        if (!ok) {
-          next[key] = '';
+      const prune = (key: Exclude<keyof AbonoFilters, 'search' | 'duePeriod'>, present: { options: string[]; hasBlank?: boolean }) => {
+        const kept = current[key].filter((value) => (value === BLANK ? Boolean(present.hasBlank) : present.options.includes(value)));
+        if (kept.length !== current[key].length) {
+          next[key] = kept;
           changed = true;
         }
       };
-      clearIfGone('brand', filterOptions.brands);
-      clearIfGone('type', filterOptions.types);
-      clearIfGone('area', filterOptions.areas);
-      clearIfGone('teamMotivo', filterOptions.teams);
-      clearIfGone('responsible', filterOptions.responsibles);
-      const status = current.status.filter((value) => (value === BLANK ? filterOptions.statuses.hasBlank : filterOptions.statuses.options.includes(value)));
-      if (status.length !== current.status.length) {
-        next.status = status;
-        changed = true;
-      }
+      prune('brand', filterOptions.brands);
+      prune('type', filterOptions.types);
+      prune('area', filterOptions.areas);
+      prune('teamMotivo', filterOptions.teams);
+      prune('responsible', filterOptions.responsibles);
+      prune('status', filterOptions.statuses);
+      prune('amountMode', filterOptions.modes);
+      prune('origin', filterOptions.origins);
+      prune('attachments', { options: filterOptions.attachments.options, hasBlank: false });
       const dueValues = filterOptions.periods.map((period) => period.value);
       const duePeriod = current.duePeriod.filter((value) => (value === BLANK ? filterOptions.datesBlank : dueValues.includes(value)));
       if (duePeriod.length !== current.duePeriod.length) {
@@ -1420,32 +1429,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
               <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Buscar" className="h-10 w-full rounded-md border border-[var(--border)] bg-white pl-9 pr-3 text-sm" />
             </label>
-            <FilterSelect value={filters.brand} options={filterOptions.brands.options} includeBlank={filterOptions.brands.hasBlank} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
-            <FilterSelect value={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
-            <FilterSelect value={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
-            <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
+            <FilterMultiSelect values={filters.brand} options={filterOptions.brands.options} includeBlank={filterOptions.brands.hasBlank} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
+            <FilterMultiSelect values={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
+            <FilterMultiSelect values={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
+            <FilterMultiSelect values={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
             <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
-            <FilterMultiSelect values={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
-            <label className="flex h-10 min-w-0 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white md:col-span-2">
-              <input
-                type="date"
-                aria-label="Desde"
-                title="Desde"
-                value={filters.dueFrom}
-                onChange={(event) => setFilters({ ...filters, dueFrom: event.target.value })}
-                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm outline-none"
-              />
-              <span className="shrink-0 text-[11px] text-[var(--text-muted)]">–</span>
-              <input
-                type="date"
-                aria-label="Hasta"
-                title="Hasta"
-                value={filters.dueTo}
-                onChange={(event) => setFilters({ ...filters, dueTo: event.target.value })}
-                className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 text-sm outline-none"
-              />
-            </label>
-            <FilterSelect value={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
+            <FilterMultiSelect values={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" collapseGroups onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
+            <FilterMultiSelect values={filters.amountMode} options={filterOptions.modes.options} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
+            <FilterMultiSelect values={filters.attachments} options={filterOptions.attachments.options} placeholder="Adjuntos" onChange={(attachments) => setFilters({ ...filters, attachments })} />
+            <FilterMultiSelect values={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
+            <FilterMultiSelect values={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
@@ -2271,43 +2264,23 @@ function openAttachment(item: AbonoAttachment, onImage: (url: string) => void) {
   link.remove();
 }
 
-function FilterSelect({
-  value,
-  options,
-  placeholder,
-  onChange,
-  includeBlank,
-}: {
-  value: string;
-  options: Array<string | { value: string; label: string }>;
-  placeholder: string;
-  onChange: (value: string) => void;
-  includeBlank?: boolean;
-}) {
-  const items = options.map((option) => (typeof option === 'string' ? { value: option, label: option } : option));
-  return (
-    <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-      <option value="">{placeholder}</option>
-      {includeBlank && <option value={BLANK}>—</option>}
-      {items.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-    </select>
-  );
-}
-
 function FilterMultiSelect({
   values,
   options,
   placeholder,
   onChange,
   includeBlank,
+  collapseGroups,
 }: {
   values: string[];
   options: Array<string | FilterOption>;
   placeholder: string;
   onChange: (values: string[]) => void;
   includeBlank?: boolean;
+  collapseGroups?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<string[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -2323,28 +2296,42 @@ function FilterMultiSelect({
   ];
   const allValues = items.map((item) => item.value);
   const allSelected = allValues.length > 0 && allValues.every((value) => values.includes(value));
-  const labelByValue = new Map(items.map((item) => [item.value, item.group ? `${item.label} ${item.group}` : item.label]));
   const groups = Array.from(new Set(items.map((item) => item.group).filter((group): group is string => Boolean(group))));
   const ungrouped = items.filter((item) => !item.group);
-  const label = values.length === 0
-    ? placeholder
-    : allSelected
-      ? 'Todos'
-      : values.map((value) => labelByValue.get(value) || (value === BLANK ? '—' : value)).join(', ');
+  const selected = new Set(values);
+  const compact: string[] = [];
+  ungrouped.forEach((item) => {
+    if (selected.has(item.value)) compact.push(item.label);
+  });
+  groups.forEach((group) => {
+    const grouped = items.filter((item) => item.group === group);
+    const picked = grouped.filter((item) => selected.has(item.value));
+    if (picked.length === 0) return;
+    if (picked.length === grouped.length) compact.push(group);
+    else compact.push(...picked.map((item) => `${item.label} ${group}`));
+  });
+  const label = values.length === 0 ? placeholder : allSelected ? 'Todos' : compact.join(', ');
   const toggle = (value: string) => {
     onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   };
   const toggleMany = (next: string[]) => {
-    const set = new Set(values);
-    const every = next.length > 0 && next.every((value) => set.has(value));
+    const every = next.length > 0 && next.every((value) => selected.has(value));
     if (every) onChange(values.filter((value) => !next.includes(value)));
     else onChange(Array.from(new Set([...values, ...next])));
   };
+  const toggleGroupOpen = (group: string) => {
+    setOpenGroups((current) => (current.includes(group) ? current.filter((item) => item !== group) : [...current, group]));
+  };
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative min-w-0">
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpen((current) => !current);
+          if (!open) {
+            setOpenGroups(groups.filter((group) => items.some((item) => item.group === group && selected.has(item.value))));
+          }
+        }}
         className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-left text-sm"
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -2362,6 +2349,9 @@ function FilterMultiSelect({
               <input
                 type="checkbox"
                 checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = values.length > 0 && !allSelected;
+                }}
                 onChange={() => onChange(allSelected ? [] : allValues)}
                 className="accent-[var(--text-primary)]"
               />
@@ -2383,18 +2373,35 @@ function FilterMultiSelect({
             const grouped = items.filter((item) => item.group === group);
             const groupValues = grouped.map((item) => item.value);
             const groupSelected = groupValues.length > 0 && groupValues.every((value) => values.includes(value));
+            const groupPartial = !groupSelected && groupValues.some((value) => values.includes(value));
+            const expanded = !collapseGroups || openGroups.includes(group);
             return (
               <div key={group}>
-                <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg-soft)]">
-                  <input
-                    type="checkbox"
-                    checked={groupSelected}
-                    onChange={() => toggleMany(groupValues)}
-                    className="accent-[var(--text-primary)]"
-                  />
-                  <span>{group}</span>
-                </label>
-                {grouped.map((item) => (
+                <div className="flex items-center hover:bg-[var(--bg-soft)]">
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-1.5 text-sm font-medium">
+                    <input
+                      type="checkbox"
+                      checked={groupSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = groupPartial;
+                      }}
+                      onChange={() => toggleMany(groupValues)}
+                      className="accent-[var(--text-primary)]"
+                    />
+                    <span>{group}</span>
+                  </label>
+                  {collapseGroups && (
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupOpen(group)}
+                      className="px-2 py-1.5 text-[var(--text-muted)]"
+                      aria-label={expanded ? `Ocultar meses de ${group}` : `Ver meses de ${group}`}
+                    >
+                      <ChevronRight className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                    </button>
+                  )}
+                </div>
+                {expanded && grouped.map((item) => (
                   <label key={item.value} className="flex cursor-pointer items-center gap-2 py-1.5 pl-8 pr-3 text-sm hover:bg-[var(--bg-soft)]">
                     <input
                       type="checkbox"
