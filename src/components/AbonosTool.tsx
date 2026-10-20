@@ -63,7 +63,7 @@ import {
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Check, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -146,6 +146,11 @@ function matchesFilter(selected: string, actual: string): boolean {
   return actual === selected;
 }
 
+function matchesStatusFilter(selected: string[], actual: string): boolean {
+  if (!selected.length) return true;
+  return selected.some((value) => matchesFilter(value, actual));
+}
+
 function matchesPersonFilter(selected: string, actual: string): boolean {
   if (!selected) return true;
   if (selected === BLANK) return !actual.trim();
@@ -196,12 +201,25 @@ function paymentLabel(index: number): string {
   return `Pago ${index + 1}`;
 }
 
-const emptyFilters = {
+type AbonoFilters = {
+  brand: string;
+  type: string;
+  area: string;
+  teamMotivo: string;
+  status: string[];
+  duePeriod: string;
+  dueFrom: string;
+  dueTo: string;
+  responsible: string;
+  search: string;
+};
+
+const emptyFilters: AbonoFilters = {
   brand: '',
   type: '',
   area: '',
   teamMotivo: '',
-  status: '',
+  status: [],
   duePeriod: '',
   dueFrom: '',
   dueTo: '',
@@ -244,6 +262,49 @@ function matchesDueRange(dueDate: string, from: string, to: string): boolean {
   if (from && (!dueDate || dueDate < from)) return false;
   if (to && (!dueDate || dueDate > to)) return false;
   return true;
+}
+
+function rowMatchesFilters(
+  row: AbonoComputed,
+  filters: AbonoFilters,
+  today: string,
+  except?: keyof AbonoFilters,
+): boolean {
+  if (except !== 'brand' && filters.brand && !matchesFilter(filters.brand, row.brand)) return false;
+  if (except !== 'type' && filters.type && !matchesFilter(filters.type, row.type)) return false;
+  if (except !== 'area' && filters.area && !matchesFilter(filters.area, row.area)) return false;
+  if (except !== 'teamMotivo' && filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
+  if (except !== 'status' && !matchesStatusFilter(filters.status, row.status)) return false;
+  if (except !== 'responsible' && filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
+  if (except !== 'duePeriod' && filters.duePeriod && !matchesDuePeriod(row.dueDate || '', filters.duePeriod, today)) return false;
+  if (except !== 'dueFrom' && except !== 'dueTo' && !matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
+  if (except !== 'search') {
+    const search = filters.search.trim().toLocaleLowerCase('es');
+    if (search) {
+      const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible, row.amountModeResolved, row.amountConditionResolved].join(' ').toLocaleLowerCase('es');
+      if (!blob.includes(search)) return false;
+    }
+  }
+  return true;
+}
+
+function duePeriodOptions(rows: AbonoComputed[], today: string): { periods: Array<{ value: string; label: string }>; datesBlank: boolean } {
+  const yearParts = uniquePresent(rows.map((row) => (row.dueDate || '').slice(0, 4)));
+  const months = Array.from(new Set(rows.map((row) => (row.dueDate || '').slice(0, 7)).filter((value) => value.length === 7))).sort().reverse();
+  const candidates: Array<{ value: string; label: string }> = [
+    { value: 'overdue', label: 'Vencidos' },
+    { value: 'next30', label: 'Próximos 30 días' },
+    ...yearParts.options.slice().sort().reverse().flatMap((year) => [
+      { value: `year:${year}`, label: `Año ${year}` },
+      { value: `h1:${year}`, label: `H1 ${year}` },
+      { value: `h2:${year}`, label: `H2 ${year}` },
+    ]),
+    ...months.map((month) => ({ value: `month:${month}`, label: monthLabel(month) })),
+  ];
+  return {
+    periods: candidates.filter((option) => rows.some((row) => matchesDuePeriod(row.dueDate || '', option.value, today))),
+    datesBlank: yearParts.hasBlank,
+  };
 }
 
 const emptyForm = (): Partial<AbonoCase> => ({
@@ -610,22 +671,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const computed = useMemo(() => (state ? computeAll(state) : []), [state]);
   const filtered = useMemo(() => {
-    const search = filters.search.trim().toLocaleLowerCase('es');
-    return computed.filter((row) => {
-      if (filters.brand && !matchesFilter(filters.brand, row.brand)) return false;
-      if (filters.type && !matchesFilter(filters.type, row.type)) return false;
-      if (filters.area && !matchesFilter(filters.area, row.area)) return false;
-      if (filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
-      if (filters.status && !matchesFilter(filters.status, row.status)) return false;
-      if (filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
-      if (filters.duePeriod && !matchesDuePeriod(row.dueDate || '', filters.duePeriod, todayIso())) return false;
-      if (!matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
-      if (search) {
-        const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible, row.amountModeResolved, row.amountConditionResolved].join(' ').toLocaleLowerCase('es');
-        if (!blob.includes(search)) return false;
-      }
-      return true;
-    });
+    const today = todayIso();
+    return computed.filter((row) => rowMatchesFilters(row, filters, today));
   }, [computed, filters]);
 
   const sorted = useMemo(() => {
@@ -696,26 +743,46 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }, [state]);
 
   const filterOptions = useMemo(() => {
-    const brands = uniquePresent(computed.map((row) => row.brand));
-    const types = uniquePresent(computed.map((row) => row.type));
-    const areas = uniquePresent(computed.map((row) => row.area));
-    const teams = uniquePresent(computed.map((row) => row.teamMotivo));
-    const statuses = uniquePresent(computed.map((row) => row.status));
-    const responsibles = uniquePresent(computed.map((row) => shortPersonName(row.responsible)));
-    const yearParts = uniquePresent(computed.map((row) => (row.dueDate || '').slice(0, 4)));
-    const months = Array.from(new Set(computed.map((row) => (row.dueDate || '').slice(0, 7)).filter((value) => value.length === 7))).sort().reverse();
-    const periods: Array<{ value: string; label: string }> = [
-      { value: 'overdue', label: 'Vencidos' },
-      { value: 'next30', label: 'Próximos 30 días' },
-      ...yearParts.options.slice().sort().reverse().flatMap((year) => [
-        { value: `year:${year}`, label: `Año ${year}` },
-        { value: `h1:${year}`, label: `H1 ${year}` },
-        { value: `h2:${year}`, label: `H2 ${year}` },
-      ]),
-      ...months.map((month) => ({ value: `month:${month}`, label: monthLabel(month) })),
-    ];
-    return { brands, types, areas, teams, statuses, responsibles, periods, datesBlank: yearParts.hasBlank };
-  }, [computed]);
+    const today = todayIso();
+    const forKey = (except: keyof AbonoFilters) => computed.filter((row) => rowMatchesFilters(row, filters, today, except));
+    const brands = uniquePresent(forKey('brand').map((row) => row.brand));
+    const types = uniquePresent(forKey('type').map((row) => row.type));
+    const areas = uniquePresent(forKey('area').map((row) => row.area));
+    const teams = uniquePresent(forKey('teamMotivo').map((row) => row.teamMotivo));
+    const statuses = uniquePresent(forKey('status').map((row) => row.status));
+    const responsibles = uniquePresent(forKey('responsible').map((row) => shortPersonName(row.responsible)));
+    const dateRows = forKey('duePeriod');
+    const { periods, datesBlank } = duePeriodOptions(dateRows, today);
+    return { brands, types, areas, teams, statuses, responsibles, periods, datesBlank };
+  }, [computed, filters]);
+
+  useEffect(() => {
+    setFilters((current) => {
+      const next = { ...current };
+      let changed = false;
+      const clearIfGone = (key: 'brand' | 'type' | 'area' | 'teamMotivo' | 'responsible' | 'duePeriod', present: { options: string[]; hasBlank?: boolean }) => {
+        const value = current[key];
+        if (!value) return;
+        const ok = value === BLANK ? Boolean(present.hasBlank) : present.options.includes(value);
+        if (!ok) {
+          next[key] = '';
+          changed = true;
+        }
+      };
+      clearIfGone('brand', filterOptions.brands);
+      clearIfGone('type', filterOptions.types);
+      clearIfGone('area', filterOptions.areas);
+      clearIfGone('teamMotivo', filterOptions.teams);
+      clearIfGone('responsible', filterOptions.responsibles);
+      clearIfGone('duePeriod', { options: filterOptions.periods.map((period) => period.value), hasBlank: filterOptions.datesBlank });
+      const status = current.status.filter((value) => (value === BLANK ? filterOptions.statuses.hasBlank : filterOptions.statuses.options.includes(value)));
+      if (status.length !== current.status.length) {
+        next.status = status;
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [filterOptions]);
 
   if (!state) {
     return (
@@ -1151,7 +1218,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
               >
                 <option value="">Todos</option>
-                {mergeCatalog(filterOptions.responsibles.options, peopleOptions).map((responsible) => (
+                {peopleOptions.map((responsible) => (
                   <option key={responsible} value={responsible}>{responsible}</option>
                 ))}
               </select>
@@ -1352,7 +1419,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
             <FilterSelect value={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
             <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
-            <FilterSelect value={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
+            <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterSelect value={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
             <label className="flex h-10 min-w-0 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white md:col-span-2">
               <input
@@ -2219,6 +2286,73 @@ function FilterSelect({
       {includeBlank && <option value={BLANK}>—</option>}
       {items.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
+  );
+}
+
+function FilterMultiSelect({
+  values,
+  options,
+  placeholder,
+  onChange,
+  includeBlank,
+}: {
+  values: string[];
+  options: string[];
+  placeholder: string;
+  onChange: (values: string[]) => void;
+  includeBlank?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const items = [
+    ...(includeBlank ? [{ value: BLANK, label: '—' }] : []),
+    ...options.map((option) => ({ value: option, label: option })),
+  ];
+  const label = values.length === 0
+    ? placeholder
+    : values.map((value) => (value === BLANK ? '—' : value)).join(', ');
+  const toggle = (value: string) => {
+    onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  };
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-left text-sm"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className={`min-w-0 truncate ${values.length ? '' : 'text-[var(--text-muted)]'}`}>{label}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 max-h-64 w-full min-w-[12rem] overflow-auto rounded-md border border-[var(--border)] bg-white py-1 shadow-md">
+          {items.length === 0 && (
+            <p className="px-3 py-2 text-sm text-[var(--text-muted)]">Sin opciones en la tabla</p>
+          )}
+          {items.map((item) => (
+            <label key={item.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-[var(--bg-soft)]">
+              <input
+                type="checkbox"
+                checked={values.includes(item.value)}
+                onChange={() => toggle(item.value)}
+                className="accent-[var(--text-primary)]"
+              />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
