@@ -201,13 +201,15 @@ function paymentLabel(index: number): string {
   return `Pago ${index + 1}`;
 }
 
+type FilterOption = { value: string; label: string; group?: string };
+
 type AbonoFilters = {
   brand: string;
   type: string;
   area: string;
   teamMotivo: string;
   status: string[];
-  duePeriod: string;
+  duePeriod: string[];
   dueFrom: string;
   dueTo: string;
   responsible: string;
@@ -220,7 +222,7 @@ const emptyFilters: AbonoFilters = {
   area: '',
   teamMotivo: '',
   status: [],
-  duePeriod: '',
+  duePeriod: [],
   dueFrom: '',
   dueTo: '',
   responsible: '',
@@ -228,13 +230,6 @@ const emptyFilters: AbonoFilters = {
 };
 
 const MONTHS_SHORT_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-
-function monthLabel(yearMonth: string): string {
-  const [year, month] = yearMonth.split('-');
-  const index = Number(month) - 1;
-  if (!year || Number.isNaN(index) || index < 0 || index > 11) return yearMonth;
-  return `${MONTHS_SHORT_ES[index]} ${year}`;
-}
 
 function matchesDuePeriod(dueDate: string, period: string, today: string): boolean {
   if (!period) return true;
@@ -258,6 +253,11 @@ function matchesDuePeriod(dueDate: string, period: string, today: string): boole
   return true;
 }
 
+function matchesDuePeriods(selected: string[], dueDate: string, today: string): boolean {
+  if (!selected.length) return true;
+  return selected.some((period) => matchesDuePeriod(dueDate, period, today));
+}
+
 function matchesDueRange(dueDate: string, from: string, to: string): boolean {
   if (from && (!dueDate || dueDate < from)) return false;
   if (to && (!dueDate || dueDate > to)) return false;
@@ -276,7 +276,7 @@ function rowMatchesFilters(
   if (except !== 'teamMotivo' && filters.teamMotivo && !matchesFilter(filters.teamMotivo, row.teamMotivo)) return false;
   if (except !== 'status' && !matchesStatusFilter(filters.status, row.status)) return false;
   if (except !== 'responsible' && filters.responsible && !matchesPersonFilter(filters.responsible, row.responsible)) return false;
-  if (except !== 'duePeriod' && filters.duePeriod && !matchesDuePeriod(row.dueDate || '', filters.duePeriod, today)) return false;
+  if (except !== 'duePeriod' && !matchesDuePeriods(filters.duePeriod, row.dueDate || '', today)) return false;
   if (except !== 'dueFrom' && except !== 'dueTo' && !matchesDueRange(row.dueDate || '', filters.dueFrom, filters.dueTo)) return false;
   if (except !== 'search') {
     const search = filters.search.trim().toLocaleLowerCase('es');
@@ -288,23 +288,23 @@ function rowMatchesFilters(
   return true;
 }
 
-function duePeriodOptions(rows: AbonoComputed[], today: string): { periods: Array<{ value: string; label: string }>; datesBlank: boolean } {
+function duePeriodOptions(rows: AbonoComputed[], today: string): { periods: FilterOption[]; datesBlank: boolean } {
   const yearParts = uniquePresent(rows.map((row) => (row.dueDate || '').slice(0, 4)));
   const months = Array.from(new Set(rows.map((row) => (row.dueDate || '').slice(0, 7)).filter((value) => value.length === 7))).sort().reverse();
-  const candidates: Array<{ value: string; label: string }> = [
+  const extras: FilterOption[] = [
     { value: 'overdue', label: 'Vencidos' },
     { value: 'next30', label: 'Próximos 30 días' },
-    ...yearParts.options.slice().sort().reverse().flatMap((year) => [
-      { value: `year:${year}`, label: `Año ${year}` },
-      { value: `h1:${year}`, label: `H1 ${year}` },
-      { value: `h2:${year}`, label: `H2 ${year}` },
-    ]),
-    ...months.map((month) => ({ value: `month:${month}`, label: monthLabel(month) })),
-  ];
-  return {
-    periods: candidates.filter((option) => rows.some((row) => matchesDuePeriod(row.dueDate || '', option.value, today))),
-    datesBlank: yearParts.hasBlank,
-  };
+  ].filter((option) => rows.some((row) => matchesDuePeriod(row.dueDate || '', option.value, today)));
+  const periodMonths: FilterOption[] = months.map((month) => {
+    const year = month.slice(0, 4);
+    const index = Number(month.slice(5, 7)) - 1;
+    return {
+      value: `month:${month}`,
+      label: Number.isNaN(index) || index < 0 || index > 11 ? month : MONTHS_SHORT_ES[index],
+      group: year,
+    };
+  });
+  return { periods: [...extras, ...periodMonths], datesBlank: yearParts.hasBlank };
 }
 
 const emptyForm = (): Partial<AbonoCase> => ({
@@ -760,7 +760,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setFilters((current) => {
       const next = { ...current };
       let changed = false;
-      const clearIfGone = (key: 'brand' | 'type' | 'area' | 'teamMotivo' | 'responsible' | 'duePeriod', present: { options: string[]; hasBlank?: boolean }) => {
+      const clearIfGone = (key: 'brand' | 'type' | 'area' | 'teamMotivo' | 'responsible', present: { options: string[]; hasBlank?: boolean }) => {
         const value = current[key];
         if (!value) return;
         const ok = value === BLANK ? Boolean(present.hasBlank) : present.options.includes(value);
@@ -774,10 +774,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       clearIfGone('area', filterOptions.areas);
       clearIfGone('teamMotivo', filterOptions.teams);
       clearIfGone('responsible', filterOptions.responsibles);
-      clearIfGone('duePeriod', { options: filterOptions.periods.map((period) => period.value), hasBlank: filterOptions.datesBlank });
       const status = current.status.filter((value) => (value === BLANK ? filterOptions.statuses.hasBlank : filterOptions.statuses.options.includes(value)));
       if (status.length !== current.status.length) {
         next.status = status;
+        changed = true;
+      }
+      const dueValues = filterOptions.periods.map((period) => period.value);
+      const duePeriod = current.duePeriod.filter((value) => (value === BLANK ? filterOptions.datesBlank : dueValues.includes(value)));
+      if (duePeriod.length !== current.duePeriod.length) {
+        next.duePeriod = duePeriod;
         changed = true;
       }
       return changed ? next : current;
@@ -1420,7 +1425,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterSelect value={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
             <FilterSelect value={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
             <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
-            <FilterSelect value={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
+            <FilterMultiSelect values={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
             <label className="flex h-10 min-w-0 items-center overflow-hidden rounded-md border border-[var(--border)] bg-white md:col-span-2">
               <input
                 type="date"
@@ -2297,7 +2302,7 @@ function FilterMultiSelect({
   includeBlank,
 }: {
   values: string[];
-  options: string[];
+  options: Array<string | FilterOption>;
   placeholder: string;
   onChange: (values: string[]) => void;
   includeBlank?: boolean;
@@ -2312,15 +2317,28 @@ function FilterMultiSelect({
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
-  const items = [
+  const items: FilterOption[] = [
     ...(includeBlank ? [{ value: BLANK, label: '—' }] : []),
-    ...options.map((option) => ({ value: option, label: option })),
+    ...options.map((option) => (typeof option === 'string' ? { value: option, label: option } : option)),
   ];
+  const allValues = items.map((item) => item.value);
+  const allSelected = allValues.length > 0 && allValues.every((value) => values.includes(value));
+  const labelByValue = new Map(items.map((item) => [item.value, item.group ? `${item.label} ${item.group}` : item.label]));
+  const groups = Array.from(new Set(items.map((item) => item.group).filter((group): group is string => Boolean(group))));
+  const ungrouped = items.filter((item) => !item.group);
   const label = values.length === 0
     ? placeholder
-    : values.map((value) => (value === BLANK ? '—' : value)).join(', ');
+    : allSelected
+      ? 'Todos'
+      : values.map((value) => labelByValue.get(value) || (value === BLANK ? '—' : value)).join(', ');
   const toggle = (value: string) => {
     onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  };
+  const toggleMany = (next: string[]) => {
+    const set = new Set(values);
+    const every = next.length > 0 && next.every((value) => set.has(value));
+    if (every) onChange(values.filter((value) => !next.includes(value)));
+    else onChange(Array.from(new Set([...values, ...next])));
   };
   return (
     <div ref={rootRef} className="relative">
@@ -2335,11 +2353,22 @@ function FilterMultiSelect({
         <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 max-h-64 w-full min-w-[12rem] overflow-auto rounded-md border border-[var(--border)] bg-white py-1 shadow-md">
+        <div className="absolute z-30 mt-1 max-h-72 w-full min-w-[13rem] overflow-auto rounded-md border border-[var(--border)] bg-white py-1 shadow-md">
           {items.length === 0 && (
             <p className="px-3 py-2 text-sm text-[var(--text-muted)]">Sin opciones en la tabla</p>
           )}
-          {items.map((item) => (
+          {items.length > 0 && (
+            <label className="flex cursor-pointer items-center gap-2 border-b border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg-soft)]">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={() => onChange(allSelected ? [] : allValues)}
+                className="accent-[var(--text-primary)]"
+              />
+              <span>Seleccionar todo</span>
+            </label>
+          )}
+          {ungrouped.map((item) => (
             <label key={item.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-[var(--bg-soft)]">
               <input
                 type="checkbox"
@@ -2350,6 +2379,35 @@ function FilterMultiSelect({
               <span>{item.label}</span>
             </label>
           ))}
+          {groups.map((group) => {
+            const grouped = items.filter((item) => item.group === group);
+            const groupValues = grouped.map((item) => item.value);
+            const groupSelected = groupValues.length > 0 && groupValues.every((value) => values.includes(value));
+            return (
+              <div key={group}>
+                <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm font-medium hover:bg-[var(--bg-soft)]">
+                  <input
+                    type="checkbox"
+                    checked={groupSelected}
+                    onChange={() => toggleMany(groupValues)}
+                    className="accent-[var(--text-primary)]"
+                  />
+                  <span>{group}</span>
+                </label>
+                {grouped.map((item) => (
+                  <label key={item.value} className="flex cursor-pointer items-center gap-2 py-1.5 pl-8 pr-3 text-sm hover:bg-[var(--bg-soft)]">
+                    <input
+                      type="checkbox"
+                      checked={values.includes(item.value)}
+                      onChange={() => toggle(item.value)}
+                      className="accent-[var(--text-primary)]"
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
