@@ -507,6 +507,13 @@ export default function GeneradosWebTrackingView({
             label="1. CSV de generados web (Año-Mes, Zona CRM, Gen. Web, Web B2C Mes -1)"
             onFileLoaded={handleFileLoaded}
             keepDropzone
+            loaded={Boolean(fileName)}
+            loadedName={fileName || undefined}
+            onClear={() => {
+              setLines([]);
+              setFileName(null);
+              setError(null);
+            }}
           />
           {activeName && analysis && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -521,6 +528,12 @@ export default function GeneradosWebTrackingView({
             label="2. Budget (el mismo CSV que Comparador). Me quedo con Equipaciones Web B2C por zona"
             onFileLoaded={handleBudgetLoaded}
             keepDropzone
+            loaded={Boolean(budget)}
+            loadedName={budget?.fileName}
+            onClear={() => {
+              setBudget(null);
+              setBudgetError(null);
+            }}
           />
           {activeBudget && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -532,10 +545,10 @@ export default function GeneradosWebTrackingView({
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+        <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
       {budgetError && (
-        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
+        <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
       )}
 
       {activeLines.length === 0 && !error && (

@@ -984,6 +984,13 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
               hint="Vacío o — vale en fecha y canal. Las filas sin Área, Módulo, Necesidad o Solicitante no entran."
               onFileLoaded={handleImportFile}
               keepDropzone
+              loaded={Boolean(importMap)}
+              onClear={() => {
+                setImportMap(null);
+                setImportRows([]);
+                setImportHeaders([]);
+                setPreview([]);
+              }}
             />
           </div>
           {importMap && (

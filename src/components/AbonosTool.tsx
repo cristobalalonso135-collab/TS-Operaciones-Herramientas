@@ -1694,6 +1694,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               hint="Una sola carga. Área: B2B, Grassroots, Pro Clubs o Teamsports. Las filas incompletas no se importan."
               onFileLoaded={handleImportFile}
               keepDropzone
+              loaded={Boolean(importMap)}
+              onClear={() => {
+                setImportMap(null);
+                setImportRows([]);
+                setImportHeaders([]);
+                setPreview([]);
+              }}
             />
           </div>
           {importMap && (

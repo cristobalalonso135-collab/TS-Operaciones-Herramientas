@@ -926,7 +926,23 @@ export default function Home() {
 
         {currentStep === 0 && (
           <div className="mt-5">
-            <FileUpload onFileLoaded={handleFileLoaded} />
+            <FileUpload
+              onFileLoaded={handleFileLoaded}
+              loaded={Boolean(step0Data)}
+              onClear={() => {
+                setStep0Data(null);
+                setStep1Data(null);
+                setStep2Data(null);
+                setStep3Data(null);
+                setTotalLines(0);
+                setClosedMonths([]);
+                setWeeklyAppliedMonths([]);
+                setApplyMessage(null);
+                setWeeklyMessage(null);
+                setHistoricalWorkbook(null);
+                setCurrentStep(0);
+              }}
+            />
           </div>
         )}
       </section>
@@ -1091,6 +1107,9 @@ export default function Home() {
                   label="Histórico para completar"
                   onFileLoaded={() => {}}
                   onWorkbookLoaded={handleHistoricalWorkbookLoaded}
+                  loaded={Boolean(historicalWorkbook)}
+                  loadedName={historicalWorkbook?.fileName}
+                  onClear={() => setHistoricalWorkbook(null)}
                 />
                 <button
                   onClick={handleExportMergedHistorical}

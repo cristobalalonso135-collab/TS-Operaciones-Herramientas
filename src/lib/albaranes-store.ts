@@ -168,10 +168,16 @@ async function clearListingRows(): Promise<void> {
 
 async function writeListing(state: AlbaranesState): Promise<void> {
   const snap = listingSnapshot(state);
-  if (!snap) return;
+  const client = requireClient();
+  if (!snap) {
+    await clearListingRows();
+    const { error } = await client.from('albaranes_store').delete().eq('id', LISTING_ID);
+    if (error) throw new Error(error.message);
+    writtenListingKey = '';
+    return;
+  }
   const key = listingWriteKey(state);
   if (key && key === writtenListingKey) return;
-  const client = requireClient();
   await clearListingRows();
   const packed = snap.listing;
   const now = new Date().toISOString();

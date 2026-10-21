@@ -428,6 +428,9 @@ export default function DailyBudgetMatchTool({ onBack, hideBack }: DailyBudgetMa
             label="Sube el diario A…"
             onFileLoaded={() => {}}
             onWorkbookLoaded={(sheets, fileName) => setFileA({ sheets, fileName })}
+            loaded={Boolean(fileA)}
+            loadedName={fileA?.fileName}
+            onClear={() => setFileA(null)}
           />
           {fileA && <p className="mt-2 text-xs text-[var(--text-secondary)]">{fileA.fileName}</p>}
         </div>
@@ -447,6 +450,9 @@ export default function DailyBudgetMatchTool({ onBack, hideBack }: DailyBudgetMa
             label="Sube el diario B…"
             onFileLoaded={() => {}}
             onWorkbookLoaded={(sheets, fileName) => setFileB({ sheets, fileName })}
+            loaded={Boolean(fileB)}
+            loadedName={fileB?.fileName}
+            onClear={() => setFileB(null)}
           />
           {fileB && <p className="mt-2 text-xs text-[var(--text-secondary)]">{fileB.fileName}</p>}
         </div>

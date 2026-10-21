@@ -1897,6 +1897,13 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
             inputId="facturacion-compare-input"
             label="Facturación FY 25/26"
             onFileLoaded={handleLoad('facturacion')}
+            loaded={Boolean(facturacionFile)}
+            loadedName={facturacionFile || undefined}
+            onClear={() => {
+              setFacturacionLines([]);
+              setFacturacionFile(null);
+              setError(null);
+            }}
           />
           {facturacionFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {facturacionFile}</p>}
         </div>
@@ -1905,6 +1912,13 @@ export default function BudgetCompareTool({ onBack, hideBack }: BudgetCompareToo
             inputId="budget-compare-input"
             label="Budget FY 26/27"
             onFileLoaded={handleLoad('budget')}
+            loaded={Boolean(budgetFile)}
+            loadedName={budgetFile || undefined}
+            onClear={() => {
+              setBudgetLines([]);
+              setBudgetFile(null);
+              setError(null);
+            }}
           />
           {budgetFile && <p className="mt-2 text-xs text-[var(--text-secondary)]">Cargado: {budgetFile}</p>}
         </div>

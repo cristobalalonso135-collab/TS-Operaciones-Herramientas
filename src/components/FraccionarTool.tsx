@@ -208,6 +208,11 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
             compact
             loaded={dataRows.length > 0}
             loadedName={dataName}
+            onClear={() => {
+              setDataRows([]);
+              setDataName('');
+              setAck('He quitado Data. Sube otro archivo.');
+            }}
             onRawFile={(file) => {
               if (!/\.xlsx?$/i.test(file.name)) return;
               void (async () => {
@@ -241,6 +246,11 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
             compact
             loaded={albaranesRows.length > 0}
             loadedName={albaranesName}
+            onClear={() => {
+              setAlbaranesRows([]);
+              setAlbaranesName('');
+              setAck('He quitado Albaranes. Sube otro archivo.');
+            }}
             onFileLoaded={(data, fileName) => {
               const rows = parseAlbaranesForFraccionar(data);
               setAlbaranesRows(rows);
@@ -259,6 +269,11 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
             compact
             loaded={colectivosRows.length > 0}
             loadedName={colectivosName}
+            onClear={() => {
+              setColectivosRows([]);
+              setColectivosName('');
+              setAck('He quitado Colectivos. Sube otro archivo.');
+            }}
             onFileLoaded={(data, fileName) => {
               const rows = parseColectivosForFraccionar(data);
               setColectivosRows(rows);

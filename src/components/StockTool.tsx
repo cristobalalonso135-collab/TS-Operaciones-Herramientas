@@ -333,6 +333,16 @@ export default function StockTool({ onBack }: StockToolProps) {
             hint="Stock.csv: Referencia, cantidad, coste medio total, primera/última compra y venta"
             onFileLoaded={handleLoaded}
             keepDropzone
+            loaded={Boolean(fileName)}
+            loadedName={fileName || undefined}
+            onClear={() => {
+              setLines([]);
+              setFileName(null);
+              setSalesById(new Map());
+              setSalesFileName(null);
+              setNote(null);
+              setError(null);
+            }}
           />
           {fileName && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -347,6 +357,13 @@ export default function StockTool({ onBack }: StockToolProps) {
             hint="Ventas.csv: id, Year-Month, Importe, Unidades. Primero el stock."
             onFileLoaded={handleLoaded}
             keepDropzone
+            loaded={Boolean(salesFileName)}
+            loadedName={salesFileName || undefined}
+            onClear={() => {
+              setSalesById(new Map());
+              setSalesFileName(null);
+              setNote(null);
+            }}
           />
           {salesFileName && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -360,7 +377,7 @@ export default function StockTool({ onBack }: StockToolProps) {
         <p className="text-[12px] font-medium text-[var(--success)]">{note}</p>
       )}
       {error && (
-        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+        <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
 
       {lines.length === 0 && !error && (

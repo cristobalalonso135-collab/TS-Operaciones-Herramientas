@@ -1707,6 +1707,9 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
             label="Sube Budget TS FY…"
             onFileLoaded={() => {}}
             onWorkbookLoaded={(sheets, fileName) => setPlanWorkbook({ sheets, fileName })}
+            loaded={Boolean(planWorkbook)}
+            loadedName={planWorkbook?.fileName}
+            onClear={() => setPlanWorkbook(null)}
           />
           {planWorkbook && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -1730,6 +1733,9 @@ export default function BudgetFileValidatorTool({ onBack, hideBack }: BudgetFile
             label="Sube budget diario…"
             onFileLoaded={() => {}}
             onWorkbookLoaded={(sheets, fileName) => setDailyWorkbook({ sheets, fileName })}
+            loaded={Boolean(dailyWorkbook)}
+            loadedName={dailyWorkbook?.fileName}
+            onClear={() => setDailyWorkbook(null)}
           />
           {dailyWorkbook && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">{dailyWorkbook.fileName}</p>

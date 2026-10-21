@@ -38,6 +38,7 @@ import {
   formatShare,
   monthsBetween,
   ingestCarga,
+  removeCarga,
   reapplyRulesToLatestCarga,
   knownEstados,
   knownSeries,
@@ -774,6 +775,14 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                   setBusy('Leyendo archivo…');
                 }}
                 onFileLoaded={handleAlbaranesFile}
+                onClear={() => {
+                  if (!state) return;
+                  const carga = latestCarga(state);
+                  if (!carga || !isTodayStamp(carga.loadedAt || carga.loadDate)) return;
+                  if (!window.confirm(`¿Borrar ${carga.fileName || 'el CSV de albaranes'} de hoy? Luego puedes subir otro.`)) return;
+                  lastFileRef.current = null;
+                  void persist(removeCarga(state, carga.id), backend);
+                }}
               />
               <Kpi
                 label="Albaranes cargados"
@@ -792,6 +801,15 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 loaded={state.colectivos.length > 0 && isTodayStamp(state.colectivosLoadedAt)}
                 loadedName={state.colectivosFileName}
                 onFileLoaded={handleColectivosFile}
+                onClear={() => {
+                  if (!state) return;
+                  if (!window.confirm(`¿Borrar ${state.colectivosFileName || 'el maestro de colectivos'}? Luego puedes subir otro.`)) return;
+                  void persist({
+                    ...withLatestIncidents(state, []),
+                    colectivosFileName: '',
+                    colectivosLoadedAt: '',
+                  }, backend);
+                }}
               />
               <Kpi
                 label="Colectivos cargados"
@@ -810,6 +828,16 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 loaded={Boolean(state.emailsFileName) && isTodayStamp(state.emailsLoadedAt)}
                 loadedName={state.emailsFileName}
                 onFileLoaded={handleEmailsFile}
+                onClear={() => {
+                  if (!state) return;
+                  if (!window.confirm(`¿Borrar ${state.emailsFileName || 'el Excel de correos'}? Luego puedes subir otro.`)) return;
+                  void persist({
+                    ...state,
+                    emailsFileName: '',
+                    emailsLoadedAt: '',
+                    emailContacts: [],
+                  }, backend);
+                }}
               />
               <Kpi
                 label="Agentes con email"
@@ -1254,9 +1282,17 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
                 hint="Opcional. También puedes asignar departamentos clicando una fila."
                 keepDropzone
                 compact
-                loaded={(estadoDepts || []).some((item) => item.departamentos.length > 0)}
+                loaded={Boolean(state?.estadoDepartamentosFileName)}
                 loadedName={state?.estadoDepartamentosFileName}
                 onFileLoaded={handleEstadoDepartamentosFile}
+                onClear={() => {
+                  if (!state) return;
+                  void persist({
+                    ...state,
+                    estadoDepartamentosFileName: '',
+                    estadoDepartamentosLoadedAt: '',
+                  }, backend);
+                }}
               />
               <button
                 type="button"

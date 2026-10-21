@@ -2087,6 +2087,13 @@ export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingTo
             hint="Year-Month, Vertical, Medio, Zona, Importe, Gm, Free, Gen. Web"
             onFileLoaded={handleOperationLoaded}
             keepDropzone
+            loaded={Boolean(operationName)}
+            loadedName={operationName || undefined}
+            onClear={() => {
+              setOperation([]);
+              setOperationName(null);
+              setOperationError(null);
+            }}
           />
           {operationName && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -2101,6 +2108,13 @@ export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingTo
             hint="Año Mes, Vertical, Medio, Zona, Budget, GM Bg"
             onFileLoaded={handleBudgetLoaded}
             keepDropzone
+            loaded={Boolean(budgetName)}
+            loadedName={budgetName || undefined}
+            onClear={() => {
+              setBudgetRows([]);
+              setBudgetName(null);
+              setBudgetError(null);
+            }}
           />
           {budgetName && (
             <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -2117,6 +2131,11 @@ export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingTo
             onFileLoaded={() => undefined}
             onWorkbookLoaded={handleDebtLoaded}
             keepDropzone
+            loaded={debtFiles.length > 0}
+            onClear={() => {
+              setDebtFiles([]);
+              setDebtError(null);
+            }}
           />
           {debtFiles.length > 0 && (
             <ul className="mt-2 space-y-1">
@@ -2158,11 +2177,28 @@ export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingTo
             onFileLoaded={() => undefined}
             onWorkbookLoaded={handleExtraLoaded}
             keepDropzone
+            loaded={extraFiles.length > 0}
+            onClear={() => {
+              setExtraFiles([]);
+              setExtraError(null);
+            }}
           />
           {extraFiles.length > 0 && (
-            <p className="mt-2 text-xs text-[var(--text-secondary)]">
-              {extraFiles.map((file) => file.name).join(' · ')} · {extraLines.length.toLocaleString('de-DE')} líneas
-            </p>
+            <ul className="mt-2 space-y-1">
+              {extraFiles.map((file) => (
+                <li key={file.name} className="flex items-start justify-between gap-2 text-xs text-[var(--text-secondary)]">
+                  <span>{file.name} · {file.lines.length.toLocaleString('de-DE')} líneas</span>
+                  <button
+                    type="button"
+                    onClick={() => setExtraFiles((current) => current.filter((row) => row.name !== file.name))}
+                    className="rounded p-0.5 text-[var(--text-muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                    aria-label={`Quitar ${file.name}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </section>
@@ -2170,16 +2206,16 @@ export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingTo
       {(operationError || budgetError || debtError || extraError) && (
         <div className="space-y-2">
           {operationError && (
-            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{operationError}</div>
+            <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{operationError}</div>
           )}
           {budgetError && (
-            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
+            <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{budgetError}</div>
           )}
           {debtError && (
-            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{debtError}</div>
+            <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{debtError}</div>
           )}
           {extraError && (
-            <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{extraError}</div>
+            <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{extraError}</div>
           )}
         </div>
       )}

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Upload, FileSpreadsheet, X } from 'lucide-react';
+import { useCallback, useEffect, useState, type MouseEvent } from 'react';
+import { CheckCircle2, Trash2, Upload, FileSpreadsheet, X } from 'lucide-react';
 import { isCsvFile, parseDelimitedText } from '@/lib/delimited-text';
 
 interface FileUploadProps {
@@ -17,6 +17,7 @@ interface FileUploadProps {
   compact?: boolean;
   loaded?: boolean;
   loadedName?: string;
+  onClear?: () => void;
 }
 
 export default function FileUpload({
@@ -32,6 +33,7 @@ export default function FileUpload({
   compact = false,
   loaded = false,
   loadedName,
+  onClear,
 }: FileUploadProps) {
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -113,6 +115,14 @@ export default function FileUpload({
   const isLoaded = loaded || Boolean(fileName);
   const shownName = fileName || loadedName;
 
+  const clearFile = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFileName(null);
+    setError(null);
+    onClear?.();
+  };
+
   return (
     <div className="space-y-2">
       <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>
@@ -147,11 +157,10 @@ export default function FileUpload({
               <p className="text-xs text-[var(--text-secondary)]">Archivo cargado correctamente</p>
             </div>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setFileName(null);
-              }}
-              className="ml-2 rounded-md p-1 text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
+              type="button"
+              onClick={clearFile}
+              className="ml-2 rounded-md p-1 text-[var(--text-secondary)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+              aria-label="Borrar archivo"
             >
               <X className="h-4 w-4" />
             </button>
@@ -171,6 +180,16 @@ export default function FileUpload({
             <p className={`text-xs ${isLoaded ? 'text-[var(--success)]/80' : 'text-[var(--text-muted)]'}`}>
               {isLoaded ? 'Puedes soltar otro para sustituirlo.' : (hint || '.xlsx, .xls o .csv')}
             </p>
+            {isLoaded ? (
+              <button
+                type="button"
+                onClick={clearFile}
+                className="mx-auto mt-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Borrar archivo
+              </button>
+            ) : null}
           </div>
         )}
       </div>

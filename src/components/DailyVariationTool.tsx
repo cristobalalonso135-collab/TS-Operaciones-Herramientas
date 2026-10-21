@@ -538,6 +538,9 @@ export default function DailyVariationTool({ onBack, hideBack }: DailyVariationT
           label="Sube el diario…"
           onFileLoaded={() => {}}
           onWorkbookLoaded={(sheets, fileName) => setWorkbook({ sheets, fileName })}
+          loaded={Boolean(workbook)}
+          loadedName={workbook?.fileName}
+          onClear={() => setWorkbook(null)}
         />
         {workbook && <p className="mt-2 text-xs text-[var(--text-secondary)]">{workbook.fileName}</p>}
       </section>

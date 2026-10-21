@@ -443,6 +443,14 @@ export default function DeudaTrackingView({
           onFileLoaded={() => undefined}
           onWorkbookLoaded={handleWorkbookLoaded}
           keepDropzone
+          loaded={Boolean(fileName)}
+          loadedName={fileName || undefined}
+          onClear={() => {
+            setClients([]);
+            setSnapshot(null);
+            setFileName(null);
+            setError(null);
+          }}
         />
         {activeName && (
           <p className="mt-2 text-xs text-[var(--text-secondary)]">
@@ -454,7 +462,7 @@ export default function DeudaTrackingView({
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+        <div className="rounded-lg border border-[var(--danger-soft)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
       )}
 
       {activeClients.length === 0 && !error && (

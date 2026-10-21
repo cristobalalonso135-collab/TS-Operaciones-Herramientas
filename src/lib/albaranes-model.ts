@@ -1510,6 +1510,23 @@ export function ingestCarga(rawState: AlbaranesState, input: {
   };
 }
 
+export function removeCarga(state: AlbaranesState, cargaId: string): AlbaranesState {
+  const removed = state.cargas.find((item) => item.id === cargaId);
+  const cargas = state.cargas.filter((item) => item.id !== cargaId);
+  const loadDateStillUsed = removed
+    ? cargas.some((item) => item.loadDate === removed.loadDate)
+    : true;
+  return {
+    ...state,
+    cargas,
+    evaluations: state.evaluations.filter((item) => item.cargaId !== cargaId),
+    lots: state.lots.filter((item) => item.cargaId !== cargaId && item.id !== cargaId),
+    communications: loadDateStillUsed
+      ? state.communications
+      : state.communications.filter((item) => item.loadDate !== removed?.loadDate),
+  };
+}
+
 export function currentActions(state: AlbaranesState): Evaluacion[] {
   const last = latestCarga(state);
   if (!last) return [];
