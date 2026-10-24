@@ -19,6 +19,7 @@ import ObjetivosTool from '@/components/ObjetivosTool';
 import EstadoTool from '@/components/EstadoTool';
 import MejorasTool from '@/components/MejorasTool';
 import FraccionarTool from '@/components/FraccionarTool';
+import TarifasTool from '@/components/TarifasTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import {
   parseExcelData,
@@ -419,7 +420,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos' | 'estado' | 'fraccionar'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos' | 'estado' | 'fraccionar' | 'tarifas'>('tools');
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -687,6 +688,10 @@ export default function Home() {
     return <FraccionarTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'tarifas') {
+    return <TarifasTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -777,6 +782,14 @@ export default function Home() {
         tone: 'bg-[#e7eef6] text-[#2c4a73]',
         link: 'text-[#2c4a73]',
       },
+      {
+        id: 'tarifas' as const,
+        number: '12',
+        title: 'Tarifas',
+        description: 'Price list 26/27 para el comercial: foto, vigencia, stock y fees B2C/B2B.',
+        tone: 'bg-[#f3eee6] text-[#6a4a2a]',
+        link: 'text-[#6a4a2a]',
+      },
     ];
 
     return (
@@ -792,7 +805,7 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Once entradas: comercial, almacén, abonos, mejoras IT, albaranes, checklist, objetivos, cuentas y fraccionar. El resto vive en pestañas dentro de cada herramienta.
+              Doce entradas: comercial, almacén, abonos, mejoras IT, albaranes, checklist, objetivos, cuentas, fraccionar y tarifas. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
