@@ -14,20 +14,15 @@ import {
   emptyTask,
   emptySubtask,
   formatIsoDate,
-  groupByArea,
   isClosed,
   isTaskOverdue,
+  isTaskThisWeek,
   mergeImportedTasks,
   moveById,
   sortByDeadline,
-  sortByPriority,
-  subtaskProgress,
   todayIso,
-  toggleSubtask,
   toggleTask,
   uniqueValues,
-  upcomingTasks,
-  effectiveDeadline,
   CHECKLIST_TABLE_WIDTHS,
   defaultChecklistColumnWidths,
   type ChecklistLibrary,
@@ -39,15 +34,9 @@ import {
 } from '@/lib/checklist-model';
 import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
 import { loadChecklistLibrary, saveChecklistLibrary, type ChecklistBackend } from '@/lib/checklist-store';
-import { Check, ChevronDown, ChevronUp, Clock, Copy, Download, GripVertical, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Download, GripVertical, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 
-const TABS = [
-  { id: 'tabla', label: 'Tabla' },
-  { id: 'tablero', label: 'Tablero' },
-  { id: 'enviar', label: 'Resumen' },
-  { id: 'importar', label: 'Excel' },
-] as const;
-type TabId = (typeof TABS)[number]['id'];
+const WORK_TABS = [{ id: 'resumen', label: 'Resumen' }] as const;
 
 function downloadAoa(rows: unknown[][], fileName: string) {
   void import('xlsx').then((XLSX) => {
@@ -62,32 +51,20 @@ function formatShare(done: number, total: number): string {
   return `${Math.round((done / total) * 100)}%`;
 }
 
-function Countdown({ iso }: { iso: string }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 30000);
-    return () => window.clearInterval(id);
-  }, []);
-  const target = Date.parse(`${iso}T09:00:00`);
-  if (!Number.isFinite(target)) return <p className="text-sm text-[var(--text-muted)]">Pon una fecha de evento.</p>;
-  const diff = target - now;
-  const past = diff < 0;
-  const abs = Math.abs(diff);
-  const days = Math.floor(abs / 86400000);
-  const hours = Math.floor((abs % 86400000) / 3600000);
-  const minutes = Math.floor((abs % 3600000) / 60000);
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-        {past ? 'Desde el evento' : 'Cuenta atrás'}
-      </p>
-      <p className={`mt-1 font-display text-3xl font-semibold tabular-nums ${past ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>
-        {days}<span className="text-lg font-medium text-[var(--text-secondary)]">d</span>
-        {' '}{hours}<span className="text-lg font-medium text-[var(--text-secondary)]">h</span>
-        {' '}{minutes}<span className="text-lg font-medium text-[var(--text-secondary)]">m</span>
-      </p>
-    </div>
-  );
+function formatListado(nombre: string, fechaEvento: string, tasks: ChecklistTask[]): string {
+  const kpis = checklistKpis(tasks);
+  const head = [
+    nombre,
+    [
+      fechaEvento ? `Evento ${formatIsoDate(fechaEvento)}` : '',
+      `${kpis.done} hechas · ${kpis.open} abiertas${kpis.overdue ? ` · ${kpis.overdue} vencidas` : ''}`,
+    ].filter(Boolean).join(' · '),
+  ].filter(Boolean);
+  const rows = tasks.map((task) => {
+    const mark = task.estado === 'Completado' ? 'x' : ' ';
+    return `[${mark}] ${task.area || '—'} · ${task.titulo} · ${formatIsoDate(task.deadline)} · ${task.responsable || '—'} · ${task.estado}`;
+  });
+  return [...head, '', ...rows].join('\n');
 }
 
 function Kpi({ label, value, hint, danger }: { label: string; value: string | number; hint?: string; danger?: boolean }) {
@@ -272,7 +249,6 @@ function fieldClass(invalid: boolean, extra = ''): string {
 }
 
 export default function ChecklistTool({ onBack }: { onBack: () => void }) {
-  const [tab, setTab] = useState<TabId>('tabla');
   const [library, setLibrary] = useState<ChecklistLibrary | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [state, setState] = useState<ChecklistState | null>(null);
@@ -283,16 +259,14 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [filterArea, setFilterArea] = useState('');
   const [filterOwner, setFilterOwner] = useState('');
   const [filterStatus, setFilterStatus] = useState<ChecklistStatus | ''>('');
-  const [filterPriority, setFilterPriority] = useState<ChecklistPriority | ''>('');
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
+  const [onlyWeek, setOnlyWeek] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
-  const [sort, setSort] = useState<{ key: 'deadline' | 'prioridad' | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'asc' });
+  const [importOpen, setImportOpen] = useState(false);
   const [colWidths, setColWidths] = useState<Record<string, number>>(defaultChecklistColumnWidths);
   const colWidthsRef = useRef(colWidths);
-  const dragRow = useRef<string | null>(null);
   const dragStep = useRef<string | null>(null);
-  const [dropRow, setDropRow] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState<ChecklistTask>(() => emptyTask());
   const [askedSave, setAskedSave] = useState(false);
@@ -394,27 +368,16 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       if (filterArea && item.area !== filterArea) return false;
       if (filterOwner && item.responsable !== filterOwner) return false;
       if (filterStatus && item.estado !== filterStatus) return false;
-      if (filterPriority && item.prioridad !== filterPriority) return false;
-      if (onlyOverdue) {
-        if (!isTaskOverdue(item, today)) return false;
-      }
+      if (onlyOverdue && !isTaskOverdue(item, today)) return false;
+      if (onlyWeek && !isTaskThisWeek(item, today)) return false;
       if (q) {
         const hay = `${item.area} ${item.titulo} ${item.responsable} ${item.prioridad} ${item.comentarios} ${(item.subtasks || []).map((step) => step.titulo).join(' ')}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [filterArea, filterOwner, filterPriority, filterStatus, onlyOverdue, query, tasks, today]);
-  const groups = useMemo(() => groupByArea(filtered), [filtered]);
-  const tableRows = useMemo(() => {
-    if (sort.key === 'deadline') return sortByDeadline(filtered, sort.dir);
-    if (sort.key === 'prioridad') return sortByPriority(filtered, sort.dir);
-    return filtered;
-  }, [filtered, sort]);
-  const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
-  const weeklyRows = useMemo(() => sortByDeadline(tasks, 'asc', true), [tasks]);
-  const weeklyOpen = weeklyRows.filter((item) => !isClosed(item)).length;
-  const weeklyDone = weeklyRows.filter((item) => item.estado === 'Completado').length;
+  }, [filterArea, filterOwner, filterStatus, onlyOverdue, onlyWeek, query, tasks, today]);
+  const tableRows = useMemo(() => sortByDeadline(filtered, 'asc', true), [filtered]);
   const formGaps = askedSave ? missingChecklistFields(form) : [];
   const gapKeys = new Set(formGaps.map((item) => item.key));
 
@@ -459,13 +422,13 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     const board = libraryRef.current?.lists.find((item) => item.id === id);
     if (!board) return;
     setOpenId(id);
-    setTab('tabla');
     setQuery('');
     setFilterArea('');
     setFilterOwner('');
     setFilterStatus('');
     setOnlyOverdue(false);
-    setSort({ key: null, dir: 'asc' });
+    setOnlyWeek(false);
+    setImportOpen(false);
     stateRef.current = board;
     setState(board);
   };
@@ -487,7 +450,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     stateRef.current = board;
     setState(board);
     setOpenId(board.id);
-    setTab('tabla');
   };
 
   const duplicateBoard = (source: ChecklistState) => {
@@ -499,7 +461,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     stateRef.current = board;
     setState(board);
     setOpenId(board.id);
-    setTab('tabla');
     setAck(`Plantilla copiada. Ponle nombre y fechas a ${board.nombre}.`);
   };
 
@@ -525,10 +486,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     void persist({ ...current, tasks: result.tasks }, backend);
   };
 
-  const markSub = (task: ChecklistTask, subId: string) => {
-    patchTask(task.id, toggleSubtask(task, subId));
-  };
-
   const setFormSub = (id: string, update: Partial<ChecklistSubtask>) => {
     setForm({
       ...form,
@@ -536,13 +493,36 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     });
   };
 
-  const moveTask = (fromId: string, toId: string) => {
+  const copyListado = async () => {
+    const text = formatListado(state?.nombre || 'Checklist', state?.fechaEvento || '', tableRows);
+    try {
+      await navigator.clipboard.writeText(text);
+      setAck('Listado copiado.');
+    } catch {
+      setError('No he podido copiar el listado.');
+    }
+  };
+
+  const importExcel = (sheets: Record<string, any[][]>) => {
+    const parsed = parseChecklistSheet(pickChecklistRows(sheets));
+    if (parsed.tasks.length === 0) {
+      setAck('No he encontrado tareas. Revisa que haya una columna Tarea.');
+      return;
+    }
     const current = stateRef.current;
     if (!current) return;
-    const tasks = moveById(current.tasks, fromId, toId);
-    if (tasks === current.tasks) return;
-    setSort({ key: null, dir: 'asc' });
-    void persist({ ...current, tasks }, backend);
+    const result = replaceAll
+      ? { state: { ...current, tasks: parsed.tasks }, added: parsed.tasks.length, updated: 0 }
+      : mergeImportedTasks(current, parsed.tasks);
+    void persist({
+      ...result.state,
+      nombre: parsed.nombre || result.state.nombre,
+      fechaEvento: parsed.fechaEvento || result.state.fechaEvento,
+    }, backend);
+    setAck(replaceAll
+      ? `Checklist sustituido: ${parsed.tasks.length} tareas.`
+      : `${result.added} nuevas y ${result.updated} actualizadas.`);
+    setImportOpen(false);
   };
 
   const moveFormStep = (fromId: string, toId: string) => {
@@ -714,9 +694,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       <WorkspaceChrome
         onBack={closeBoard}
         backLabel="Checklists"
-        tabs={[...TABS]}
-        active={tab}
-        onSelect={(id) => setTab(id as TabId)}
+        tabs={[...WORK_TABS]}
+        active="resumen"
+        onSelect={() => undefined}
       />
 
       {setupSql && (
@@ -732,489 +712,92 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {(tab === 'tablero' || tab === 'tabla') && (
-        <div className="space-y-4">
-          <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">08 Checklist</p>
-            <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
-              <div className="min-w-0 flex-1 space-y-2">
-                <input
-                  value={state.nombre}
-                  onChange={(e) => {
-                    const next = { ...state, nombre: e.target.value };
-                    stateRef.current = next;
-                    setState(next);
-                  }}
-                  onBlur={flush}
-                  className="w-full bg-transparent font-display text-2xl font-semibold tracking-tight outline-none"
-                />
-                <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-                  Fecha evento
-                  <input
-                    type="date"
-                    value={state.fechaEvento}
-                    onChange={(e) => void persist({ ...state, fechaEvento: e.target.value }, backend)}
-                    className="rounded-md border border-[var(--border)] bg-white px-2 py-1 text-sm"
-                  />
-                </label>
-              </div>
-              <Countdown iso={state.fechaEvento} />
-            </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-              <div className="h-full rounded-full bg-[var(--success)]" style={{ width: `${Math.round(kpis.share * 100)}%` }} />
-            </div>
-            <p className="mt-2 text-xs text-[var(--text-muted)]">
-              {formatShare(kpis.done, kpis.total)} completado
-              {kpis.expired > 0 ? ` · ${kpis.expired} caducada${kpis.expired === 1 ? '' : 's'}` : ''}
-            </p>
-            {upcoming.length > 0 && (
-              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {upcoming.map((item) => {
-                  const nearest = effectiveDeadline(item);
-                  const closed = item.estado === 'Completado' || item.estado === 'Caducada';
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => openTask(item)}
-                      className="rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-2 text-left hover:border-[var(--border-strong)]"
-                    >
-                      <p className="truncate text-xs font-medium">{item.titulo}</p>
-                      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                        <PriorityMark value={item.prioridad} muted={closed} />
-                        <DeadlineMark iso={nearest} today={today} closed={closed} />
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <Kpi label="Tareas" value={kpis.total} />
-            <Kpi label="Hechas" value={kpis.done} hint={formatShare(kpis.done, kpis.total)} />
-            <Kpi label="Abiertas" value={kpis.open} />
-            <button type="button" onClick={() => setOnlyOverdue((value) => !value)} className="text-left">
-              <Kpi label="Vencidas" value={kpis.overdue} danger={kpis.overdue > 0} hint={onlyOverdue ? 'Filtro activo' : 'Pincha para filtrar'} />
-            </button>
-            <Kpi label="Bloqueadas" value={kpis.blocked} />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-2 h-4 w-4 text-[var(--text-muted)]" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar" className="h-9 w-48 rounded-md border border-[var(--border)] bg-white pl-8 pr-3 text-sm" />
-            </div>
-            <FilterSelect value={filterArea} onChange={setFilterArea} label="Área" options={areas} />
-            <FilterSelect value={filterOwner} onChange={setFilterOwner} label="Responsable" options={owners} />
-            <FilterSelect value={filterStatus} onChange={(value) => setFilterStatus(value as ChecklistStatus | '')} label="Estado" options={[...CHECKLIST_STATUSES]} />
-            <FilterSelect value={filterPriority} onChange={(value) => setFilterPriority(value as ChecklistPriority | '')} label="Prioridad" options={[...CHECKLIST_PRIORITIES]} />
-            {(query || filterArea || filterOwner || filterStatus || filterPriority || onlyOverdue) ? (
-              <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => { setQuery(''); setFilterArea(''); setFilterOwner(''); setFilterStatus(''); setFilterPriority(''); setOnlyOverdue(false); }}>Quitar filtros</button>
-            ) : null}
-            <div className="ml-auto flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-                onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
-              >
-                <Download className="h-3.5 w-3.5" /> Excel
-              </button>
-              <button
-                type="button"
-                className="flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
-                onClick={openNew}
-              >
-                <Plus className="h-3.5 w-3.5" /> Nueva tarea
-              </button>
-            </div>
-          </div>
-
-          {tab === 'tablero' && (
-          <div className="space-y-4">
-            {groups.length === 0 && (
-              <p className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
-            )}
-            {groups.map((group) => (
-              <section key={group.area} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-                <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-2">
-                  <p className="text-sm font-semibold">{group.area}</p>
-                  <p className="text-xs text-[var(--text-muted)]">
-                    {group.tasks.filter((item) => item.estado === 'Completado').length}/{group.tasks.length}
-                  </p>
-                </div>
-                <ul>
-                  {group.tasks.map((task) => {
-                    const progress = subtaskProgress(task);
-                    const closed = task.estado === 'Completado' || task.estado === 'Caducada';
-                    return (
-                      <li
-                        key={task.id}
-                        className={`grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-start ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : doneRowClass(task.estado)}`}
-                        onDragOver={(event) => {
-                          event.preventDefault();
-                          setDropRow(task.id);
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          const from = dragRow.current;
-                          dragRow.current = null;
-                          setDropRow(null);
-                          if (from) moveTask(from, task.id);
-                        }}
-                        onDragLeave={() => {
-                          if (dropRow === task.id) setDropRow(null);
-                        }}
-                      >
-                        <span
-                          draggable
-                          onDragStart={(event) => {
-                            dragRow.current = task.id;
-                            event.dataTransfer.effectAllowed = 'move';
-                            event.dataTransfer.setData('text/plain', task.id);
-                          }}
-                          onDragEnd={() => {
-                            dragRow.current = null;
-                            setDropRow(null);
-                          }}
-                          className="mt-1 inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
-                          aria-label="Mover tarea"
-                        >
-                          <GripVertical className="h-4 w-4" />
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => markDone(task)}
-                          disabled={task.estado === 'Caducada'}
-                          className={`mt-0.5 flex h-6 w-6 items-center justify-center rounded-full border ${task.estado === 'Completado' ? 'border-[var(--success)] bg-[var(--success)] text-white' : task.estado === 'Caducada' ? 'border-[var(--border)] bg-[var(--bg-soft)] text-[var(--text-muted)]' : 'border-[var(--border-strong)]'}`}
-                          aria-label={task.estado === 'Completado' ? 'Marcar pendiente' : 'Completar'}
-                        >
-                          {task.estado === 'Completado' ? <Check className="h-3.5 w-3.5" /> : null}
-                        </button>
-                        <div className="min-w-0 space-y-2">
-                          <button type="button" onClick={() => openTask(task)} className="min-w-0 space-y-1 text-left">
-                            <p className={`text-sm ${task.estado === 'Completado' ? 'text-[var(--text-secondary)] line-through' : task.estado === 'Caducada' ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</p>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-secondary)]">
-                              <span className="inline-flex items-center gap-1.5">
-                                <Clock className="h-3 w-3 text-[var(--text-muted)]" />
-                                <DeadlineMark
-                                  iso={task.deadline || (progress.total > 0 ? effectiveDeadline(task) : null)}
-                                  today={today}
-                                  closed={closed}
-                                />
-                              </span>
-                              {task.responsable ? <span>{task.responsable}</span> : null}
-                              <PriorityMark value={task.prioridad} muted={closed} />
-                              <span>{task.estado}</span>
-                              {progress.total > 0 ? <span>{progress.done}/{progress.total} pasos</span> : null}
-                            </div>
-                            {task.comentarios ? <p className="text-xs text-[var(--text-muted)]">{task.comentarios}</p> : null}
-                          </button>
-                          {progress.total > 0 && (
-                            <ul className="space-y-1.5 border-l border-[var(--border)] pl-3">
-                              {task.subtasks.map((step) => {
-                                return (
-                                  <li key={step.id} className="flex items-start gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => markSub(task, step.id)}
-                                      className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${step.done ? 'border-[var(--success)] bg-[var(--success)] text-white' : 'border-[var(--border-strong)]'}`}
-                                      aria-label={step.done ? 'Marcar paso pendiente' : 'Completar paso'}
-                                    >
-                                      {step.done ? <Check className="h-2.5 w-2.5" /> : null}
-                                    </button>
-                                    <button type="button" onClick={() => openTask(task)} className="min-w-0 text-left">
-                                      <p className={`text-xs ${step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-primary)]'}`}>{step.titulo}</p>
-                                      {step.deadline ? (
-                                        <p className="mt-0.5 text-[11px]">
-                                          <DeadlineMark iso={step.deadline} today={today} closed={step.done} />
-                                        </p>
-                                      ) : null}
-                                    </button>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ))}
-          </div>
-          )}
-
-          {tab === 'tabla' && (
-            <div className="space-y-2">
-              <p className="text-xs text-[var(--text-muted)]">
-                Arrastra el borde de cada columna para definir el ancho. El texto se adapta y no se corta.
-              </p>
-              <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-              {tableRows.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
-              ) : (
-                <table
-                  className="text-left text-sm"
-                  style={{ tableLayout: 'fixed', width: Object.values(colWidths).reduce((sum, item) => sum + item, 0) }}
-                >
-                  <colgroup>
-                    {Object.keys(CHECKLIST_TABLE_WIDTHS).map((key) => (
-                      <col key={key} style={{ width: colWidths[key] }} />
-                    ))}
-                  </colgroup>
-                  <thead className="bg-[var(--bg-soft)] text-xs uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                    <tr>
-                      <th className="relative px-3 py-2" style={{ width: colWidths.grip }} />
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.area }}>
-                        Área
-                        <ColResize onMouseDown={(event) => resizeColumn('area', event)} />
-                      </th>
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.titulo }}>
-                        Tarea
-                        <ColResize onMouseDown={(event) => resizeColumn('titulo', event)} />
-                      </th>
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.deadline }}>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1"
-                          onClick={() => setSort((current) => (
-                            current.key === 'deadline'
-                              ? { key: 'deadline', dir: current.dir === 'asc' ? 'desc' : 'asc' }
-                              : { key: 'deadline', dir: 'asc' }
-                          ))}
-                        >
-                          Deadline
-                          {sort.key === 'deadline' ? (
-                            sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />
-                          ) : null}
-                        </button>
-                        <ColResize onMouseDown={(event) => resizeColumn('deadline', event)} />
-                      </th>
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.prioridad }}>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1"
-                          onClick={() => setSort((current) => (
-                            current.key === 'prioridad'
-                              ? { key: 'prioridad', dir: current.dir === 'asc' ? 'desc' : 'asc' }
-                              : { key: 'prioridad', dir: 'asc' }
-                          ))}
-                        >
-                          Prioridad
-                          {sort.key === 'prioridad' ? (
-                            sort.dir === 'asc' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />
-                          ) : null}
-                        </button>
-                        <ColResize onMouseDown={(event) => resizeColumn('prioridad', event)} />
-                      </th>
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.responsable }}>
-                        Responsable
-                        <ColResize onMouseDown={(event) => resizeColumn('responsable', event)} />
-                      </th>
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.estado }}>
-                        Estado
-                        <ColResize onMouseDown={(event) => resizeColumn('estado', event)} />
-                      </th>
-                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.comentarios }}>
-                        Comentarios
-                        <ColResize onMouseDown={(event) => resizeColumn('comentarios', event)} />
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableRows.map((task) => {
-                      const closed = task.estado === 'Completado' || task.estado === 'Caducada';
-                      const done = task.estado === 'Completado';
-                      return (
-                        <tr
-                          key={task.id}
-                          className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : ''} ${doneRowClass(task.estado)}`}
-                          onClick={() => openTask(task)}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            setDropRow(task.id);
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            const from = dragRow.current;
-                            dragRow.current = null;
-                            setDropRow(null);
-                            if (from) moveTask(from, task.id);
-                          }}
-                          onDragLeave={() => {
-                            if (dropRow === task.id) setDropRow(null);
-                          }}
-                        >
-                          <td className="px-3 py-2.5 align-top" onClick={(event) => event.stopPropagation()}>
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                draggable
-                                onDragStart={(event) => {
-                                  dragRow.current = task.id;
-                                  event.dataTransfer.effectAllowed = 'move';
-                                  event.dataTransfer.setData('text/plain', task.id);
-                                }}
-                                onDragEnd={() => {
-                                  dragRow.current = null;
-                                  setDropRow(null);
-                                }}
-                                className="inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
-                                aria-label="Mover tarea"
-                              >
-                                <GripVertical className="h-4 w-4" />
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => markDone(task)}
-                                disabled={task.estado === 'Caducada'}
-                                className={`flex h-5 w-5 items-center justify-center rounded-full border ${task.estado === 'Completado' ? 'border-[var(--success)] bg-[var(--success)] text-white' : task.estado === 'Caducada' ? 'border-[var(--border)] bg-[var(--bg-soft)]' : 'border-[var(--border-strong)]'}`}
-                                aria-label={task.estado === 'Completado' ? 'Marcar pendiente' : 'Completar'}
-                              >
-                                {task.estado === 'Completado' ? <Check className="h-3 w-3" /> : null}
-                              </button>
-                            </div>
-                          </td>
-                          <td className="break-words px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
-                          <td className={`break-words px-3 py-2.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
-                            {task.titulo}
-                            {(task.subtasks || []).length > 0 ? (
-                              <ul className="mt-1.5 space-y-1 font-normal no-underline">
-                                {task.subtasks.map((step) => (
-                                  <li key={step.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                    <span className={`break-words ${step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)]'}`}>
-                                      {step.done ? '✓ ' : '· '}{step.titulo}
-                                    </span>
-                                    <DeadlineMark iso={step.deadline} today={today} closed={step.done || closed} />
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : null}
-                          </td>
-                          <td className="break-words px-3 py-2.5 align-top">
-                            <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
-                          </td>
-                          <td className="break-words px-3 py-2.5 align-top">
-                            <PriorityMark value={task.prioridad} muted={task.estado === 'Caducada'} />
-                          </td>
-                          <td className="break-words px-3 py-2.5 align-top">{task.responsable || '—'}</td>
-                          <td className="break-words px-3 py-2.5 align-top"><StatusMark value={task.estado} /></td>
-                          <td className="break-words px-3 py-2.5 align-top text-xs text-[var(--text-secondary)]">{task.comentarios || '—'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === 'enviar' && (
-        <div className="space-y-2">
-          <p className="text-xs text-[var(--text-muted)]">
-            Arrastra el borde de cada columna para definir el ancho. El texto se adapta y no se corta.
-          </p>
-          <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--border)] bg-white px-3 py-2">
-            <p className="font-display text-base font-semibold tracking-tight">{state.nombre}</p>
-            <p className="text-xs text-[var(--text-secondary)]">
-              {weeklyDone} hecha{weeklyDone === 1 ? '' : 's'} · {weeklyOpen} pendiente{weeklyOpen === 1 ? '' : 's'}
-              {state.fechaEvento ? ` · evento ${formatIsoDate(state.fechaEvento)}` : ''}
-            </p>
-          </div>
-          {weeklyRows.length === 0 ? (
-            <p className="px-3 py-6 text-sm text-[var(--text-muted)]">No hay tareas.</p>
-          ) : (
-            <table
-              className="text-left text-[13px]"
-              style={{
-                tableLayout: 'fixed',
-                width: ['area', 'titulo', 'deadline', 'prioridad', 'responsable', 'estado']
-                  .reduce((sum, key) => sum + (colWidths[key] || 0), 0),
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">08 Checklist</p>
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0 flex-1 space-y-2">
+            <input
+              value={state.nombre}
+              onChange={(e) => {
+                const next = { ...state, nombre: e.target.value };
+                stateRef.current = next;
+                setState(next);
               }}
+              onBlur={flush}
+              className="w-full bg-transparent font-display text-2xl font-semibold tracking-tight outline-none"
+            />
+            <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              Fecha evento
+              <input
+                type="date"
+                value={state.fechaEvento}
+                onChange={(e) => {
+                  const next = { ...state, fechaEvento: e.target.value };
+                  stateRef.current = next;
+                  setState(next);
+                }}
+                onBlur={flush}
+                className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-sm"
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={openNew}
+              className="inline-flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
             >
-              <colgroup>
-                {['area', 'titulo', 'deadline', 'prioridad', 'responsable', 'estado'].map((key) => (
-                  <col key={key} style={{ width: colWidths[key] }} />
-                ))}
-              </colgroup>
-              <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
-                <tr>
-                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.area }}>
-                    Área
-                    <ColResize onMouseDown={(event) => resizeColumn('area', event)} />
-                  </th>
-                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.titulo }}>
-                    Tarea
-                    <ColResize onMouseDown={(event) => resizeColumn('titulo', event)} />
-                  </th>
-                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.deadline }}>
-                    Deadline
-                    <ColResize onMouseDown={(event) => resizeColumn('deadline', event)} />
-                  </th>
-                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.prioridad }}>
-                    Prioridad
-                    <ColResize onMouseDown={(event) => resizeColumn('prioridad', event)} />
-                  </th>
-                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.responsable }}>
-                    Responsable
-                    <ColResize onMouseDown={(event) => resizeColumn('responsable', event)} />
-                  </th>
-                  <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.estado }}>
-                    Estado
-                    <ColResize onMouseDown={(event) => resizeColumn('estado', event)} />
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {weeklyRows.map((task) => {
-                  const closed = isClosed(task);
-                  const done = task.estado === 'Completado';
-                  const overdue = !closed && !!task.deadline && task.deadline < today;
-                  return (
-                    <tr
-                      key={task.id}
-                      className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : doneRowClass(task.estado) || 'bg-white'}`}
-                      onClick={() => openTask(task)}
-                    >
-                      <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
-                      <td className={`break-words px-2.5 py-1.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
-                      <td className="break-words px-2.5 py-1.5 align-top">
-                        <DeadlineMark iso={task.deadline} today={today} closed={closed} />
-                      </td>
-                      <td className="break-words px-2.5 py-1.5 align-top">
-                        <PriorityMark value={task.prioridad} muted={task.estado === 'Caducada'} />
-                      </td>
-                      <td className="break-words px-2.5 py-1.5 align-top">{task.responsable || '—'}</td>
-                      <td className="break-words px-2.5 py-1.5 align-top"><StatusMark value={task.estado} /></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+              <Plus className="h-3.5 w-3.5" /> Nueva tarea
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyListado()}
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
+            >
+              <Copy className="h-3.5 w-3.5" /> Copiar listado
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
+              onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
+            >
+              <Download className="h-3.5 w-3.5" /> Excel
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportOpen((open) => !open)}
+              className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
+                importOpen ? 'border-[var(--text-primary)] bg-[var(--text-primary)] text-white' : 'border-[var(--border)] bg-white'
+              }`}
+            >
+              <Upload className="h-3.5 w-3.5" /> Importar
+            </button>
           </div>
         </div>
-      )}
+        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+          <div className="h-full rounded-full bg-[var(--success)]" style={{ width: `${Math.round(kpis.share * 100)}%` }} />
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <Kpi label="Abiertas" value={kpis.open} />
+          <button
+            type="button"
+            className="text-left"
+            onClick={() => {
+              setOnlyOverdue((value) => !value);
+              setOnlyWeek(false);
+            }}
+          >
+            <Kpi label="Vencidas" value={kpis.overdue} danger={kpis.overdue > 0} hint={onlyOverdue ? 'Filtro activo' : undefined} />
+          </button>
+          <Kpi label="Hechas" value={kpis.done} hint={formatShare(kpis.done, kpis.total)} />
+        </div>
+      </section>
 
-      {tab === 'importar' && (
-        <div className="space-y-4">
+      {importOpen ? (
+        <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
           <p className="text-sm text-[var(--text-secondary)]">
             Exporta o importa el checklist entero: tareas, prioridad, pasos, fechas, estados y responsables. Si la tarea ya existe, se actualiza.
           </p>
-          <button
-            type="button"
-            className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-            onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
-          >
-            <Download className="h-3.5 w-3.5" /> Descargar Excel
-          </button>
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <input type="checkbox" checked={replaceAll} onChange={(e) => setReplaceAll(e.target.checked)} />
             Sustituir el checklist actual (no fusionar)
@@ -1226,30 +809,152 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             keepDropzone
             compact
             onFileLoaded={() => {}}
-            onWorkbookLoaded={(sheets) => {
-              const parsed = parseChecklistSheet(pickChecklistRows(sheets));
-              if (parsed.tasks.length === 0) {
-                setAck('No he encontrado tareas. Revisa que haya una columna Tarea.');
-                return;
-              }
-              const current = stateRef.current;
-              if (!current) return;
-              const result = replaceAll
-                ? { state: { ...current, tasks: parsed.tasks }, added: parsed.tasks.length, updated: 0 }
-                : mergeImportedTasks(current, parsed.tasks);
-              void persist({
-                ...result.state,
-                nombre: parsed.nombre || result.state.nombre,
-                fechaEvento: parsed.fechaEvento || result.state.fechaEvento,
-              }, backend);
-              setAck(replaceAll
-                ? `Checklist sustituido: ${parsed.tasks.length} tareas.`
-                : `${result.added} nuevas y ${result.updated} actualizadas.`);
-              setTab('tabla');
-            }}
+            onWorkbookLoaded={importExcel}
           />
         </div>
-      )}
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="relative min-w-[180px] flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar"
+            className="h-9 w-full rounded-md border border-[var(--border)] bg-white py-0 pl-8 pr-3 text-sm"
+          />
+        </label>
+        <FilterSelect value={filterArea} onChange={setFilterArea} label="Área" options={areas} />
+        <FilterSelect value={filterOwner} onChange={setFilterOwner} label="Responsable" options={owners} />
+        <FilterSelect
+          value={filterStatus}
+          onChange={(value) => setFilterStatus(value as ChecklistStatus | '')}
+          label="Estado"
+          options={[...CHECKLIST_STATUSES]}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setOnlyOverdue((value) => !value);
+            setOnlyWeek(false);
+          }}
+          className={`h-9 rounded-md border px-3 text-xs font-semibold ${
+            onlyOverdue
+              ? 'border-red-300 bg-red-50 text-red-800'
+              : 'border-[var(--border)] bg-white text-[var(--text-secondary)]'
+          }`}
+        >
+          Vencidas
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setOnlyWeek((value) => !value);
+            setOnlyOverdue(false);
+          }}
+          className={`h-9 rounded-md border px-3 text-xs font-semibold ${
+            onlyWeek
+              ? 'border-[var(--text-primary)] bg-[var(--text-primary)] text-white'
+              : 'border-[var(--border)] bg-white text-[var(--text-secondary)]'
+          }`}
+        >
+          Esta semana
+        </button>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+        {tableRows.length === 0 ? (
+          <p className="px-3 py-6 text-sm text-[var(--text-muted)]">
+            {tasks.length === 0 ? 'No hay tareas.' : 'Ninguna tarea con estos filtros.'}
+          </p>
+        ) : (
+          <table
+            className="text-left text-[13px]"
+            style={{
+              tableLayout: 'fixed',
+              width: ['grip', 'area', 'titulo', 'deadline', 'prioridad', 'responsable', 'estado']
+                .reduce((sum, key) => sum + (colWidths[key] || 0), 0),
+            }}
+          >
+            <colgroup>
+              {['grip', 'area', 'titulo', 'deadline', 'prioridad', 'responsable', 'estado'].map((key) => (
+                <col key={key} style={{ width: colWidths[key] }} />
+              ))}
+            </colgroup>
+            <thead className="bg-[var(--bg-soft)] text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+              <tr>
+                <th className="px-2 py-1.5" style={{ width: colWidths.grip }} />
+                <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.area }}>
+                  Área
+                  <ColResize onMouseDown={(event) => resizeColumn('area', event)} />
+                </th>
+                <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.titulo }}>
+                  Tarea
+                  <ColResize onMouseDown={(event) => resizeColumn('titulo', event)} />
+                </th>
+                <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.deadline }}>
+                  Deadline
+                  <ColResize onMouseDown={(event) => resizeColumn('deadline', event)} />
+                </th>
+                <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.prioridad }}>
+                  Prioridad
+                  <ColResize onMouseDown={(event) => resizeColumn('prioridad', event)} />
+                </th>
+                <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.responsable }}>
+                  Responsable
+                  <ColResize onMouseDown={(event) => resizeColumn('responsable', event)} />
+                </th>
+                <th className="relative px-2.5 py-1.5 font-semibold" style={{ width: colWidths.estado }}>
+                  Estado
+                  <ColResize onMouseDown={(event) => resizeColumn('estado', event)} />
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((task) => {
+                const closed = isClosed(task);
+                const done = task.estado === 'Completado';
+                const overdue = isTaskOverdue(task, today);
+                return (
+                  <tr
+                    key={task.id}
+                    className={`cursor-pointer border-t border-[var(--border)] hover:bg-[var(--bg-soft)] ${overdue ? 'bg-red-50' : doneRowClass(task.estado) || 'bg-white'}`}
+                    onClick={() => openTask(task)}
+                  >
+                    <td className="px-2 py-1.5 align-top" onClick={(event) => event.stopPropagation()}>
+                      <button
+                        type="button"
+                        disabled={task.estado === 'Caducada'}
+                        onClick={() => markDone(task)}
+                        className={`mt-0.5 flex h-4 w-4 items-center justify-center rounded border ${
+                          done
+                            ? 'border-[var(--success)] bg-[var(--success)] text-white'
+                            : task.estado === 'Caducada'
+                              ? 'cursor-not-allowed border-[var(--border)] bg-[var(--bg-soft)]'
+                              : 'border-[var(--border-strong)] bg-white'
+                        }`}
+                        aria-label={done ? 'Marcar pendiente' : 'Completar'}
+                      >
+                        {done ? <Check className="h-2.5 w-2.5" /> : null}
+                      </button>
+                    </td>
+                    <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
+                    <td className={`break-words px-2.5 py-1.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
+                    <td className="break-words px-2.5 py-1.5 align-top">
+                      <DeadlineMark iso={task.deadline} today={today} closed={closed} />
+                    </td>
+                    <td className="break-words px-2.5 py-1.5 align-top">
+                      <PriorityMark value={task.prioridad} muted={task.estado === 'Caducada'} />
+                    </td>
+                    <td className="break-words px-2.5 py-1.5 align-top">{task.responsable || '—'}</td>
+                    <td className="break-words px-2.5 py-1.5 align-top"><StatusMark value={task.estado} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       {editingId && (
         <div className="abonos-modal-backdrop" onClick={closePanel}>

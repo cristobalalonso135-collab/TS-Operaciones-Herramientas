@@ -99,6 +99,12 @@ export function isTaskOverdue(task: ChecklistTask, today = todayIso()): boolean 
   return (task.subtasks || []).some((item) => !item.done && item.deadline && item.deadline < today);
 }
 
+export function isTaskThisWeek(task: ChecklistTask, today = todayIso()): boolean {
+  if (isClosed(task)) return false;
+  const days = daysUntil(effectiveDeadline(task), today);
+  return days != null && days >= 0 && days <= 6;
+}
+
 export function toggleSubtask(task: ChecklistTask, subId: string): ChecklistTask {
   return {
     ...task,
