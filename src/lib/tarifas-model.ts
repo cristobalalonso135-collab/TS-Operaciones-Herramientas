@@ -54,6 +54,47 @@ export interface TarifaProduct {
 
 export type TarifaChannel = 'b2c' | 'b2b';
 export type FeeLevel = 1 | 2 | 3 | 4;
+export type TarifaAge = 'adult' | 'youth';
+export type TarifaSport = 'Fútbol' | 'Baloncesto' | 'Hockey' | 'Otros';
+export type TarifaKind = 'Personalizable' | 'Catálogo';
+
+export function hasAdult(item: TarifaProduct): boolean {
+  return Boolean(item.adultRef);
+}
+
+export function hasYouth(item: TarifaProduct): boolean {
+  return Boolean(item.youthRef);
+}
+
+export function sportOf(item: TarifaProduct): TarifaSport {
+  const text = `${item.productType} ${item.name}`.toLocaleLowerCase('es');
+  if (text.includes('basket') || text.includes('baloncesto')) return 'Baloncesto';
+  if (text.includes('hockey')) return 'Hockey';
+  if (text.includes('pádel') || text.includes('padel')) return 'Otros';
+  return 'Fútbol';
+}
+
+export function kindOf(item: TarifaProduct): TarifaKind {
+  const type = item.productType.toLocaleLowerCase('es');
+  const kit = [
+    'camiseta',
+    'pantalón corto',
+    'pantalon corto',
+    'medias',
+    'polo',
+    'peto',
+    'falda',
+    'top',
+  ];
+  if (type.includes('algodón') || type.includes('algodon') || type.includes('térmica') || type.includes('termica')) {
+    return 'Catálogo';
+  }
+  return kit.some((name) => type.includes(name)) ? 'Personalizable' : 'Catálogo';
+}
+
+export function channelFees(channel: TarifaChannel): FeeLevel[] {
+  return channel === 'b2c' ? [1, 2, 3, 4] : [1, 2, 3];
+}
 
 export function newId(prefix: string): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`;
@@ -191,21 +232,35 @@ export function formatRed(red: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
-export function sellPrice(item: TarifaProduct, channel: TarifaChannel, fee: FeeLevel = 1): number | null {
+export function sellPrice(
+  item: TarifaProduct,
+  channel: TarifaChannel,
+  fee: FeeLevel = 1,
+  age: TarifaAge = 'adult',
+): number | null {
   if (channel === 'b2c') {
     if (fee === 1) return money(item.b2c.fee1);
     if (fee === 2) return money(item.b2c.fee2);
     if (fee === 3) return money(item.b2c.fee3);
     return money(item.b2c.fee4);
   }
-  if (fee === 1) return money(item.b2b.adultFee1 ?? item.b2b.youthFee1);
-  if (fee === 2) return money(item.b2b.adultFee2 ?? item.b2b.youthFee2);
-  return money(item.b2b.adultFee3 ?? item.b2b.youthFee3);
+  const adult = fee === 1 ? item.b2b.adultFee1 : fee === 2 ? item.b2b.adultFee2 : item.b2b.adultFee3;
+  const youth = fee === 1 ? item.b2b.youthFee1 : fee === 2 ? item.b2b.youthFee2 : item.b2b.youthFee3;
+  return age === 'youth' ? money(youth ?? adult) : money(adult ?? youth);
 }
 
-export function rrpPrice(item: TarifaProduct, channel: TarifaChannel): number | null {
-  if (channel === 'b2c') return money(item.b2c.adultRrp ?? item.b2c.youthRrp);
-  return money(item.b2b.adultRrp ?? item.b2b.youthRrp);
+export function rrpPrice(
+  item: TarifaProduct,
+  channel: TarifaChannel,
+  age: TarifaAge = 'adult',
+): number | null {
+  const adult = channel === 'b2c' ? item.b2c.adultRrp : item.b2b.adultRrp;
+  const youth = channel === 'b2c' ? item.b2c.youthRrp : item.b2b.youthRrp;
+  return age === 'youth' ? money(youth ?? adult) : money(adult ?? youth);
+}
+
+export function activeRef(item: TarifaProduct, age: TarifaAge): string {
+  return age === 'youth' ? (item.youthRef || item.adultRef) : (item.adultRef || item.youthRef);
 }
 
 export function unitCost(item: TarifaProduct, channel: TarifaChannel): number | null {
@@ -227,35 +282,27 @@ export interface PackLine {
   id: string;
   qty: number;
   fee: FeeLevel;
+  age: TarifaAge;
 }
 
 export function packTotals(
   products: TarifaProduct[],
   lines: PackLine[],
   channel: TarifaChannel,
-): { pieces: number; sale: number; cost: number; margin: number | null } {
+): { pieces: number; sale: number } {
   const byId = new Map(products.map((item) => [item.id, item]));
   let pieces = 0;
   let sale = 0;
-  let cost = 0;
-  let hasCost = false;
   lines.forEach((line) => {
     const item = byId.get(line.id);
     if (!item) return;
-    const price = sellPrice(item, channel, line.fee);
-    const unit = unitCost(item, channel);
+    const price = sellPrice(item, channel, line.fee, line.age);
     pieces += line.qty;
     if (price != null) sale += price * line.qty;
-    if (unit != null) {
-      cost += unit * line.qty;
-      hasCost = true;
-    }
   });
   return {
     pieces,
     sale: Math.round(sale * 100) / 100,
-    cost: Math.round(cost * 100) / 100,
-    margin: hasCost ? marginPct(sale, cost) : null,
   };
 }
 
