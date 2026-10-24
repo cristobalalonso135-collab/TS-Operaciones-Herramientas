@@ -287,7 +287,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
-  const [sort, setSort] = useState<{ key: 'deadline' | 'prioridad' | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'asc' });
+  const [sort, setSort] = useState<{ key: 'deadline' | 'prioridad' | null; dir: 'asc' | 'desc' }>({ key: 'deadline', dir: 'asc' });
   const [colWidths, setColWidths] = useState<Record<string, number>>(defaultChecklistColumnWidths);
   const colWidthsRef = useRef(colWidths);
   const dragRow = useRef<string | null>(null);
@@ -407,9 +407,13 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   }, [filterArea, filterOwner, filterPriority, filterStatus, onlyOverdue, query, tasks, today]);
   const groups = useMemo(() => groupByArea(filtered), [filtered]);
   const tableRows = useMemo(() => {
-    if (sort.key === 'deadline') return sortByDeadline(filtered, sort.dir);
-    if (sort.key === 'prioridad') return sortByPriority(filtered, sort.dir);
-    return filtered;
+    const closedLast = (rows: ChecklistTask[]) => [
+      ...rows.filter((item) => !isClosed(item)),
+      ...rows.filter((item) => isClosed(item)),
+    ];
+    if (sort.key === 'deadline') return sortByDeadline(filtered, sort.dir, true);
+    if (sort.key === 'prioridad') return closedLast(sortByPriority(filtered, sort.dir));
+    return closedLast(filtered);
   }, [filtered, sort]);
   const upcoming = useMemo(() => upcomingTasks(tasks, today), [tasks, today]);
   const weeklyRows = useMemo(() => sortByDeadline(tasks, 'asc', true), [tasks]);
@@ -465,7 +469,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     setFilterOwner('');
     setFilterStatus('');
     setOnlyOverdue(false);
-    setSort({ key: null, dir: 'asc' });
+    setSort({ key: 'deadline', dir: 'asc' });
     stateRef.current = board;
     setState(board);
   };
@@ -1050,33 +1054,22 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                           }}
                         >
                           <td className="px-3 py-2.5 align-top" onClick={(event) => event.stopPropagation()}>
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                draggable
-                                onDragStart={(event) => {
-                                  dragRow.current = task.id;
-                                  event.dataTransfer.effectAllowed = 'move';
-                                  event.dataTransfer.setData('text/plain', task.id);
-                                }}
-                                onDragEnd={() => {
-                                  dragRow.current = null;
-                                  setDropRow(null);
-                                }}
-                                className="inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
-                                aria-label="Mover tarea"
-                              >
-                                <GripVertical className="h-4 w-4" />
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => markDone(task)}
-                                disabled={task.estado === 'Caducada'}
-                                className={`flex h-5 w-5 items-center justify-center rounded-full border ${task.estado === 'Completado' ? 'border-[var(--success)] bg-[var(--success)] text-white' : task.estado === 'Caducada' ? 'border-[var(--border)] bg-[var(--bg-soft)]' : 'border-[var(--border-strong)]'}`}
-                                aria-label={task.estado === 'Completado' ? 'Marcar pendiente' : 'Completar'}
-                              >
-                                {task.estado === 'Completado' ? <Check className="h-3 w-3" /> : null}
-                              </button>
-                            </div>
+                            <span
+                              draggable
+                              onDragStart={(event) => {
+                                dragRow.current = task.id;
+                                event.dataTransfer.effectAllowed = 'move';
+                                event.dataTransfer.setData('text/plain', task.id);
+                              }}
+                              onDragEnd={() => {
+                                dragRow.current = null;
+                                setDropRow(null);
+                              }}
+                              className="inline-flex cursor-grab text-[var(--text-muted)] active:cursor-grabbing"
+                              aria-label="Mover tarea"
+                            >
+                              <GripVertical className="h-4 w-4" />
+                            </span>
                           </td>
                           <td className="break-words px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
                           <td className={`break-words px-3 py-2.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
