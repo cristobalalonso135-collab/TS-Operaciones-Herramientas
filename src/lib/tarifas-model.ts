@@ -36,6 +36,19 @@ export interface TarifaB2B {
   discountPct: number | null;
 }
 
+export type TarifaChannel = 'b2c' | 'b2b';
+export type FeeLevel = 1 | 2 | 3 | 4;
+export type TarifaAge = 'adult' | 'youth';
+export type TarifaSport = 'Fútbol' | 'Baloncesto' | 'Balonmano';
+export type TarifaKind = 'Personalizable' | 'Catálogo';
+export type TarifaGender = 'Hombre' | 'Mujer' | 'Unisex';
+export type TarifaNovelty = 'Nueva' | 'Año pasado';
+
+export const SPORTS: TarifaSport[] = ['Fútbol', 'Baloncesto', 'Balonmano'];
+export const GENDERS: TarifaGender[] = ['Hombre', 'Mujer', 'Unisex'];
+export const KINDS: TarifaKind[] = ['Personalizable', 'Catálogo'];
+export const NOVELTIES: TarifaNovelty[] = ['Nueva', 'Año pasado'];
+
 export interface TarifaProduct {
   id: string;
   brand: string;
@@ -47,16 +60,16 @@ export interface TarifaProduct {
   youthRef: string;
   colorHex: string | null;
   image: string | null;
+  sport: TarifaSport;
+  gender: TarifaGender;
+  kind: TarifaKind;
+  collection: string;
+  season: string;
+  novelty: TarifaNovelty | '';
   stock: TarifaStock;
   b2c: TarifaB2C;
   b2b: TarifaB2B;
 }
-
-export type TarifaChannel = 'b2c' | 'b2b';
-export type FeeLevel = 1 | 2 | 3 | 4;
-export type TarifaAge = 'adult' | 'youth';
-export type TarifaSport = 'Fútbol' | 'Baloncesto' | 'Hockey' | 'Otros';
-export type TarifaKind = 'Personalizable' | 'Catálogo';
 
 export function hasAdult(item: TarifaProduct): boolean {
   return Boolean(item.adultRef);
@@ -64,32 +77,6 @@ export function hasAdult(item: TarifaProduct): boolean {
 
 export function hasYouth(item: TarifaProduct): boolean {
   return Boolean(item.youthRef);
-}
-
-export function sportOf(item: TarifaProduct): TarifaSport {
-  const text = `${item.productType} ${item.name}`.toLocaleLowerCase('es');
-  if (text.includes('basket') || text.includes('baloncesto')) return 'Baloncesto';
-  if (text.includes('hockey')) return 'Hockey';
-  if (text.includes('pádel') || text.includes('padel')) return 'Otros';
-  return 'Fútbol';
-}
-
-export function kindOf(item: TarifaProduct): TarifaKind {
-  const type = item.productType.toLocaleLowerCase('es');
-  const kit = [
-    'camiseta',
-    'pantalón corto',
-    'pantalon corto',
-    'medias',
-    'polo',
-    'peto',
-    'falda',
-    'top',
-  ];
-  if (type.includes('algodón') || type.includes('algodon') || type.includes('térmica') || type.includes('termica')) {
-    return 'Catálogo';
-  }
-  return kit.some((name) => type.includes(name)) ? 'Personalizable' : 'Catálogo';
 }
 
 export function channelFees(channel: TarifaChannel): FeeLevel[] {
@@ -139,6 +126,67 @@ export function emptyStock(): TarifaStock {
   };
 }
 
+function asSport(value: unknown, fallback: TarifaSport): TarifaSport {
+  const text = String(value || '').trim();
+  const hit = SPORTS.find((item) => item.toLocaleLowerCase('es') === text.toLocaleLowerCase('es'));
+  return hit || fallback;
+}
+
+function asGender(value: unknown, fallback: TarifaGender): TarifaGender {
+  const text = String(value || '').trim().toLocaleLowerCase('es');
+  if (text === 'hombre' || text === 'male' || text === 'm') return 'Hombre';
+  if (text === 'mujer' || text === 'female' || text === 'f') return 'Mujer';
+  if (text === 'unisex') return 'Unisex';
+  return fallback;
+}
+
+function asKind(value: unknown, fallback: TarifaKind): TarifaKind {
+  const text = String(value || '').trim().toLocaleLowerCase('es');
+  if (text.startsWith('person')) return 'Personalizable';
+  if (text.startsWith('cat') || text === 'catalogo' || text === 'catálogo') return 'Catálogo';
+  return fallback;
+}
+
+function asNovelty(value: unknown): TarifaNovelty | '' {
+  const text = String(value || '').trim().toLocaleLowerCase('es');
+  if (!text) return '';
+  if (text.includes('nueva') || text === 'new' || text === 'si' || text === 'sí') return 'Nueva';
+  if (text.includes('año') || text.includes('pasad') || text.includes('continu')) return 'Año pasado';
+  return '';
+}
+
+function inferSport(item: Pick<TarifaProduct, 'productType' | 'name'>): TarifaSport {
+  const text = `${item.productType} ${item.name}`.toLocaleLowerCase('es');
+  if (text.includes('basket') || text.includes('baloncesto')) return 'Baloncesto';
+  if (text.includes('balonmano') || text.includes('handball')) return 'Balonmano';
+  return 'Fútbol';
+}
+
+function inferGender(item: Pick<TarifaProduct, 'productType' | 'name'>): TarifaGender {
+  const text = `${item.productType} ${item.name}`.toLocaleLowerCase('es');
+  if (text.includes('falda') || text.includes('mujer') || text.includes('women')) return 'Mujer';
+  return 'Unisex';
+}
+
+function inferKind(item: Pick<TarifaProduct, 'productType'>): TarifaKind {
+  const type = item.productType.toLocaleLowerCase('es');
+  const kit = ['camiseta', 'pantalón corto', 'pantalon corto', 'medias', 'polo', 'peto', 'falda', 'top'];
+  if (type.includes('algodón') || type.includes('algodon') || type.includes('térmica') || type.includes('termica')) {
+    return 'Catálogo';
+  }
+  return kit.some((name) => type.includes(name)) ? 'Personalizable' : 'Catálogo';
+}
+
+function inferCollection(item: Pick<TarifaProduct, 'name' | 'productType' | 'collection'>): string {
+  if (item.collection) return item.collection;
+  const name = item.name.trim();
+  const type = item.productType.trim();
+  if (type && name.toLocaleLowerCase('es').startsWith(type.toLocaleLowerCase('es'))) {
+    return name.slice(type.length).trim();
+  }
+  return name;
+}
+
 export function emptyProduct(): TarifaProduct {
   const b2c = emptyFees();
   return {
@@ -152,6 +200,12 @@ export function emptyProduct(): TarifaProduct {
     youthRef: '',
     colorHex: null,
     image: null,
+    sport: 'Fútbol',
+    gender: 'Unisex',
+    kind: 'Catálogo',
+    collection: '',
+    season: '26/27',
+    novelty: '',
     stock: emptyStock(),
     b2c,
     b2b: {
@@ -175,7 +229,7 @@ export function asProduct(value: unknown): TarifaProduct {
   const seed = emptyProduct();
   const stock = { ...emptyStock(), ...(row.stock || {}) };
   if (!stock.ordered) stock.ordered = stock.pending;
-  return {
+  const base: TarifaProduct = {
     ...seed,
     ...row,
     id: String(row.id || seed.id),
@@ -188,10 +242,29 @@ export function asProduct(value: unknown): TarifaProduct {
     youthRef: String(row.youthRef || ''),
     colorHex: row.colorHex || null,
     image: row.image || null,
+    sport: String(row.sport || '').trim() ? asSport(row.sport, seed.sport) : inferSport({ productType: String(row.productType || ''), name: String(row.name || '') }),
+    gender: String(row.gender || '').trim() ? asGender(row.gender, seed.gender) : inferGender({ productType: String(row.productType || ''), name: String(row.name || '') }),
+    kind: String(row.kind || '').trim() ? asKind(row.kind, seed.kind) : inferKind({ productType: String(row.productType || '') }),
+    collection: String(row.collection || ''),
+    season: String(row.season || seed.season),
+    novelty: asNovelty(row.novelty),
     stock,
     b2c: { ...seed.b2c, ...(row.b2c || {}) },
     b2b: { ...seed.b2b, ...(row.b2b || {}) },
   };
+  return {
+    ...base,
+    collection: inferCollection(base),
+    season: base.season || '26/27',
+  };
+}
+
+export function sportOf(item: TarifaProduct): TarifaSport {
+  return item.sport || inferSport(item);
+}
+
+export function kindOf(item: TarifaProduct): TarifaKind {
+  return item.kind || inferKind(item);
 }
 
 export function familyKey(item: TarifaProduct): string {
@@ -223,7 +296,7 @@ export function formatQty(value: number | null | undefined): string {
 
 export function formatPct(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  return `${value.toLocaleString('es-ES', { maximumFractionDigits: 0 })}%`;
+  return `${value.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%`;
 }
 
 export function formatRed(red: string | null): string {
@@ -263,9 +336,11 @@ export function activeRef(item: TarifaProduct, age: TarifaAge): string {
   return age === 'youth' ? (item.youthRef || item.adultRef) : (item.adultRef || item.youthRef);
 }
 
-export function unitCost(item: TarifaProduct, channel: TarifaChannel): number | null {
-  if (channel === 'b2c') return money(item.b2c.adultNet ?? item.b2c.youthNet);
-  return money(item.b2b.adultNet ?? item.b2b.youthNet);
+export function lineCost(item: TarifaProduct, channel: TarifaChannel, age: TarifaAge = 'adult'): number | null {
+  if (channel === 'b2c') {
+    return money(age === 'youth' ? item.b2c.youthNet ?? item.b2c.adultNet : item.b2c.adultNet ?? item.b2c.youthNet);
+  }
+  return money(age === 'youth' ? item.b2b.youthNet ?? item.b2b.adultNet : item.b2b.adultNet ?? item.b2b.youthNet);
 }
 
 export function marginPct(price: number | null, cost: number | null): number | null {
@@ -273,36 +348,55 @@ export function marginPct(price: number | null, cost: number | null): number | n
   return Math.round(((price - cost) / price) * 1000) / 10;
 }
 
-export function uniqueSorted(items: TarifaProduct[], key: 'brand' | 'productType' | 'colour'): string[] {
-  return Array.from(new Set(items.map((item) => item[key]).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, 'es'));
+export function lineMargin(
+  item: TarifaProduct,
+  channel: TarifaChannel,
+  fee: FeeLevel,
+  age: TarifaAge = 'adult',
+): number | null {
+  return marginPct(sellPrice(item, channel, fee, age), lineCost(item, channel, age));
+}
+
+export function uniqueSorted(
+  items: TarifaProduct[],
+  key: 'brand' | 'productType' | 'colour' | 'collection' | 'season',
+): string[] {
+  return Array.from(new Set(items.map((item) => item[key]).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'es'));
 }
 
 export interface PackLine {
   id: string;
-  qty: number;
   fee: FeeLevel;
-  age: TarifaAge;
 }
 
 export function packTotals(
   products: TarifaProduct[],
   lines: PackLine[],
   channel: TarifaChannel,
-): { pieces: number; sale: number } {
+): { pieces: number; sale: number; rrp: number; margin: number | null } {
   const byId = new Map(products.map((item) => [item.id, item]));
-  let pieces = 0;
   let sale = 0;
+  let rrp = 0;
+  let cost = 0;
+  let hasCost = false;
   lines.forEach((line) => {
     const item = byId.get(line.id);
     if (!item) return;
-    const price = sellPrice(item, channel, line.fee, line.age);
-    pieces += line.qty;
-    if (price != null) sale += price * line.qty;
+    const price = sellPrice(item, channel, line.fee, 'adult');
+    const pvp = rrpPrice(item, channel, 'adult');
+    const unit = lineCost(item, channel, 'adult');
+    if (price != null) sale += price;
+    if (pvp != null) rrp += pvp;
+    if (unit != null) {
+      cost += unit;
+      hasCost = true;
+    }
   });
   return {
-    pieces,
+    pieces: lines.length,
     sale: Math.round(sale * 100) / 100,
+    rrp: Math.round(rrp * 100) / 100,
+    margin: hasCost ? marginPct(sale || null, cost) : null,
   };
 }
 

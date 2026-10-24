@@ -1,50 +1,56 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import catalog from '@/data/tarifas-catalog.json';
+import { catalogExportRows, moneyFromInput, packExportRows, parseTarifasSheets } from '@/lib/tarifas-excel';
 import {
+  GENDERS,
+  KINDS,
+  NOVELTIES,
+  SPORTS,
   activeRef,
+  asProduct,
   channelFees,
   colourways,
+  emptyProduct,
   formatEuro,
-  hasAdult,
+  formatPct,
+  formatRed,
   hasYouth,
+  isExpired,
   kindOf,
+  lineMargin,
   packTotals,
   rrpPrice,
   sellPrice,
-  sportOf,
   uniqueSorted,
   type FeeLevel,
   type PackLine,
   type TarifaAge,
   type TarifaChannel,
+  type TarifaGender,
   type TarifaKind,
+  type TarifaNovelty,
   type TarifaProduct,
   type TarifaSport,
 } from '@/lib/tarifas-model';
-import { ArrowLeft, Minus, Plus, Search, Trash2, X } from 'lucide-react';
+import { loadTarifasCatalog, saveTarifasCatalog, type TarifasBackend } from '@/lib/tarifas-store';
+import { ArrowLeft, Download, Plus, Search, Trash2, X } from 'lucide-react';
 
-const PRODUCTS = catalog as TarifaProduct[];
+const SEED = (catalog as unknown[]).map(asProduct);
 const TABS = [
   { id: 'catalogo', label: 'Catálogo' },
   { id: 'pack', label: 'Pack' },
+  { id: 'maestro', label: 'Maestro' },
 ] as const;
 
-function Photo({
-  src,
-  alt,
-  className,
-}: {
-  src: string | null;
-  alt: string;
-  className?: string;
-}) {
+function Photo({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
     return (
-      <div className={`flex items-center justify-center bg-white ${className || ''}`}>
+      <div className={`flex items-center justify-center bg-neutral-50 ${className || ''}`}>
         <span className="font-display text-3xl font-semibold tracking-tight text-neutral-300">
           {alt.slice(0, 1).toUpperCase()}
         </span>
@@ -63,23 +69,13 @@ function Photo({
   );
 }
 
-function Pill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
+function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={`h-9 rounded-full border px-3 text-xs font-semibold ${
-        active
-          ? 'border-neutral-900 bg-neutral-900 text-white'
-          : 'border-neutral-200 bg-white text-neutral-600'
+        active ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-600'
       }`}
     >
       {children}
@@ -87,52 +83,104 @@ function Pill({
   );
 }
 
-function defaultAge(item: TarifaProduct): TarifaAge {
-  return hasAdult(item) ? 'adult' : 'youth';
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const inputClass = 'h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm outline-none';
+
+function PvpLines({
+  item,
+  channel,
+  mode,
+}: {
+  item: TarifaProduct;
+  channel: TarifaChannel;
+  mode: '' | 'adult' | 'youth' | 'both';
+}) {
+  const adult = rrpPrice(item, channel, 'adult');
+  const youth = rrpPrice(item, channel, 'youth');
+  const showAdult = mode !== 'youth';
+  const showYouth = hasYouth(item) && mode !== 'adult';
+  if (!showYouth) {
+    return <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(adult)}</p>;
+  }
+  if (!showAdult) {
+    return <p className="text-[11px] tabular-nums text-neutral-400">PVP niño {formatEuro(youth)}</p>;
+  }
+  return (
+    <p className="text-[11px] tabular-nums text-neutral-400">
+      PVP {formatEuro(adult)}
+      <span className="text-neutral-300"> · </span>
+      niño {formatEuro(youth)}
+    </p>
+  );
 }
 
 export default function TarifasTool({ onBack }: { onBack: () => void }) {
+  const [products, setProducts] = useState<TarifaProduct[]>(SEED);
+  const [backend, setBackend] = useState<TarifasBackend>('local');
+  const [setupSql, setSetupSql] = useState<string>();
+  const [status, setStatus] = useState('');
   const [channel, setChannel] = useState<TarifaChannel | null>(null);
-  const [tab, setTab] = useState<'catalogo' | 'pack'>('catalogo');
+  const [tab, setTab] = useState<(typeof TABS)[number]['id']>('catalogo');
   const [fee, setFee] = useState<FeeLevel>(1);
   const [query, setQuery] = useState('');
   const [brand, setBrand] = useState('');
   const [type, setType] = useState('');
   const [colour, setColour] = useState('');
   const [sport, setSport] = useState<TarifaSport | ''>('');
+  const [gender, setGender] = useState<TarifaGender | ''>('');
   const [kind, setKind] = useState<TarifaKind | ''>('');
+  const [novelty, setNovelty] = useState<TarifaNovelty | ''>('');
   const [ageFilter, setAgeFilter] = useState<'' | 'adult' | 'youth' | 'both'>('');
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
+  const [draft, setDraft] = useState<TarifaProduct | null>(null);
   const [pack, setPack] = useState<PackLine[]>([]);
 
+  useEffect(() => {
+    loadTarifasCatalog(SEED).then((loaded) => {
+      setProducts(loaded.products);
+      setBackend(loaded.backend);
+      setSetupSql(loaded.setupSql);
+    });
+  }, []);
+
   const fees = channel ? channelFees(channel) : [];
-  const brands = useMemo(() => uniqueSorted(PRODUCTS, 'brand'), []);
-  const types = useMemo(() => uniqueSorted(PRODUCTS, 'productType'), []);
+  const brands = useMemo(() => uniqueSorted(products, 'brand'), [products]);
+  const types = useMemo(() => uniqueSorted(products, 'productType'), [products]);
   const colours = useMemo(() => {
-    const pool = PRODUCTS.filter((item) => (!brand || item.brand === brand) && (!type || item.productType === type));
+    const pool = products.filter((item) => (!brand || item.brand === brand) && (!type || item.productType === type));
     return uniqueSorted(pool, 'colour');
-  }, [brand, type]);
-  const sports = useMemo(
-    () => Array.from(new Set(PRODUCTS.map(sportOf))).sort((a, b) => a.localeCompare(b, 'es')),
-    [],
-  );
+  }, [brand, products, type]);
+  const sports = useMemo(() => {
+    const present = Array.from(new Set(products.map((item) => item.sport)));
+    return SPORTS.filter((item) => present.includes(item)).concat(present.filter((item) => !SPORTS.includes(item as TarifaSport)));
+  }, [products]);
 
   const filtered = useMemo(() => {
     if (!channel) return [];
     const q = query.trim().toLocaleLowerCase('es');
-    const rows = PRODUCTS.filter((item) => {
+    const rows = products.filter((item) => {
       if (brand && item.brand !== brand) return false;
       if (type && item.productType !== type) return false;
       if (colour && item.colour !== colour) return false;
-      if (sport && sportOf(item) !== sport) return false;
+      if (sport && item.sport !== sport) return false;
+      if (gender && item.gender !== gender) return false;
       if (kind && kindOf(item) !== kind) return false;
+      if (novelty && item.novelty !== novelty) return false;
       if (ageFilter === 'adult' && hasYouth(item)) return false;
       if (ageFilter === 'youth' && !hasYouth(item)) return false;
-      if (ageFilter === 'both' && (!hasAdult(item) || !hasYouth(item))) return false;
+      if (ageFilter === 'both' && !hasYouth(item)) return false;
       if (q) {
-        const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
+        const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -143,22 +191,30 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (sort === 'pvp') return (rrpPrice(a, channel) ?? 0) - (rrpPrice(b, channel) ?? 0);
       return a.name.localeCompare(b.name, 'es') || a.colour.localeCompare(b.colour, 'es');
     });
-  }, [ageFilter, brand, channel, colour, fee, kind, query, sort, sport, type]);
+  }, [ageFilter, brand, channel, colour, fee, gender, kind, novelty, products, query, sort, sport, type]);
 
-  const totals = useMemo(() => (channel ? packTotals(PRODUCTS, pack, channel) : { pieces: 0, sale: 0 }), [channel, pack]);
-  const packCount = pack.reduce((sum, line) => sum + line.qty, 0);
-  const byId = useMemo(() => new Map(PRODUCTS.map((item) => [item.id, item])), []);
+  const totals = useMemo(
+    () => (channel ? packTotals(products, pack, channel) : { pieces: 0, sale: 0, rrp: 0, margin: null }),
+    [channel, pack, products],
+  );
+  const byId = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);
+  const editing = tab === 'maestro';
 
-  const addToPack = (item: TarifaProduct, chosenFee = fee, age = defaultAge(item)) => {
-    setPack((current) => {
-      const hit = current.find((line) => line.id === item.id && line.fee === chosenFee && line.age === age);
-      if (hit) return current.map((line) => (line === hit ? { ...line, qty: line.qty + 1 } : line));
-      return [...current, { id: item.id, qty: 1, fee: chosenFee, age }];
-    });
+  const persist = async (next: TarifaProduct[]) => {
+    setProducts(next);
+    try {
+      await saveTarifasCatalog(next, backend);
+      setStatus(backend === 'supabase' ? 'Guardado para toda la red.' : 'Guardado en este navegador.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'No se pudo guardar.');
+    }
   };
 
-  const patchLine = (index: number, update: Partial<PackLine>) => {
-    setPack((current) => current.map((line, i) => (i === index ? { ...line, ...update } : line)));
+  const addToPack = (item: TarifaProduct, chosenFee = fee) => {
+    setPack((current) => {
+      if (current.some((line) => line.id === item.id && line.fee === chosenFee)) return current;
+      return [...current, { id: item.id, fee: chosenFee }];
+    });
   };
 
   const pickChannel = (next: TarifaChannel) => {
@@ -167,24 +223,73 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     setTab('catalogo');
   };
 
+  const openItem = (item: TarifaProduct) => {
+    setOpen(item);
+    setOpenAge(hasYouth(item) && ageFilter === 'youth' ? 'youth' : 'adult');
+    setDraft(asProduct(item));
+  };
+
+  const saveDraft = async () => {
+    if (!draft) return;
+    const next = products.some((item) => item.id === draft.id)
+      ? products.map((item) => (item.id === draft.id ? asProduct(draft) : item))
+      : [asProduct(draft), ...products];
+    await persist(next);
+    setOpen(asProduct(draft));
+  };
+
+  const downloadCatalog = async () => {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(catalogExportRows(products)), 'Tarifas');
+    XLSX.writeFile(workbook, 'Tarifas_maestro.xlsx');
+  };
+
+  const downloadPack = async () => {
+    if (!channel) return;
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(packExportRows(products, pack, channel)), 'Pack');
+    XLSX.writeFile(workbook, `Pack_${channel.toUpperCase()}.xlsx`);
+  };
+
+  const importSheets = async (sheets: Record<string, unknown[][]>) => {
+    const parsed = parseTarifasSheets(sheets);
+    if (parsed.length === 0) {
+      setStatus('Ese Excel no tiene referencias.');
+      return;
+    }
+    const photos = new Map<string, string>();
+    products.forEach((item) => {
+      if (!item.image) return;
+      if (item.adultRef) photos.set(item.adultRef, item.image);
+      if (item.youthRef) photos.set(item.youthRef, item.image);
+    });
+    const next = parsed.map((item) => (
+      item.image ? item : { ...item, image: photos.get(item.adultRef) || photos.get(item.youthRef) || null }
+    ));
+    await persist(next);
+    setStatus(`${next.length.toLocaleString('es-ES')} referencias. Lo que no está en el Excel, sale de la web.`);
+  };
+
   if (!channel) {
     return (
       <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 py-8 sm:px-6">
         <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
           <ArrowLeft className="h-4 w-4" /> Herramientas
         </button>
-        <div className="mx-auto mt-10 max-w-2xl text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">12 Tarifas</p>
-          <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight">¿Qué tarifa usas?</h2>
-          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-neutral-500">
-            B2C y B2B son listas distintas. Elige una: el catálogo y el pack se calculan con esa tarifa.
+        <div className="mx-auto mt-16 max-w-2xl text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Tarifas 26/27</p>
+          <h2 className="mt-3 font-display text-5xl font-semibold tracking-tight">¿Qué tarifa usas?</h2>
+          <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-neutral-500">
+            B2C y B2B son listas distintas. El catálogo y el pack se calculan con esa tarifa.
           </p>
         </div>
-        <div className="mx-auto mt-10 grid max-w-2xl gap-4 sm:grid-cols-2">
+        <div className="mx-auto mt-12 grid max-w-2xl gap-4 sm:grid-cols-2">
           <button
             type="button"
             onClick={() => pickChannel('b2c')}
-            className="rounded-3xl border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
+            className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">Clubs y web</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2C</p>
@@ -193,7 +298,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={() => pickChannel('b2b')}
-            className="rounded-3xl border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
+            className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">Distribución</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2B</p>
@@ -206,21 +311,21 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 pb-24 pt-4 sm:px-6">
-      <div className="space-y-5">
+      <div className="space-y-6">
         <WorkspaceChrome
           onBack={onBack}
           tabs={[...TABS]}
           active={tab}
-          onSelect={(id) => setTab(id as 'catalogo' | 'pack')}
+          onSelect={(id) => setTab(id as (typeof TABS)[number]['id'])}
         />
 
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-              {channel.toUpperCase()} · {tab === 'pack' ? 'Pack' : 'Catálogo'}
+              {channel.toUpperCase()} · {tab === 'pack' ? 'Pack' : tab === 'maestro' ? 'Maestro' : 'Catálogo'}
             </p>
             <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-              {tab === 'pack' ? 'Constructor de pack' : 'Qué puedo ofrecer'}
+              {tab === 'pack' ? 'Constructor de pack' : tab === 'maestro' ? 'Catálogo vivo' : 'Qué puedo ofrecer'}
             </h2>
           </div>
           <button type="button" onClick={() => { setChannel(null); setPack([]); }} className="text-xs font-semibold text-neutral-500">
@@ -228,17 +333,57 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </button>
         </div>
 
-        <div>
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Tarifa</p>
-          <div className="flex flex-wrap gap-2">
-            {fees.map((level) => (
-              <Pill key={level} active={fee === level} onClick={() => setFee(level)}>Fee {level}</Pill>
-            ))}
+        {tab !== 'maestro' ? (
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Tarifa</p>
+            <div className="flex flex-wrap gap-2">
+              {fees.map((level) => (
+                <Pill key={level} active={fee === level} onClick={() => setFee(level)}>Fee {level}</Pill>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        {tab === 'catalogo' ? (
+        {tab === 'catalogo' || tab === 'maestro' ? (
           <>
+            {tab === 'maestro' ? (
+              <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
+                <p className="text-sm text-neutral-500">
+                  Sube el Excel y sustituye el catálogo entero. Descárgalo, cambia lo que quieras y vuelve a importar. Si son pocas cosas, abre la ficha y edita.
+                </p>
+                <FileUpload
+                  label="Sube el maestro de tarifas"
+                  hint="Plantilla propia o el Excel B2C/B2B de 26/27."
+                  inputId="tarifas-maestro"
+                  compact
+                  onFileLoaded={() => undefined}
+                  onWorkbookLoaded={(sheets) => importSheets(sheets)}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={downloadCatalog} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
+                    <Download className="h-4 w-4" /> Descargar maestro
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const created = emptyProduct();
+                      created.season = '26/27';
+                      openItem(created);
+                    }}
+                    className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
+                  >
+                    <Plus className="h-4 w-4" /> Nueva referencia
+                  </button>
+                </div>
+                {status ? <p className="text-xs text-neutral-500">{status}</p> : null}
+                {setupSql ? (
+                  <p className="text-xs text-amber-700">
+                    Si quieres que la red comercial vea tus cambios, hay que crear la tabla `tarifas_store` en Supabase.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap items-center gap-2">
               <label className="relative min-w-[180px] flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -252,6 +397,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               <select value={sport} onChange={(e) => setSport(e.target.value as TarifaSport | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="">Deporte</option>
                 {sports.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              <select value={gender} onChange={(e) => setGender(e.target.value as TarifaGender | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
+                <option value="">Género</option>
+                {GENDERS.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
               <select value={type} onChange={(e) => { setType(e.target.value); setColour(''); }} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="">Tipo</option>
@@ -271,8 +420,12 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
             <div className="flex flex-wrap gap-1.5">
               <Pill active={!kind} onClick={() => setKind('')}>Todo</Pill>
-              <Pill active={kind === 'Personalizable'} onClick={() => setKind(kind === 'Personalizable' ? '' : 'Personalizable')}>Personalizable</Pill>
-              <Pill active={kind === 'Catálogo'} onClick={() => setKind(kind === 'Catálogo' ? '' : 'Catálogo')}>Catálogo</Pill>
+              {KINDS.map((item) => (
+                <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{item}</Pill>
+              ))}
+              {NOVELTIES.map((item) => (
+                <Pill key={item} active={novelty === item} onClick={() => setNovelty(novelty === item ? '' : item)}>{item}</Pill>
+              ))}
               <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>Adulto y niño</Pill>
               <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>Solo adulto</Pill>
               <Pill active={ageFilter === 'youth'} onClick={() => setAgeFilter(ageFilter === 'youth' ? '' : 'youth')}>Con niño</Pill>
@@ -285,51 +438,51 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               ))}
             </div>
 
-            <p className="text-xs tabular-nums text-neutral-400">
-              {filtered.length.toLocaleString('es-ES')} productos
-            </p>
+            <p className="text-xs tabular-nums text-neutral-400">{filtered.length.toLocaleString('es-ES')} productos</p>
 
             {filtered.length === 0 ? (
               <p className="py-16 text-center text-sm text-neutral-400">Nada con estos filtros.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {filtered.map((item) => (
-                  <article key={item.id} className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpen(item);
-                        setOpenAge(defaultAge(item));
-                      }}
-                      className="block w-full text-left"
-                    >
-                      <div className="aspect-square bg-white">
-                        <Photo key={item.image || item.id} src={item.image} alt={item.name} className="h-full w-full p-2" />
+                  <article key={item.id} className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                    <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
+                      <div className="relative aspect-square bg-neutral-50">
+                        <Photo key={item.image || item.id} src={item.image} alt={item.name} className="h-full w-full p-4 transition group-hover:scale-[1.02]" />
+                        {!hasYouth(item) ? (
+                          <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-neutral-700">Solo adulto</span>
+                        ) : null}
+                        {isExpired(item.red) ? (
+                          <span className="absolute right-2 top-2 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-semibold text-white">Fuera de vigencia</span>
+                        ) : null}
+                        {item.novelty === 'Nueva' ? (
+                          <span className="absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">Nueva</span>
+                        ) : null}
                       </div>
-                      <div className="space-y-0.5 px-2.5 pb-2 pt-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
+                      <div className="space-y-1 px-3 pb-3 pt-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                           {item.brand} · {item.productType}
                         </p>
-                        <p className="line-clamp-2 font-display text-[13px] font-semibold leading-snug">{item.name}</p>
-                        <p className="truncate text-[11px] text-neutral-500">{item.colour}</p>
-                        <p className="pt-1 font-display text-base font-semibold tabular-nums">{formatEuro(sellPrice(item, channel, fee))}</p>
-                        <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(rrpPrice(item, channel))}</p>
-                        <p className="text-[10px] text-neutral-400">
-                          {hasAdult(item) ? 'Adulto' : ''}
-                          {hasAdult(item) && hasYouth(item) ? ' · ' : ''}
-                          {hasYouth(item) ? 'Niño' : ''}
+                        <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{item.name}</p>
+                        <p className="flex items-center gap-1.5 truncate text-[11px] text-neutral-500">
+                          {item.colorHex ? <span className="h-2.5 w-2.5 rounded-full border border-neutral-200" style={{ background: item.colorHex }} /> : null}
+                          {item.colour}
                         </p>
+                        <p className="pt-1 font-display text-lg font-semibold tabular-nums">{formatEuro(sellPrice(item, channel, fee, 'adult'))}</p>
+                        <PvpLines item={item} channel={channel} mode={ageFilter} />
                       </div>
                     </button>
-                    <div className="px-2.5 pb-2.5">
-                      <button
-                        type="button"
-                        onClick={() => addToPack(item)}
-                        className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
-                      >
-                        <Plus className="h-3.5 w-3.5" /> Pack · Fee {fee}
-                      </button>
-                    </div>
+                    {tab === 'catalogo' ? (
+                      <div className="px-3 pb-3">
+                        <button
+                          type="button"
+                          onClick={() => addToPack(item)}
+                          className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Pack · Fee {fee}
+                        </button>
+                      </div>
+                    ) : null}
                   </article>
                 ))}
               </div>
@@ -339,48 +492,28 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <div className="mx-auto max-w-3xl space-y-4">
             {pack.length === 0 ? (
               <p className="py-16 text-center text-sm text-neutral-400">
-                Aún no hay nada. En el catálogo, añade camiseta, pantalón, medias…
+                Aún no hay nada. En el catálogo, monta camiseta, pantalón, medias… o lo que pida el club.
               </p>
             ) : (
               <ul className="divide-y divide-neutral-200 overflow-hidden rounded-2xl border border-neutral-200">
                 {pack.map((line, index) => {
                   const item = byId.get(line.id);
                   if (!item) return null;
-                  const price = sellPrice(item, channel, line.fee, line.age);
+                  const price = sellPrice(item, channel, line.fee, 'adult');
                   return (
-                    <li key={`${line.id}-${line.fee}-${line.age}-${index}`} className="flex flex-wrap items-center gap-3 bg-white p-3 sm:flex-nowrap">
+                    <li key={`${line.id}-${line.fee}`} className="flex flex-wrap items-center gap-3 bg-white p-3 sm:flex-nowrap">
                       <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-neutral-100 bg-white">
                         <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold">{item.name}</p>
-                        <p className="text-[11px] text-neutral-500">
-                          {item.colour} · {activeRef(item, line.age) || '—'}
-                        </p>
+                        <p className="text-[11px] text-neutral-500">{item.colour} · {item.adultRef || '—'}</p>
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          {hasAdult(item) ? (
-                            <button
-                              type="button"
-                              onClick={() => patchLine(index, { age: 'adult' })}
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${line.age === 'adult' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
-                            >
-                              Adulto
-                            </button>
-                          ) : null}
-                          {hasYouth(item) ? (
-                            <button
-                              type="button"
-                              onClick={() => patchLine(index, { age: 'youth' })}
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${line.age === 'youth' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
-                            >
-                              Niño
-                            </button>
-                          ) : null}
                           {fees.map((level) => (
                             <button
                               key={level}
                               type="button"
-                              onClick={() => patchLine(index, { fee: level })}
+                              onClick={() => setPack((current) => current.map((row, i) => (i === index ? { ...row, fee: level } : row)))}
                               className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                                 line.fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
                               }`}
@@ -390,18 +523,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           ))}
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <button type="button" onClick={() => patchLine(index, { qty: Math.max(1, line.qty - 1) })} className="rounded-full p-1 text-neutral-500 hover:bg-neutral-100" aria-label="Quitar una">
-                          <Minus className="h-4 w-4" />
-                        </button>
-                        <span className="w-6 text-center text-sm tabular-nums">{line.qty}</span>
-                        <button type="button" onClick={() => patchLine(index, { qty: line.qty + 1 })} className="rounded-full p-1 text-neutral-500 hover:bg-neutral-100" aria-label="Añadir una">
-                          <Plus className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <div className="w-24 text-right">
-                        <p className="text-sm font-semibold tabular-nums">{formatEuro(price == null ? null : price * line.qty)}</p>
-                        <p className="text-[10px] tabular-nums text-neutral-400">PVP {formatEuro(rrpPrice(item, channel, line.age))}</p>
+                      <div className="w-28 text-right">
+                        <p className="text-sm font-semibold tabular-nums">{formatEuro(price)}</p>
+                        <p className="text-[10px] tabular-nums text-neutral-400">PVP {formatEuro(rrpPrice(item, channel, 'adult'))}</p>
+                        <p className="text-[10px] tabular-nums text-neutral-400">{formatPct(lineMargin(item, channel, line.fee, 'adult'))}</p>
                       </div>
                       <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label="Quitar del pack">
                         <Trash2 className="h-4 w-4" />
@@ -412,110 +537,211 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               </ul>
             )}
 
-            <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+            <div className="rounded-2xl border border-neutral-200 bg-white p-6">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Total pack · {channel.toUpperCase()}</p>
-              <p className="mt-1 font-display text-3xl font-semibold tabular-nums">{formatEuro(totals.sale)}</p>
-              <p className="mt-1 text-sm text-neutral-500">{totals.pieces} prenda{totals.pieces === 1 ? '' : 's'}</p>
-              {pack.length > 0 ? (
-                <button type="button" onClick={() => setPack([])} className="mt-3 text-xs font-semibold text-neutral-500">
-                  Vaciar
-                </button>
-              ) : null}
+              <p className="mt-2 font-display text-4xl font-semibold tabular-nums">{formatEuro(totals.sale)}</p>
+              <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <p className="text-[11px] text-neutral-400">PVP</p>
+                  <p className="font-semibold tabular-nums">{formatEuro(totals.rrp)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-neutral-400">Margen</p>
+                  <p className="font-semibold tabular-nums">{formatPct(totals.margin)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-neutral-400">Prendas</p>
+                  <p className="font-semibold tabular-nums">{totals.pieces}</p>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {pack.length > 0 ? (
+                  <button type="button" onClick={downloadPack} className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white">
+                    <Download className="h-4 w-4" /> Exportar pack
+                  </button>
+                ) : null}
+                {pack.length > 0 ? (
+                  <button type="button" onClick={() => setPack([])} className="text-xs font-semibold text-neutral-500">Vaciar</button>
+                ) : null}
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {packCount > 0 && tab === 'catalogo' ? (
+      {pack.length > 0 && tab === 'catalogo' ? (
         <button
           type="button"
           onClick={() => setTab('pack')}
           className="fixed bottom-5 left-1/2 z-40 -translate-x-1/2 rounded-full bg-neutral-900 px-5 py-3 text-sm font-semibold text-white shadow-lg"
         >
-          Pack · {packCount} · {formatEuro(totals.sale)}
+          Pack · {pack.length} · {formatEuro(totals.sale)}
         </button>
       ) : null}
 
-      {open ? (
-        <div className="abonos-modal-backdrop" onClick={() => setOpen(null)}>
+      {open && draft ? (
+        <div className="abonos-modal-backdrop" onClick={() => { setOpen(null); setDraft(null); }}>
           <div
             className="abonos-modal overflow-hidden bg-white"
-            style={{ width: 'min(860px, 100%)' }}
+            style={{ width: 'min(920px, 100%)' }}
             role="dialog"
             aria-modal="true"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="grid md:grid-cols-2">
-              <div className="bg-white p-5">
-                <Photo key={open.image || open.id} src={open.image} alt={open.name} className="mx-auto max-h-[520px] w-full" />
+              <div className="bg-neutral-50 p-6">
+                <Photo key={draft.image || draft.id} src={draft.image} alt={draft.name} className="mx-auto max-h-[520px] w-full" />
               </div>
-              <div className="flex flex-col p-5">
+              <div className="flex flex-col p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                      {open.brand} · {open.productType} · {kindOf(open)}
+                      {draft.brand} · {draft.productType} · {kindOf(draft)}
                     </p>
-                    <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{open.name}</h3>
-                    <p className="mt-1 text-sm text-neutral-500">{open.colour}</p>
+                    <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{draft.name || 'Nueva referencia'}</h3>
+                    <p className="mt-1 text-sm text-neutral-500">{draft.colour}</p>
                   </div>
-                  <button type="button" onClick={() => setOpen(null)} className="rounded-md p-1 text-neutral-400" aria-label="Cerrar">
+                  <button type="button" onClick={() => { setOpen(null); setDraft(null); }} className="rounded-md p-1 text-neutral-400" aria-label="Cerrar">
                     <X className="h-5 w-5" />
                   </button>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-1.5">
-                  {hasAdult(open) ? (
-                    <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>Adulto</Pill>
-                  ) : null}
-                  {hasYouth(open) ? (
-                    <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>Niño</Pill>
-                  ) : (
-                    <span className="self-center text-[11px] text-neutral-400">No hay referencia de niño</span>
-                  )}
-                </div>
-                <p className="mt-2 font-mono text-sm text-neutral-700">{activeRef(open, openAge) || '—'}</p>
+                {!editing ? (
+                  <>
+                    <div className="mt-4 flex flex-wrap gap-1.5">
+                      <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>Adulto</Pill>
+                      {hasYouth(draft) ? (
+                        <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>Niño</Pill>
+                      ) : (
+                        <span className="self-center rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-500">Solo adulto</span>
+                      )}
+                    </div>
+                    <p className="mt-2 font-mono text-sm text-neutral-700">{activeRef(draft, openAge) || '—'}</p>
+                    {draft.red ? (
+                      <p className={`mt-1 text-[11px] ${isExpired(draft.red) ? 'font-semibold text-neutral-900' : 'text-neutral-400'}`}>
+                        Vigencia {formatRed(draft.red)}
+                      </p>
+                    ) : null}
 
-                <p className="mt-4 text-[11px] uppercase tracking-[0.12em] text-neutral-400">A qué precio · {channel.toUpperCase()}</p>
-                <div className="mt-2 overflow-hidden rounded-xl border border-neutral-200">
-                  <table className="w-full text-sm">
-                    <tbody>
-                      <tr className="border-b border-neutral-100">
-                        <td className="px-3 py-2 text-neutral-500">PVP</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{formatEuro(rrpPrice(open, channel, openAge))}</td>
-                      </tr>
-                      {fees.map((level) => (
-                        <tr key={level} className="border-b border-neutral-100 last:border-0">
-                          <td className="px-3 py-2 text-neutral-500">Fee {level}</td>
-                          <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatEuro(sellPrice(open, channel, level, openAge))}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {colourways(PRODUCTS, open).length > 1 ? (
-                  <div className="mt-4">
-                    <p className="text-[11px] uppercase tracking-[0.12em] text-neutral-400">Colores</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {colourways(PRODUCTS, open).map((item) => (
+                    <p className="mt-4 text-[11px] uppercase tracking-[0.12em] text-neutral-400">A qué precio · {channel.toUpperCase()}</p>
+                    <div className="mt-2 overflow-hidden rounded-xl border border-neutral-200">
+                      <table className="w-full text-sm">
+                        <tbody>
+                          <tr className="border-b border-neutral-100">
+                            <td className="px-3 py-2 text-neutral-500">PVP</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{formatEuro(rrpPrice(draft, channel, openAge))}</td>
+                          </tr>
+                          {fees.map((level) => (
+                            <tr key={level} className="border-b border-neutral-100 last:border-0">
+                              <td className="px-3 py-2 text-neutral-500">Fee {level}</td>
+                              <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatEuro(sellPrice(draft, channel, level, openAge))}</td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="px-3 py-2 text-[11px] text-neutral-400">Margen Fee {fee}</td>
+                            <td className="px-3 py-2 text-right text-[11px] tabular-nums text-neutral-400">{formatPct(lineMargin(draft, channel, fee, openAge))}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {colourways(products, draft).length > 1 ? (
+                      <div className="mt-4">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-neutral-400">Colores</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {colourways(products, draft).map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => openItem(item)}
+                              className={`rounded-lg border px-2 py-1 text-[11px] ${item.id === draft.id ? 'border-neutral-900' : 'border-neutral-200'}`}
+                            >
+                              {item.colour}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); setTab('pack'); }}
+                      className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                    >
+                      <Plus className="h-4 w-4" /> Añadir al pack · Fee {fee}
+                    </button>
+                  </>
+                ) : (
+                  <div className="mt-4 grid max-h-[70vh] grid-cols-2 gap-2 overflow-auto pr-1">
+                    <Field label="Marca"><input className={inputClass} value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} /></Field>
+                    <Field label="Tipo"><input className={inputClass} value={draft.productType} onChange={(e) => setDraft({ ...draft, productType: e.target.value })} /></Field>
+                    <div className="col-span-2">
+                      <Field label="Nombre"><input className={inputClass} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+                    </div>
+                    <Field label="Color"><input className={inputClass} value={draft.colour} onChange={(e) => setDraft({ ...draft, colour: e.target.value })} /></Field>
+                    <Field label="URL imagen"><input className={inputClass} value={draft.image || ''} onChange={(e) => setDraft({ ...draft, image: e.target.value || null })} /></Field>
+                    <Field label="Ref. adulto"><input className={inputClass} value={draft.adultRef} onChange={(e) => setDraft({ ...draft, adultRef: e.target.value, id: e.target.value || draft.id })} /></Field>
+                    <Field label="Ref. niño"><input className={inputClass} value={draft.youthRef} onChange={(e) => setDraft({ ...draft, youthRef: e.target.value })} /></Field>
+                    <Field label="Deporte">
+                      <select className={inputClass} value={draft.sport} onChange={(e) => setDraft({ ...draft, sport: e.target.value as TarifaSport })}>
+                        {SPORTS.map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Género">
+                      <select className={inputClass} value={draft.gender} onChange={(e) => setDraft({ ...draft, gender: e.target.value as TarifaGender })}>
+                        {GENDERS.map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Surtido">
+                      <select className={inputClass} value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as TarifaKind })}>
+                        {KINDS.map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Novedad">
+                      <select className={inputClass} value={draft.novelty} onChange={(e) => setDraft({ ...draft, novelty: e.target.value as TarifaNovelty | '' })}>
+                        <option value="">Sin marcar</option>
+                        {NOVELTIES.map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Colección"><input className={inputClass} value={draft.collection} onChange={(e) => setDraft({ ...draft, collection: e.target.value })} /></Field>
+                    <Field label="Temporada"><input className={inputClass} value={draft.season} onChange={(e) => setDraft({ ...draft, season: e.target.value })} /></Field>
+                    <Field label="Vigencia RED"><input className={inputClass} type="date" value={draft.red || ''} onChange={(e) => setDraft({ ...draft, red: e.target.value || null })} /></Field>
+                    <Field label="B2C PVP adulto"><input className={inputClass} value={draft.b2c.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C PVP niño"><input className={inputClass} value={draft.b2c.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C Fee 1"><input className={inputClass} value={draft.b2c.fee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee1: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C Fee 2"><input className={inputClass} value={draft.b2c.fee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee2: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C Fee 3"><input className={inputClass} value={draft.b2c.fee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee3: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C Fee 4"><input className={inputClass} value={draft.b2c.fee4 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee4: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C Neto adulto"><input className={inputClass} value={draft.b2c.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultNet: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2C Neto niño"><input className={inputClass} value={draft.b2c.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthNet: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B PVP adulto"><input className={inputClass} value={draft.b2b.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B PVP niño"><input className={inputClass} value={draft.b2b.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Fee 1 adulto"><input className={inputClass} value={draft.b2b.adultFee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee1: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Fee 1 niño"><input className={inputClass} value={draft.b2b.youthFee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee1: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Fee 2 adulto"><input className={inputClass} value={draft.b2b.adultFee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee2: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Fee 2 niño"><input className={inputClass} value={draft.b2b.youthFee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee2: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Fee 3 adulto"><input className={inputClass} value={draft.b2b.adultFee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee3: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Fee 3 niño"><input className={inputClass} value={draft.b2b.youthFee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee3: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Neto adulto"><input className={inputClass} value={draft.b2b.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultNet: moneyFromInput(e.target.value) } })} /></Field>
+                    <Field label="B2B Neto niño"><input className={inputClass} value={draft.b2b.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthNet: moneyFromInput(e.target.value) } })} /></Field>
+                    <div className="col-span-2 mt-2 flex gap-2">
+                      <button type="button" onClick={saveDraft} className="inline-flex h-11 flex-1 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
+                        Guardar referencia
+                      </button>
+                      {products.some((item) => item.id === draft.id) ? (
                         <button
-                          key={item.id}
                           type="button"
-                          onClick={() => { setOpen(item); setOpenAge(defaultAge(item)); }}
-                          className={`rounded-lg border px-2 py-1 text-[11px] ${item.id === open.id ? 'border-neutral-900' : 'border-neutral-200'}`}
+                          onClick={async () => {
+                            await persist(products.filter((item) => item.id !== draft.id));
+                            setOpen(null);
+                            setDraft(null);
+                          }}
+                          className="h-11 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-red-600"
                         >
-                          {item.colour}
+                          Quitar
                         </button>
-                      ))}
+                      ) : null}
                     </div>
                   </div>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => { addToPack(open, fee, openAge); setOpen(null); setTab('pack'); }}
-                  className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
-                >
-                  <Plus className="h-4 w-4" /> Añadir al pack · {openAge === 'youth' ? 'Niño' : 'Adulto'} · Fee {fee}
-                </button>
+                )}
               </div>
             </div>
           </div>
