@@ -367,16 +367,28 @@ export function uniqueSorted(
 export interface PackLine {
   id: string;
   fee: FeeLevel;
+  stamp: number;
+  stampInput: string;
+}
+
+export function fueraPackFee(channel: TarifaChannel): FeeLevel {
+  return channel === 'b2c' ? 4 : 3;
+}
+
+export function fueraPackPrice(item: TarifaProduct, channel: TarifaChannel): number | null {
+  return sellPrice(item, channel, fueraPackFee(channel), 'adult');
 }
 
 export function packTotals(
   products: TarifaProduct[],
   lines: PackLine[],
   channel: TarifaChannel,
-): { pieces: number; sale: number; rrp: number; margin: number | null } {
+): { pieces: number; club: number; stamp: number; sale: number; rrp: number; fuera: number; margin: number | null } {
   const byId = new Map(products.map((item) => [item.id, item]));
-  let sale = 0;
+  let club = 0;
+  let stamp = 0;
   let rrp = 0;
+  let fuera = 0;
   let cost = 0;
   let hasCost = false;
   lines.forEach((line) => {
@@ -384,18 +396,26 @@ export function packTotals(
     if (!item) return;
     const price = sellPrice(item, channel, line.fee, 'adult');
     const pvp = rrpPrice(item, channel, 'adult');
+    const extra = Number.isFinite(line.stamp) ? line.stamp : 0;
     const unit = lineCost(item, channel, 'adult');
-    if (price != null) sale += price;
+    if (price != null) club += price;
+    stamp += extra;
     if (pvp != null) rrp += pvp;
+    const out = fueraPackPrice(item, channel);
+    if (out != null) fuera += out;
     if (unit != null) {
       cost += unit;
       hasCost = true;
     }
   });
+  const sale = Math.round((club + stamp) * 100) / 100;
   return {
     pieces: lines.length,
-    sale: Math.round(sale * 100) / 100,
+    club: Math.round(club * 100) / 100,
+    stamp: Math.round(stamp * 100) / 100,
+    sale,
     rrp: Math.round(rrp * 100) / 100,
+    fuera: Math.round(fuera * 100) / 100,
     margin: hasCost ? marginPct(sale || null, cost) : null,
   };
 }

@@ -18,6 +18,7 @@ import {
   formatEuro,
   formatPct,
   formatRed,
+  fueraPackPrice,
   hasYouth,
   isExpired,
   kindOf,
@@ -194,7 +195,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   }, [ageFilter, brand, channel, colour, fee, gender, kind, novelty, products, query, sort, sport, type]);
 
   const totals = useMemo(
-    () => (channel ? packTotals(products, pack, channel) : { pieces: 0, sale: 0, rrp: 0, margin: null }),
+    () => (channel ? packTotals(products, pack, channel) : { pieces: 0, club: 0, stamp: 0, sale: 0, rrp: 0, fuera: 0, margin: null }),
     [channel, pack, products],
   );
   const byId = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);
@@ -213,7 +214,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const addToPack = (item: TarifaProduct, chosenFee = fee) => {
     setPack((current) => {
       if (current.some((line) => line.id === item.id && line.fee === chosenFee)) return current;
-      return [...current, { id: item.id, fee: chosenFee }];
+      return [...current, { id: item.id, fee: chosenFee, stamp: 0, stampInput: '' }];
     });
   };
 
@@ -489,58 +490,111 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             )}
           </>
         ) : (
-          <div className="mx-auto max-w-3xl space-y-4">
+          <div className="mx-auto max-w-6xl space-y-4">
             {pack.length === 0 ? (
               <p className="py-16 text-center text-sm text-neutral-400">
                 Aún no hay nada. En el catálogo, monta camiseta, pantalón, medias… o lo que pida el club.
               </p>
             ) : (
-              <ul className="divide-y divide-neutral-200 overflow-hidden rounded-2xl border border-neutral-200">
-                {pack.map((line, index) => {
-                  const item = byId.get(line.id);
-                  if (!item) return null;
-                  const price = sellPrice(item, channel, line.fee, 'adult');
-                  return (
-                    <li key={`${line.id}-${line.fee}`} className="flex flex-wrap items-center gap-3 bg-white p-3 sm:flex-nowrap">
-                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-neutral-100 bg-white">
-                        <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{item.name}</p>
-                        <p className="text-[11px] text-neutral-500">{item.colour} · {item.adultRef || '—'}</p>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          {fees.map((level) => (
-                            <button
-                              key={level}
-                              type="button"
-                              onClick={() => setPack((current) => current.map((row, i) => (i === index ? { ...row, fee: level } : row)))}
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                line.fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
-                              }`}
-                            >
-                              Fee {level}
+              <div className="overflow-x-auto rounded-2xl border border-neutral-200">
+                <table className="min-w-[860px] w-full text-left text-sm">
+                  <thead className="bg-neutral-50 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">#</th>
+                      <th className="px-3 py-2 font-semibold">Producto</th>
+                      <th className="px-3 py-2 font-semibold">Ref. adulto</th>
+                      <th className="px-3 py-2 font-semibold">Ref. niño</th>
+                      <th className="px-3 py-2 font-semibold">Fee club</th>
+                      <th className="px-3 py-2 font-semibold text-right">Precio club</th>
+                      <th className="px-3 py-2 font-semibold text-right">Estampac.</th>
+                      <th className="px-3 py-2 font-semibold text-right">Fuera pack</th>
+                      <th className="px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {pack.map((line, index) => {
+                      const item = byId.get(line.id);
+                      if (!item) return null;
+                      const price = sellPrice(item, channel, line.fee, 'adult');
+                      return (
+                        <tr key={`${line.id}-${line.fee}`} className="bg-white align-top">
+                          <td className="px-3 py-3 tabular-nums text-neutral-400">{index + 1}</td>
+                          <td className="px-3 py-3">
+                            <div className="flex gap-3">
+                              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-neutral-100 bg-white">
+                                <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{item.productType}</p>
+                                <p className="font-semibold leading-snug">{item.name}</p>
+                                <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 font-mono text-[11px]">{item.adultRef || '—'}</td>
+                          <td className="px-3 py-3 font-mono text-[11px]">{item.youthRef || '—'}</td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {fees.map((level) => (
+                                <button
+                                  key={level}
+                                  type="button"
+                                  onClick={() => setPack((current) => current.map((row, i) => (i === index ? { ...row, fee: level } : row)))}
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                    line.fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                                  }`}
+                                >
+                                  {level}
+                                </button>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{formatEuro(price)}</td>
+                          <td className="px-3 py-3 text-right">
+                            <input
+                              inputMode="decimal"
+                              placeholder="0,00"
+                              value={line.stampInput}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setPack((current) => current.map((row, i) => (
+                                  i === index ? { ...row, stampInput: raw, stamp: moneyFromInput(raw) ?? 0 } : row
+                                )));
+                              }}
+                              className="h-9 w-24 rounded-lg border border-neutral-200 px-2 text-right text-sm tabular-nums outline-none"
+                              aria-label="Precio estampación"
+                            />
+                          </td>
+                          <td className="px-3 py-3 text-right tabular-nums text-neutral-500">{formatEuro(fueraPackPrice(item, channel))}</td>
+                          <td className="px-3 py-3">
+                            <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label="Quitar del pack">
+                              <Trash2 className="h-4 w-4" />
                             </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="w-28 text-right">
-                        <p className="text-sm font-semibold tabular-nums">{formatEuro(price)}</p>
-                        <p className="text-[10px] tabular-nums text-neutral-400">PVP {formatEuro(rrpPrice(item, channel, 'adult'))}</p>
-                        <p className="text-[10px] tabular-nums text-neutral-400">{formatPct(lineMargin(item, channel, line.fee, 'adult'))}</p>
-                      </div>
-                      <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label="Quitar del pack">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
 
             <div className="rounded-2xl border border-neutral-200 bg-white p-6">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Total pack · {channel.toUpperCase()}</p>
               <p className="mt-2 font-display text-4xl font-semibold tabular-nums">{formatEuro(totals.sale)}</p>
-              <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+              <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+                <div>
+                  <p className="text-[11px] text-neutral-400">Precio club</p>
+                  <p className="font-semibold tabular-nums">{formatEuro(totals.club)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-neutral-400">Estampación</p>
+                  <p className="font-semibold tabular-nums">{formatEuro(totals.stamp)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-neutral-400">Fuera pack</p>
+                  <p className="font-semibold tabular-nums">{formatEuro(totals.fuera)}</p>
+                </div>
                 <div>
                   <p className="text-[11px] text-neutral-400">PVP</p>
                   <p className="font-semibold tabular-nums">{formatEuro(totals.rrp)}</p>
@@ -548,10 +602,6 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 <div>
                   <p className="text-[11px] text-neutral-400">Margen</p>
                   <p className="font-semibold tabular-nums">{formatPct(totals.margin)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-neutral-400">Prendas</p>
-                  <p className="font-semibold tabular-nums">{totals.pieces}</p>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-3">

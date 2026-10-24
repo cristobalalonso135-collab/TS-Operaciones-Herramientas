@@ -2,11 +2,10 @@ import {
   asProduct,
   formatEuro,
   formatPct,
-  formatRed,
+  fueraPackPrice,
   lineMargin,
   rrpPrice,
   sellPrice,
-  type FeeLevel,
   type PackLine,
   type TarifaChannel,
   type TarifaProduct,
@@ -305,17 +304,33 @@ export function packExportRows(
   channel: TarifaChannel,
 ): unknown[][] {
   const byId = new Map(products.map((item) => [item.id, item]));
-  const header = ['Producto', 'Color', 'Referencia', 'Fee', 'PVP', 'Precio', 'Margen %'];
-  const body = lines.map((line) => {
+  const header = [
+    'Número',
+    'Referencia adulto',
+    'Referencia niño',
+    'Producto',
+    'Nombre',
+    'Color',
+    'Precio club',
+    'Precio estampac.',
+    'Precio fuera pack',
+    'PVP',
+    'Margen %',
+  ];
+  const body = lines.map((line, index) => {
     const item = byId.get(line.id);
-    if (!item) return ['', '', '', line.fee, '', '', ''];
+    if (!item) return [index + 1, '', '', '', '', '', '', line.stampInput || line.stamp || 0, '', '', ''];
     return [
+      index + 1,
+      item.adultRef,
+      item.youthRef || '',
+      item.productType,
       item.name,
       item.colour,
-      item.adultRef,
-      `Fee ${line.fee}`,
-      formatEuro(rrpPrice(item, channel, 'adult')),
       formatEuro(sellPrice(item, channel, line.fee, 'adult')),
+      formatEuro(line.stamp || 0),
+      formatEuro(fueraPackPrice(item, channel)),
+      formatEuro(rrpPrice(item, channel, 'adult')),
       formatPct(lineMargin(item, channel, line.fee, 'adult')),
     ];
   });
