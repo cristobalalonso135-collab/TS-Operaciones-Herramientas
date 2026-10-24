@@ -2,6 +2,7 @@ export interface TarifaStock {
   total: number;
   disp: number;
   pending: number;
+  ordered: number;
   reserved: number;
   eqi: number;
   ztt: number;
@@ -52,6 +53,114 @@ export interface TarifaProduct {
 }
 
 export type TarifaChannel = 'b2c' | 'b2b';
+export type FeeLevel = 1 | 2 | 3 | 4;
+
+export function newId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return `${prefix}-${crypto.randomUUID()}`;
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function money(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value * 100) / 100;
+  return null;
+}
+
+function qty(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function emptyFees(): TarifaB2C {
+  return {
+    adultRrp: null,
+    youthRrp: null,
+    fee1: null,
+    fee2: null,
+    fee3: null,
+    fee4: null,
+    adultNet: null,
+    youthNet: null,
+    discountPct: null,
+  };
+}
+
+export function emptyStock(): TarifaStock {
+  return {
+    total: 0,
+    disp: 0,
+    pending: 0,
+    ordered: 0,
+    reserved: 0,
+    eqi: 0,
+    ztt: 0,
+    zgz: 0,
+    b2b: 0,
+  };
+}
+
+export function emptyProduct(): TarifaProduct {
+  const b2c = emptyFees();
+  return {
+    id: newId('tf'),
+    brand: '',
+    productType: '',
+    name: '',
+    colour: '',
+    red: null,
+    adultRef: '',
+    youthRef: '',
+    colorHex: null,
+    image: null,
+    stock: emptyStock(),
+    b2c,
+    b2b: {
+      adultRrp: null,
+      youthRrp: null,
+      adultFee1: null,
+      youthFee1: null,
+      adultFee2: null,
+      youthFee2: null,
+      adultFee3: null,
+      youthFee3: null,
+      adultNet: null,
+      youthNet: null,
+      discountPct: null,
+    },
+  };
+}
+
+export function asProduct(value: unknown): TarifaProduct {
+  const row = (value && typeof value === 'object' ? value : {}) as Partial<TarifaProduct>;
+  const seed = emptyProduct();
+  const stock = { ...emptyStock(), ...(row.stock || {}) };
+  if (!stock.ordered) stock.ordered = stock.pending;
+  return {
+    ...seed,
+    ...row,
+    id: String(row.id || seed.id),
+    brand: String(row.brand || ''),
+    productType: String(row.productType || ''),
+    name: String(row.name || ''),
+    colour: String(row.colour || ''),
+    red: row.red || null,
+    adultRef: String(row.adultRef || ''),
+    youthRef: String(row.youthRef || ''),
+    colorHex: row.colorHex || null,
+    image: row.image || null,
+    stock,
+    b2c: { ...seed.b2c, ...(row.b2c || {}) },
+    b2b: { ...seed.b2b, ...(row.b2b || {}) },
+  };
+}
+
+export function familyKey(item: TarifaProduct): string {
+  return `${item.brand}|${item.name}`;
+}
+
+export function colourways(items: TarifaProduct[], item: TarifaProduct): TarifaProduct[] {
+  const key = familyKey(item);
+  return items.filter((row) => familyKey(row) === key);
+}
 
 export function todayIso(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -71,23 +180,83 @@ export function formatQty(value: number | null | undefined): string {
   return value.toLocaleString('es-ES', { maximumFractionDigits: 0 });
 }
 
+export function formatPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${value.toLocaleString('es-ES', { maximumFractionDigits: 0 })}%`;
+}
+
 export function formatRed(red: string | null): string {
   if (!red) return 'Sin vigencia';
   const [year, month, day] = red.split('-');
   return `${day}/${month}/${year}`;
 }
 
-export function sellPrice(item: TarifaProduct, channel: TarifaChannel): number | null {
-  if (channel === 'b2c') return item.b2c.fee1;
-  return item.b2b.adultFee1 ?? item.b2b.youthFee1;
+export function sellPrice(item: TarifaProduct, channel: TarifaChannel, fee: FeeLevel = 1): number | null {
+  if (channel === 'b2c') {
+    if (fee === 1) return money(item.b2c.fee1);
+    if (fee === 2) return money(item.b2c.fee2);
+    if (fee === 3) return money(item.b2c.fee3);
+    return money(item.b2c.fee4);
+  }
+  if (fee === 1) return money(item.b2b.adultFee1 ?? item.b2b.youthFee1);
+  if (fee === 2) return money(item.b2b.adultFee2 ?? item.b2b.youthFee2);
+  return money(item.b2b.adultFee3 ?? item.b2b.youthFee3);
 }
 
 export function rrpPrice(item: TarifaProduct, channel: TarifaChannel): number | null {
-  if (channel === 'b2c') return item.b2c.adultRrp ?? item.b2c.youthRrp;
-  return item.b2b.adultRrp ?? item.b2b.youthRrp;
+  if (channel === 'b2c') return money(item.b2c.adultRrp ?? item.b2c.youthRrp);
+  return money(item.b2b.adultRrp ?? item.b2b.youthRrp);
 }
 
-export function uniqueSorted(items: TarifaProduct[], key: 'brand' | 'productType'): string[] {
+export function unitCost(item: TarifaProduct, channel: TarifaChannel): number | null {
+  if (channel === 'b2c') return money(item.b2c.adultNet ?? item.b2c.youthNet);
+  return money(item.b2b.adultNet ?? item.b2b.youthNet);
+}
+
+export function marginPct(price: number | null, cost: number | null): number | null {
+  if (price == null || cost == null || price <= 0) return null;
+  return Math.round(((price - cost) / price) * 1000) / 10;
+}
+
+export function uniqueSorted(items: TarifaProduct[], key: 'brand' | 'productType' | 'colour'): string[] {
   return Array.from(new Set(items.map((item) => item[key]).filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, 'es'));
 }
+
+export interface PackLine {
+  id: string;
+  qty: number;
+  fee: FeeLevel;
+}
+
+export function packTotals(
+  products: TarifaProduct[],
+  lines: PackLine[],
+  channel: TarifaChannel,
+): { pieces: number; sale: number; cost: number; margin: number | null } {
+  const byId = new Map(products.map((item) => [item.id, item]));
+  let pieces = 0;
+  let sale = 0;
+  let cost = 0;
+  let hasCost = false;
+  lines.forEach((line) => {
+    const item = byId.get(line.id);
+    if (!item) return;
+    const price = sellPrice(item, channel, line.fee);
+    const unit = unitCost(item, channel);
+    pieces += line.qty;
+    if (price != null) sale += price * line.qty;
+    if (unit != null) {
+      cost += unit * line.qty;
+      hasCost = true;
+    }
+  });
+  return {
+    pieces,
+    sale: Math.round(sale * 100) / 100,
+    cost: Math.round(cost * 100) / 100,
+    margin: hasCost ? marginPct(sale, cost) : null,
+  };
+}
+
+export { qty, money };

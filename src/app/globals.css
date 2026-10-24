@@ -123,6 +123,18 @@ textarea {
 .tools-rise-delay-5 { animation-delay: 0.25s; }
 .tools-rise-delay-6 { animation-delay: 0.3s; }
 
+.tarifas-shell {
+  --bg-primary: #ffffff;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-soft: #f5f5f5;
+  --border: #e8e8e8;
+  --border-strong: #d2d2d2;
+  --text-primary: #141414;
+  --text-secondary: #5a5a5a;
+  --text-muted: #8a8a8a;
+}
+
 .abonos-shell {
   --accent: #c4a035;
   --accent-hover: #a88820;

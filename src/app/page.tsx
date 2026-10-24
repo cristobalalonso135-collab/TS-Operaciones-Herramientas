@@ -786,7 +786,7 @@ export default function Home() {
         id: 'tarifas' as const,
         number: '12',
         title: 'Tarifas',
-        description: 'Price list 26/27 para el comercial: foto, vigencia, stock y fees B2C/B2B.',
+        description: 'Qué puedo ofrecer y a qué precio. Constructor de packs 26/27.',
         tone: 'bg-[#f3eee6] text-[#6a4a2a]',
         link: 'text-[#6a4a2a]',
       },
