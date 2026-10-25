@@ -302,9 +302,11 @@ export function packExportRows(
   products: TarifaProduct[],
   lines: PackLine[],
   channel: TarifaChannel,
+  headers?: string[],
+  locale = 'es-ES',
 ): unknown[][] {
   const byId = new Map(products.map((item) => [item.id, item]));
-  const header = [
+  const header = headers || [
     'Número',
     'Referencia adulto',
     'Referencia niño',
@@ -327,11 +329,11 @@ export function packExportRows(
       item.productType,
       item.name,
       item.colour,
-      formatEuro(sellPrice(item, channel, line.fee, 'adult')),
-      formatEuro(line.stamp || 0),
-      formatEuro(fueraPackPrice(item, channel)),
-      formatEuro(rrpPrice(item, channel, 'adult')),
-      formatPct(lineMargin(item, channel, line.fee, 'adult')),
+      formatEuro(sellPrice(item, channel, line.fee, 'adult'), locale),
+      formatEuro(line.stamp || 0, locale),
+      formatEuro(fueraPackPrice(item, channel), locale),
+      formatEuro(rrpPrice(item, channel, 'adult'), locale),
+      formatPct(lineMargin(item, channel, line.fee, 'adult'), locale),
     ];
   });
   return [header, ...body];

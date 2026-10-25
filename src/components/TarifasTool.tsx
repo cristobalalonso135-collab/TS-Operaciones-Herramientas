@@ -38,14 +38,20 @@ import {
   type TarifaSport,
 } from '@/lib/tarifas-model';
 import { loadTarifasCatalog, saveTarifasCatalog, type TarifasBackend } from '@/lib/tarifas-store';
+import {
+  TARIFAS_COPY,
+  TARIFAS_LOCALES,
+  TARIFAS_LOCALE_LABEL,
+  TARIFAS_LOCALE_TAG,
+  labelProductType,
+  readTarifasLocale,
+  writeTarifasLocale,
+  type TarifasCopy,
+  type TarifasLocale,
+} from '@/lib/tarifas-i18n';
 import { ArrowLeft, Download, Plus, Search, Trash2, X } from 'lucide-react';
 
 const SEED = (catalog as unknown[]).map(asProduct);
-const TABS = [
-  { id: 'catalogo', label: 'Catálogo' },
-  { id: 'pack', label: 'Pack' },
-  { id: 'maestro', label: 'Maestro' },
-] as const;
 
 function Photo({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
   const [failed, setFailed] = useState(false);
@@ -95,30 +101,53 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const inputClass = 'h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm outline-none';
 
+function LangSwitch({ locale, onChange }: { locale: TarifasLocale; onChange: (next: TarifasLocale) => void }) {
+  return (
+    <div className="flex justify-end gap-1">
+      {TARIFAS_LOCALES.map((code) => (
+        <button
+          key={code}
+          type="button"
+          onClick={() => onChange(code)}
+          className={`h-8 min-w-8 rounded-full px-2.5 text-[11px] font-semibold ${
+            locale === code ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100'
+          }`}
+        >
+          {TARIFAS_LOCALE_LABEL[code]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function PvpLines({
   item,
   channel,
   mode,
+  copy,
+  localeTag,
 }: {
   item: TarifaProduct;
   channel: TarifaChannel;
   mode: '' | 'adult' | 'youth' | 'both';
+  copy: TarifasCopy;
+  localeTag: string;
 }) {
   const adult = rrpPrice(item, channel, 'adult');
   const youth = rrpPrice(item, channel, 'youth');
   const showAdult = mode !== 'youth';
   const showYouth = hasYouth(item) && mode !== 'adult';
   if (!showYouth) {
-    return <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(adult)}</p>;
+    return <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(adult, localeTag)}</p>;
   }
   if (!showAdult) {
-    return <p className="text-[11px] tabular-nums text-neutral-400">PVP niño {formatEuro(youth)}</p>;
+    return <p className="text-[11px] tabular-nums text-neutral-400">PVP {copy.youthPvp} {formatEuro(youth, localeTag)}</p>;
   }
   return (
     <p className="text-[11px] tabular-nums text-neutral-400">
-      PVP {formatEuro(adult)}
+      PVP {formatEuro(adult, localeTag)}
       <span className="text-neutral-300"> · </span>
-      niño {formatEuro(youth)}
+      {copy.youthPvp} {formatEuro(youth, localeTag)}
     </p>
   );
 }
@@ -129,7 +158,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [setupSql, setSetupSql] = useState<string>();
   const [status, setStatus] = useState('');
   const [channel, setChannel] = useState<TarifaChannel | null>(null);
-  const [tab, setTab] = useState<(typeof TABS)[number]['id']>('catalogo');
+  const [tab, setTab] = useState<'catalogo' | 'pack' | 'maestro'>('catalogo');
   const [fee, setFee] = useState<FeeLevel>(1);
   const [query, setQuery] = useState('');
   const [brand, setBrand] = useState('');
@@ -145,14 +174,25 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
   const [draft, setDraft] = useState<TarifaProduct | null>(null);
   const [pack, setPack] = useState<PackLine[]>([]);
+  const [locale, setLocale] = useState<TarifasLocale>('es');
 
   useEffect(() => {
+    setLocale(readTarifasLocale());
     loadTarifasCatalog(SEED).then((loaded) => {
       setProducts(loaded.products);
       setBackend(loaded.backend);
       setSetupSql(loaded.setupSql);
     });
   }, []);
+
+  const copy = TARIFAS_COPY[locale];
+  const localeTag = TARIFAS_LOCALE_TAG[locale];
+  const euro = (value: number | null | undefined) => formatEuro(value, localeTag);
+  const pct = (value: number | null | undefined) => formatPct(value, localeTag);
+  const pickLocale = (next: TarifasLocale) => {
+    setLocale(next);
+    writeTarifasLocale(next);
+  };
 
   const fees = channel ? channelFees(channel) : [];
   const brands = useMemo(() => uniqueSorted(products, 'brand'), [products]);
@@ -205,9 +245,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     setProducts(next);
     try {
       await saveTarifasCatalog(next, backend);
-      setStatus(backend === 'supabase' ? 'Guardado para toda la red.' : 'Guardado en este navegador.');
+      setStatus(backend === 'supabase' ? copy.savedNetwork : copy.savedLocal);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'No se pudo guardar.');
+      setStatus(error instanceof Error ? error.message : copy.saveError);
     }
   };
 
@@ -250,14 +290,14 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     if (!channel) return;
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(packExportRows(products, pack, channel)), 'Pack');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(packExportRows(products, pack, channel, copy.packHeaders, localeTag)), 'Pack');
     XLSX.writeFile(workbook, `Pack_${channel.toUpperCase()}.xlsx`);
   };
 
   const importSheets = async (sheets: Record<string, unknown[][]>) => {
     const parsed = parseTarifasSheets(sheets);
     if (parsed.length === 0) {
-      setStatus('Ese Excel no tiene referencias.');
+      setStatus(copy.emptyExcel);
       return;
     }
     const photos = new Map<string, string>();
@@ -270,20 +310,23 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       item.image ? item : { ...item, image: photos.get(item.adultRef) || photos.get(item.youthRef) || null }
     ));
     await persist(next);
-    setStatus(`${next.length.toLocaleString('es-ES')} referencias. Lo que no está en el Excel, sale de la web.`);
+    setStatus(`${next.length.toLocaleString(localeTag)} ${copy.imported}`);
   };
 
   if (!channel) {
     return (
       <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 py-8 sm:px-6">
-        <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
-          <ArrowLeft className="h-4 w-4" /> Herramientas
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
+            <ArrowLeft className="h-4 w-4" /> {copy.tools}
+          </button>
+          <LangSwitch locale={locale} onChange={pickLocale} />
+        </div>
         <div className="mx-auto mt-16 max-w-2xl text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Tarifas 26/27</p>
-          <h2 className="mt-3 font-display text-5xl font-semibold tracking-tight">¿Qué tarifa usas?</h2>
+          <h2 className="mt-3 font-display text-5xl font-semibold tracking-tight">{copy.whichTariff}</h2>
           <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-neutral-500">
-            B2C y B2B son listas distintas. El catálogo y el pack se calculan con esa tarifa.
+            {copy.tariffHint}
           </p>
         </div>
         <div className="mx-auto mt-12 grid max-w-2xl gap-4 sm:grid-cols-2">
@@ -292,18 +335,18 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             onClick={() => pickChannel('b2c')}
             className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
           >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">Clubs y web</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.clubsWeb}</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2C</p>
-            <p className="mt-2 text-sm text-neutral-500">Fee 1, 2, 3 y 4.</p>
+            <p className="mt-2 text-sm text-neutral-500">{copy.b2cFees}</p>
           </button>
           <button
             type="button"
             onClick={() => pickChannel('b2b')}
             className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
           >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">Distribución</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.distribution}</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2B</p>
-            <p className="mt-2 text-sm text-neutral-500">Fee 1, 2 y 3. Adulto y niño van por separado.</p>
+            <p className="mt-2 text-sm text-neutral-500">{copy.b2bFees}</p>
           </button>
         </div>
       </div>
@@ -313,30 +356,40 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   return (
     <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 pb-24 pt-4 sm:px-6">
       <div className="space-y-6">
-        <WorkspaceChrome
-          onBack={onBack}
-          tabs={[...TABS]}
-          active={tab}
-          onSelect={(id) => setTab(id as (typeof TABS)[number]['id'])}
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <WorkspaceChrome
+              onBack={onBack}
+              backLabel={copy.tools}
+              tabs={[
+                { id: 'catalogo', label: copy.catalog },
+                { id: 'pack', label: copy.pack },
+                { id: 'maestro', label: copy.master },
+              ]}
+              active={tab}
+              onSelect={(id) => setTab(id as 'catalogo' | 'pack' | 'maestro')}
+            />
+          </div>
+          <LangSwitch locale={locale} onChange={pickLocale} />
+        </div>
 
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-              {channel.toUpperCase()} · {tab === 'pack' ? 'Pack' : tab === 'maestro' ? 'Maestro' : 'Catálogo'}
+              {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : copy.catalog}
             </p>
             <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-              {tab === 'pack' ? 'Constructor de pack' : tab === 'maestro' ? 'Catálogo vivo' : 'Qué puedo ofrecer'}
+              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : copy.offer}
             </h2>
           </div>
           <button type="button" onClick={() => { setChannel(null); setPack([]); }} className="text-xs font-semibold text-neutral-500">
-            Cambiar tarifa
+            {copy.changeTariff}
           </button>
         </div>
 
         {tab !== 'maestro' ? (
           <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Tarifa</p>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.tariff}</p>
             <div className="flex flex-wrap gap-2">
               {fees.map((level) => (
                 <Pill key={level} active={fee === level} onClick={() => setFee(level)}>Fee {level}</Pill>
@@ -350,11 +403,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             {tab === 'maestro' ? (
               <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
                 <p className="text-sm text-neutral-500">
-                  Sube el Excel y sustituye el catálogo entero. Descárgalo, cambia lo que quieras y vuelve a importar. Si son pocas cosas, abre la ficha y edita.
+                  {copy.masterHint}
                 </p>
                 <FileUpload
-                  label="Sube el maestro de tarifas"
-                  hint="Plantilla propia o el Excel B2C/B2B de 26/27."
+                  label={copy.masterUpload}
+                  hint={copy.masterUploadHint}
                   inputId="tarifas-maestro"
                   compact
                   onFileLoaded={() => undefined}
@@ -362,7 +415,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 />
                 <div className="flex flex-wrap gap-2">
                   <button type="button" onClick={downloadCatalog} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
-                    <Download className="h-4 w-4" /> Descargar maestro
+                    <Download className="h-4 w-4" /> {copy.downloadMaster}
                   </button>
                   <button
                     type="button"
@@ -373,13 +426,13 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     }}
                     className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
                   >
-                    <Plus className="h-4 w-4" /> Nueva referencia
+                    <Plus className="h-4 w-4" /> {copy.newReference}
                   </button>
                 </div>
                 {status ? <p className="text-xs text-neutral-500">{status}</p> : null}
                 {setupSql ? (
                   <p className="text-xs text-amber-700">
-                    Si quieres que la red comercial vea tus cambios, hay que crear la tabla `tarifas_store` en Supabase.
+                    {copy.setupSql}
                   </p>
                 ) : null}
               </div>
@@ -391,58 +444,58 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Producto, color o referencia"
+                  placeholder={copy.search}
                   className="h-10 w-full rounded-full border border-neutral-200 bg-white py-0 pl-9 pr-4 text-sm outline-none"
                 />
               </label>
               <select value={sport} onChange={(e) => setSport(e.target.value as TarifaSport | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">Deporte</option>
-                {sports.map((item) => <option key={item} value={item}>{item}</option>)}
+                <option value="">{copy.sport}</option>
+                {sports.map((item) => <option key={item} value={item}>{copy.sports[item as TarifaSport] || item}</option>)}
               </select>
               <select value={gender} onChange={(e) => setGender(e.target.value as TarifaGender | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">Género</option>
-                {GENDERS.map((item) => <option key={item} value={item}>{item}</option>)}
+                <option value="">{copy.gender}</option>
+                {GENDERS.map((item) => <option key={item} value={item}>{copy.genders[item]}</option>)}
               </select>
               <select value={type} onChange={(e) => { setType(e.target.value); setColour(''); }} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">Tipo</option>
-                {types.map((item) => <option key={item} value={item}>{item}</option>)}
+                <option value="">{copy.type}</option>
+                {types.map((item) => <option key={item} value={item}>{labelProductType(locale, item)}</option>)}
               </select>
               <select value={colour} onChange={(e) => setColour(e.target.value)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">Color</option>
+                <option value="">{copy.colour}</option>
                 {colours.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
               <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="nombre">Ordenar: nombre</option>
-                <option value="marca">Ordenar: marca</option>
-                <option value="precio">Ordenar: precio</option>
-                <option value="pvp">Ordenar: PVP</option>
+                <option value="nombre">{copy.sortName}</option>
+                <option value="marca">{copy.sortBrand}</option>
+                <option value="precio">{copy.sortPrice}</option>
+                <option value="pvp">{copy.sortPvp}</option>
               </select>
             </div>
 
             <div className="flex flex-wrap gap-1.5">
-              <Pill active={!kind} onClick={() => setKind('')}>Todo</Pill>
+              <Pill active={!kind} onClick={() => setKind('')}>{copy.all}</Pill>
               {KINDS.map((item) => (
-                <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{item}</Pill>
+                <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{copy.kinds[item]}</Pill>
               ))}
               {NOVELTIES.map((item) => (
-                <Pill key={item} active={novelty === item} onClick={() => setNovelty(novelty === item ? '' : item)}>{item}</Pill>
+                <Pill key={item} active={novelty === item} onClick={() => setNovelty(novelty === item ? '' : item)}>{copy.novelties[item]}</Pill>
               ))}
-              <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>Adulto y niño</Pill>
-              <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>Solo adulto</Pill>
-              <Pill active={ageFilter === 'youth'} onClick={() => setAgeFilter(ageFilter === 'youth' ? '' : 'youth')}>Con niño</Pill>
+              <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>{copy.adultAndYouth}</Pill>
+              <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>{copy.adultOnly}</Pill>
+              <Pill active={ageFilter === 'youth'} onClick={() => setAgeFilter(ageFilter === 'youth' ? '' : 'youth')}>{copy.withYouth}</Pill>
             </div>
 
             <div className="flex flex-wrap gap-1.5">
-              <Pill active={!brand} onClick={() => setBrand('')}>Marcas</Pill>
+              <Pill active={!brand} onClick={() => setBrand('')}>{copy.brands}</Pill>
               {brands.map((item) => (
                 <Pill key={item} active={brand === item} onClick={() => setBrand(item === brand ? '' : item)}>{item}</Pill>
               ))}
             </div>
 
-            <p className="text-xs tabular-nums text-neutral-400">{filtered.length.toLocaleString('es-ES')} productos</p>
+            <p className="text-xs tabular-nums text-neutral-400">{filtered.length.toLocaleString(localeTag)} {copy.products}</p>
 
             {filtered.length === 0 ? (
-              <p className="py-16 text-center text-sm text-neutral-400">Nada con estos filtros.</p>
+              <p className="py-16 text-center text-sm text-neutral-400">{copy.emptyFilters}</p>
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {filtered.map((item) => (
@@ -451,26 +504,26 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       <div className="relative aspect-square bg-neutral-50">
                         <Photo key={item.image || item.id} src={item.image} alt={item.name} className="h-full w-full p-4 transition group-hover:scale-[1.02]" />
                         {!hasYouth(item) ? (
-                          <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-neutral-700">Solo adulto</span>
+                          <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-neutral-700">{copy.adultOnly}</span>
                         ) : null}
                         {isExpired(item.red) ? (
-                          <span className="absolute right-2 top-2 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-semibold text-white">Fuera de vigencia</span>
+                          <span className="absolute right-2 top-2 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-semibold text-white">{copy.expired}</span>
                         ) : null}
                         {item.novelty === 'Nueva' ? (
-                          <span className="absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">Nueva</span>
+                          <span className="absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">{copy.newBadge}</span>
                         ) : null}
                       </div>
                       <div className="space-y-1 px-3 pb-3 pt-3">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                          {item.brand} · {item.productType}
+                          {item.brand} · {labelProductType(locale, item.productType)}
                         </p>
                         <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{item.name}</p>
                         <p className="flex items-center gap-1.5 truncate text-[11px] text-neutral-500">
                           {item.colorHex ? <span className="h-2.5 w-2.5 rounded-full border border-neutral-200" style={{ background: item.colorHex }} /> : null}
                           {item.colour}
                         </p>
-                        <p className="pt-1 font-display text-lg font-semibold tabular-nums">{formatEuro(sellPrice(item, channel, fee, 'adult'))}</p>
-                        <PvpLines item={item} channel={channel} mode={ageFilter} />
+                        <p className="pt-1 font-display text-lg font-semibold tabular-nums">{euro(sellPrice(item, channel, fee, 'adult'))}</p>
+                        <PvpLines item={item} channel={channel} mode={ageFilter} copy={copy} localeTag={localeTag} />
                       </div>
                     </button>
                     {tab === 'catalogo' ? (
@@ -480,7 +533,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           onClick={() => addToPack(item)}
                           className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
                         >
-                          <Plus className="h-3.5 w-3.5" /> Pack · Fee {fee}
+                          <Plus className="h-3.5 w-3.5" /> {copy.addPack} · Fee {fee}
                         </button>
                       </div>
                     ) : null}
@@ -493,7 +546,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <div className="mx-auto max-w-6xl space-y-4">
             {pack.length === 0 ? (
               <p className="py-16 text-center text-sm text-neutral-400">
-                Aún no hay nada. En el catálogo, monta camiseta, pantalón, medias… o lo que pida el club.
+                {copy.emptyPack}
               </p>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-neutral-200">
@@ -501,13 +554,13 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   <thead className="bg-neutral-50 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
                     <tr>
                       <th className="px-3 py-2 font-semibold">#</th>
-                      <th className="px-3 py-2 font-semibold">Producto</th>
-                      <th className="px-3 py-2 font-semibold">Ref. adulto</th>
-                      <th className="px-3 py-2 font-semibold">Ref. niño</th>
-                      <th className="px-3 py-2 font-semibold">Fee club</th>
-                      <th className="px-3 py-2 font-semibold text-right">Precio club</th>
-                      <th className="px-3 py-2 font-semibold text-right">Estampac.</th>
-                      <th className="px-3 py-2 font-semibold text-right">Fuera pack</th>
+                      <th className="px-3 py-2 font-semibold">{copy.colProduct}</th>
+                      <th className="px-3 py-2 font-semibold">{copy.colAdultRef}</th>
+                      <th className="px-3 py-2 font-semibold">{copy.colYouthRef}</th>
+                      <th className="px-3 py-2 font-semibold">{copy.colClubFee}</th>
+                      <th className="px-3 py-2 font-semibold text-right">{copy.colClubPrice}</th>
+                      <th className="px-3 py-2 font-semibold text-right">{copy.colStamp}</th>
+                      <th className="px-3 py-2 font-semibold text-right">{copy.colOutside}</th>
                       <th className="px-3 py-2" />
                     </tr>
                   </thead>
@@ -525,7 +578,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                                 <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
                               </div>
                               <div className="min-w-0">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{item.productType}</p>
+                                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
                                 <p className="font-semibold leading-snug">{item.name}</p>
                                 <p className="text-[11px] text-neutral-500">{item.colour}</p>
                               </div>
@@ -549,7 +602,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                               ))}
                             </div>
                           </td>
-                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{formatEuro(price)}</td>
+                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{euro(price)}</td>
                           <td className="px-3 py-3 text-right">
                             <input
                               inputMode="decimal"
@@ -562,12 +615,12 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                                 )));
                               }}
                               className="h-9 w-24 rounded-lg border border-neutral-200 px-2 text-right text-sm tabular-nums outline-none"
-                              aria-label="Precio estampación"
+                              aria-label={copy.stampAria}
                             />
                           </td>
-                          <td className="px-3 py-3 text-right tabular-nums text-neutral-500">{formatEuro(fueraPackPrice(item, channel))}</td>
+                          <td className="px-3 py-3 text-right tabular-nums text-neutral-500">{euro(fueraPackPrice(item, channel))}</td>
                           <td className="px-3 py-3">
-                            <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label="Quitar del pack">
+                            <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
                               <Trash2 className="h-4 w-4" />
                             </button>
                           </td>
@@ -580,38 +633,38 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             )}
 
             <div className="rounded-2xl border border-neutral-200 bg-white p-6">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">Total pack · {channel.toUpperCase()}</p>
-              <p className="mt-2 font-display text-4xl font-semibold tabular-nums">{formatEuro(totals.sale)}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.totalPack} · {channel.toUpperCase()}</p>
+              <p className="mt-2 font-display text-4xl font-semibold tabular-nums">{euro(totals.sale)}</p>
               <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
                 <div>
-                  <p className="text-[11px] text-neutral-400">Precio club</p>
-                  <p className="font-semibold tabular-nums">{formatEuro(totals.club)}</p>
+                  <p className="text-[11px] text-neutral-400">{copy.clubPrice}</p>
+                  <p className="font-semibold tabular-nums">{euro(totals.club)}</p>
                 </div>
                 <div>
-                  <p className="text-[11px] text-neutral-400">Estampación</p>
-                  <p className="font-semibold tabular-nums">{formatEuro(totals.stamp)}</p>
+                  <p className="text-[11px] text-neutral-400">{copy.stamping}</p>
+                  <p className="font-semibold tabular-nums">{euro(totals.stamp)}</p>
                 </div>
                 <div>
-                  <p className="text-[11px] text-neutral-400">Fuera pack</p>
-                  <p className="font-semibold tabular-nums">{formatEuro(totals.fuera)}</p>
+                  <p className="text-[11px] text-neutral-400">{copy.outsidePack}</p>
+                  <p className="font-semibold tabular-nums">{euro(totals.fuera)}</p>
                 </div>
                 <div>
                   <p className="text-[11px] text-neutral-400">PVP</p>
-                  <p className="font-semibold tabular-nums">{formatEuro(totals.rrp)}</p>
+                  <p className="font-semibold tabular-nums">{euro(totals.rrp)}</p>
                 </div>
                 <div>
-                  <p className="text-[11px] text-neutral-400">Margen</p>
-                  <p className="font-semibold tabular-nums">{formatPct(totals.margin)}</p>
+                  <p className="text-[11px] text-neutral-400">{copy.margin}</p>
+                  <p className="font-semibold tabular-nums">{pct(totals.margin)}</p>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-3">
                 {pack.length > 0 ? (
                   <button type="button" onClick={downloadPack} className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white">
-                    <Download className="h-4 w-4" /> Exportar pack
+                    <Download className="h-4 w-4" /> {copy.exportPack}
                   </button>
                 ) : null}
                 {pack.length > 0 ? (
-                  <button type="button" onClick={() => setPack([])} className="text-xs font-semibold text-neutral-500">Vaciar</button>
+                  <button type="button" onClick={() => setPack([])} className="text-xs font-semibold text-neutral-500">{copy.clearPack}</button>
                 ) : null}
               </div>
             </div>
@@ -625,7 +678,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           onClick={() => setTab('pack')}
           className="fixed bottom-5 left-1/2 z-40 -translate-x-1/2 rounded-full bg-neutral-900 px-5 py-3 text-sm font-semibold text-white shadow-lg"
         >
-          Pack · {pack.length} · {formatEuro(totals.sale)}
+          {copy.pack} · {pack.length} · {euro(totals.sale)}
         </button>
       ) : null}
 
@@ -646,12 +699,12 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                      {draft.brand} · {draft.productType} · {kindOf(draft)}
+                      {draft.brand} · {labelProductType(locale, draft.productType)} · {copy.kinds[kindOf(draft)]}
                     </p>
-                    <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{draft.name || 'Nueva referencia'}</h3>
+                    <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{draft.name || copy.newRef}</h3>
                     <p className="mt-1 text-sm text-neutral-500">{draft.colour}</p>
                   </div>
-                  <button type="button" onClick={() => { setOpen(null); setDraft(null); }} className="rounded-md p-1 text-neutral-400" aria-label="Cerrar">
+                  <button type="button" onClick={() => { setOpen(null); setDraft(null); }} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
                     <X className="h-5 w-5" />
                   </button>
                 </div>
@@ -659,44 +712,44 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 {!editing ? (
                   <>
                     <div className="mt-4 flex flex-wrap gap-1.5">
-                      <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>Adulto</Pill>
+                      <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>{copy.adult}</Pill>
                       {hasYouth(draft) ? (
-                        <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>Niño</Pill>
+                        <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>{copy.youth}</Pill>
                       ) : (
-                        <span className="self-center rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-500">Solo adulto</span>
+                        <span className="self-center rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-500">{copy.adultOnly}</span>
                       )}
                     </div>
                     <p className="mt-2 font-mono text-sm text-neutral-700">{activeRef(draft, openAge) || '—'}</p>
                     {draft.red ? (
                       <p className={`mt-1 text-[11px] ${isExpired(draft.red) ? 'font-semibold text-neutral-900' : 'text-neutral-400'}`}>
-                        Vigencia {formatRed(draft.red)}
+                        {copy.validity} {formatRed(draft.red)}
                       </p>
                     ) : null}
 
-                    <p className="mt-4 text-[11px] uppercase tracking-[0.12em] text-neutral-400">A qué precio · {channel.toUpperCase()}</p>
+                    <p className="mt-4 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{copy.atPrice} · {channel.toUpperCase()}</p>
                     <div className="mt-2 overflow-hidden rounded-xl border border-neutral-200">
                       <table className="w-full text-sm">
                         <tbody>
                           <tr className="border-b border-neutral-100">
                             <td className="px-3 py-2 text-neutral-500">PVP</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{formatEuro(rrpPrice(draft, channel, openAge))}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{euro(rrpPrice(draft, channel, openAge))}</td>
                           </tr>
                           {fees.map((level) => (
                             <tr key={level} className="border-b border-neutral-100 last:border-0">
                               <td className="px-3 py-2 text-neutral-500">Fee {level}</td>
-                              <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatEuro(sellPrice(draft, channel, level, openAge))}</td>
+                              <td className="px-3 py-2 text-right font-semibold tabular-nums">{euro(sellPrice(draft, channel, level, openAge))}</td>
                             </tr>
                           ))}
                           <tr>
-                            <td className="px-3 py-2 text-[11px] text-neutral-400">Margen Fee {fee}</td>
-                            <td className="px-3 py-2 text-right text-[11px] tabular-nums text-neutral-400">{formatPct(lineMargin(draft, channel, fee, openAge))}</td>
+                            <td className="px-3 py-2 text-[11px] text-neutral-400">{copy.marginFee} {fee}</td>
+                            <td className="px-3 py-2 text-right text-[11px] tabular-nums text-neutral-400">{pct(lineMargin(draft, channel, fee, openAge))}</td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                     {colourways(products, draft).length > 1 ? (
                       <div className="mt-4">
-                        <p className="text-[11px] uppercase tracking-[0.12em] text-neutral-400">Colores</p>
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-neutral-400">{copy.colours}</p>
                         <div className="mt-2 flex flex-wrap gap-2">
                           {colourways(products, draft).map((item) => (
                             <button
@@ -716,44 +769,44 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); setTab('pack'); }}
                       className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
                     >
-                      <Plus className="h-4 w-4" /> Añadir al pack · Fee {fee}
+                      <Plus className="h-4 w-4" /> {copy.addToPack} · Fee {fee}
                     </button>
                   </>
                 ) : (
                   <div className="mt-4 grid max-h-[70vh] grid-cols-2 gap-2 overflow-auto pr-1">
-                    <Field label="Marca"><input className={inputClass} value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} /></Field>
-                    <Field label="Tipo"><input className={inputClass} value={draft.productType} onChange={(e) => setDraft({ ...draft, productType: e.target.value })} /></Field>
+                    <Field label={copy.fieldBrand}><input className={inputClass} value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} /></Field>
+                    <Field label={copy.fieldType}><input className={inputClass} value={draft.productType} onChange={(e) => setDraft({ ...draft, productType: e.target.value })} /></Field>
                     <div className="col-span-2">
-                      <Field label="Nombre"><input className={inputClass} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+                      <Field label={copy.fieldName}><input className={inputClass} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
                     </div>
-                    <Field label="Color"><input className={inputClass} value={draft.colour} onChange={(e) => setDraft({ ...draft, colour: e.target.value })} /></Field>
-                    <Field label="URL imagen"><input className={inputClass} value={draft.image || ''} onChange={(e) => setDraft({ ...draft, image: e.target.value || null })} /></Field>
-                    <Field label="Ref. adulto"><input className={inputClass} value={draft.adultRef} onChange={(e) => setDraft({ ...draft, adultRef: e.target.value, id: e.target.value || draft.id })} /></Field>
-                    <Field label="Ref. niño"><input className={inputClass} value={draft.youthRef} onChange={(e) => setDraft({ ...draft, youthRef: e.target.value })} /></Field>
-                    <Field label="Deporte">
+                    <Field label={copy.fieldColour}><input className={inputClass} value={draft.colour} onChange={(e) => setDraft({ ...draft, colour: e.target.value })} /></Field>
+                    <Field label={copy.fieldImage}><input className={inputClass} value={draft.image || ''} onChange={(e) => setDraft({ ...draft, image: e.target.value || null })} /></Field>
+                    <Field label={copy.fieldAdultRef}><input className={inputClass} value={draft.adultRef} onChange={(e) => setDraft({ ...draft, adultRef: e.target.value, id: e.target.value || draft.id })} /></Field>
+                    <Field label={copy.fieldYouthRef}><input className={inputClass} value={draft.youthRef} onChange={(e) => setDraft({ ...draft, youthRef: e.target.value })} /></Field>
+                    <Field label={copy.fieldSport}>
                       <select className={inputClass} value={draft.sport} onChange={(e) => setDraft({ ...draft, sport: e.target.value as TarifaSport })}>
-                        {SPORTS.map((item) => <option key={item}>{item}</option>)}
+                        {SPORTS.map((item) => <option key={item} value={item}>{copy.sports[item]}</option>)}
                       </select>
                     </Field>
-                    <Field label="Género">
+                    <Field label={copy.fieldGender}>
                       <select className={inputClass} value={draft.gender} onChange={(e) => setDraft({ ...draft, gender: e.target.value as TarifaGender })}>
-                        {GENDERS.map((item) => <option key={item}>{item}</option>)}
+                        {GENDERS.map((item) => <option key={item} value={item}>{copy.genders[item]}</option>)}
                       </select>
                     </Field>
-                    <Field label="Surtido">
+                    <Field label={copy.fieldKind}>
                       <select className={inputClass} value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as TarifaKind })}>
-                        {KINDS.map((item) => <option key={item}>{item}</option>)}
+                        {KINDS.map((item) => <option key={item} value={item}>{copy.kinds[item]}</option>)}
                       </select>
                     </Field>
-                    <Field label="Novedad">
+                    <Field label={copy.fieldNovelty}>
                       <select className={inputClass} value={draft.novelty} onChange={(e) => setDraft({ ...draft, novelty: e.target.value as TarifaNovelty | '' })}>
-                        <option value="">Sin marcar</option>
-                        {NOVELTIES.map((item) => <option key={item}>{item}</option>)}
+                        <option value="">{copy.fieldNone}</option>
+                        {NOVELTIES.map((item) => <option key={item} value={item}>{copy.novelties[item]}</option>)}
                       </select>
                     </Field>
-                    <Field label="Colección"><input className={inputClass} value={draft.collection} onChange={(e) => setDraft({ ...draft, collection: e.target.value })} /></Field>
-                    <Field label="Temporada"><input className={inputClass} value={draft.season} onChange={(e) => setDraft({ ...draft, season: e.target.value })} /></Field>
-                    <Field label="Vigencia RED"><input className={inputClass} type="date" value={draft.red || ''} onChange={(e) => setDraft({ ...draft, red: e.target.value || null })} /></Field>
+                    <Field label={copy.fieldCollection}><input className={inputClass} value={draft.collection} onChange={(e) => setDraft({ ...draft, collection: e.target.value })} /></Field>
+                    <Field label={copy.fieldSeason}><input className={inputClass} value={draft.season} onChange={(e) => setDraft({ ...draft, season: e.target.value })} /></Field>
+                    <Field label={copy.fieldRed}><input className={inputClass} type="date" value={draft.red || ''} onChange={(e) => setDraft({ ...draft, red: e.target.value || null })} /></Field>
                     <Field label="B2C PVP adulto"><input className={inputClass} value={draft.b2c.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
                     <Field label="B2C PVP niño"><input className={inputClass} value={draft.b2c.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
                     <Field label="B2C Fee 1"><input className={inputClass} value={draft.b2c.fee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee1: moneyFromInput(e.target.value) } })} /></Field>
@@ -774,7 +827,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     <Field label="B2B Neto niño"><input className={inputClass} value={draft.b2b.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthNet: moneyFromInput(e.target.value) } })} /></Field>
                     <div className="col-span-2 mt-2 flex gap-2">
                       <button type="button" onClick={saveDraft} className="inline-flex h-11 flex-1 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
-                        Guardar referencia
+                        {copy.saveRef}
                       </button>
                       {products.some((item) => item.id === draft.id) ? (
                         <button
@@ -786,7 +839,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           }}
                           className="h-11 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-red-600"
                         >
-                          Quitar
+                          {copy.removeRef}
                         </button>
                       ) : null}
                     </div>

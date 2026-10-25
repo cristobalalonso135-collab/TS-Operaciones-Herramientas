@@ -284,19 +284,19 @@ export function isExpired(red: string | null, today = todayIso()): boolean {
   return Boolean(red && red < today);
 }
 
-export function formatEuro(value: number | null | undefined): string {
+export function formatEuro(value: number | null | undefined, locale = 'es-ES'): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  return `${value.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  return `${value.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 }
 
-export function formatQty(value: number | null | undefined): string {
+export function formatQty(value: number | null | undefined, locale = 'es-ES'): string {
   if (value == null || !Number.isFinite(value)) return '0';
-  return value.toLocaleString('es-ES', { maximumFractionDigits: 0 });
+  return value.toLocaleString(locale, { maximumFractionDigits: 0 });
 }
 
-export function formatPct(value: number | null | undefined): string {
+export function formatPct(value: number | null | undefined, locale = 'es-ES'): string {
   if (value == null || !Number.isFinite(value)) return '—';
-  return `${value.toLocaleString('es-ES', { maximumFractionDigits: 1 })}%`;
+  return `${value.toLocaleString(locale, { maximumFractionDigits: 1 })}%`;
 }
 
 export function formatRed(red: string | null): string {
