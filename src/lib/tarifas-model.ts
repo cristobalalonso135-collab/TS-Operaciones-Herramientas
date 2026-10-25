@@ -79,6 +79,16 @@ export function hasYouth(item: TarifaProduct): boolean {
   return Boolean(item.youthRef);
 }
 
+export type TarifaAgeKind = 'both' | 'adult' | 'youthOnly';
+
+export function ageKind(item: TarifaProduct): TarifaAgeKind {
+  const adult = hasAdult(item);
+  const youth = hasYouth(item);
+  if (adult && youth) return 'both';
+  if (youth && !adult) return 'youthOnly';
+  return 'adult';
+}
+
 export function channelFees(channel: TarifaChannel): FeeLevel[] {
   return channel === 'b2c' ? [1, 2, 3, 4] : [1, 2, 3];
 }

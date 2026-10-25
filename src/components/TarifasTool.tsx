@@ -10,6 +10,7 @@ import {
   KINDS,
   NOVELTIES,
   SPORTS,
+  ageKind,
   activeRef,
   asProduct,
   channelFees,
@@ -19,7 +20,6 @@ import {
   formatPct,
   formatRed,
   fueraPackPrice,
-  hasAdult,
   hasYouth,
   isExpired,
   kindOf,
@@ -31,6 +31,7 @@ import {
   type FeeLevel,
   type PackLine,
   type TarifaAge,
+  type TarifaAgeKind,
   type TarifaChannel,
   type TarifaGender,
   type TarifaKind,
@@ -107,7 +108,7 @@ const inputClass = 'h-10 w-full rounded-lg border border-neutral-200 bg-white px
 function Flag({ code }: { code: TarifasLocale }) {
   if (code === 'es') {
     return (
-      <span className="flex h-4 w-[22px] flex-col overflow-hidden rounded-[3px] ring-1 ring-black/10">
+      <span className="flex h-[18px] w-[26px] flex-col overflow-hidden rounded-[4px] shadow-sm ring-1 ring-black/10">
         <span className="h-[26%] bg-[#c60b1e]" />
         <span className="h-[48%] bg-[#ffc400]" />
         <span className="h-[26%] bg-[#c60b1e]" />
@@ -116,7 +117,7 @@ function Flag({ code }: { code: TarifasLocale }) {
   }
   if (code === 'pt') {
     return (
-      <span className="flex h-4 w-[22px] overflow-hidden rounded-[3px] ring-1 ring-black/10">
+      <span className="flex h-[18px] w-[26px] overflow-hidden rounded-[4px] shadow-sm ring-1 ring-black/10">
         <span className="w-[40%] bg-[#006600]" />
         <span className="w-[60%] bg-[#ff0000]" />
       </span>
@@ -124,7 +125,7 @@ function Flag({ code }: { code: TarifasLocale }) {
   }
   if (code === 'it') {
     return (
-      <span className="flex h-4 w-[22px] overflow-hidden rounded-[3px] ring-1 ring-black/10">
+      <span className="flex h-[18px] w-[26px] overflow-hidden rounded-[4px] shadow-sm ring-1 ring-black/10">
         <span className="w-1/3 bg-[#009246]" />
         <span className="w-1/3 bg-white" />
         <span className="w-1/3 bg-[#ce2b37]" />
@@ -132,7 +133,7 @@ function Flag({ code }: { code: TarifasLocale }) {
     );
   }
   return (
-    <span className="flex h-4 w-[22px] overflow-hidden rounded-[3px] ring-1 ring-black/10">
+    <span className="flex h-[18px] w-[26px] overflow-hidden rounded-[4px] shadow-sm ring-1 ring-black/10">
       <span className="w-1/3 bg-[#002654]" />
       <span className="w-1/3 bg-white" />
       <span className="w-1/3 bg-[#ed2939]" />
@@ -140,25 +141,53 @@ function Flag({ code }: { code: TarifasLocale }) {
   );
 }
 
-function LangSwitch({ locale, onChange }: { locale: TarifasLocale; onChange: (next: TarifasLocale) => void }) {
+function LangSwitch({
+  locale,
+  onChange,
+  copy,
+}: {
+  locale: TarifasLocale;
+  onChange: (next: TarifasLocale) => void;
+  copy: TarifasCopy;
+}) {
+  const names: Record<TarifasLocale, string> = {
+    es: copy.langEs,
+    pt: copy.langPt,
+    it: copy.langIt,
+    fr: copy.langFr,
+  };
   return (
-    <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white p-1">
-      {TARIFAS_LOCALES.map((code) => (
-        <button
-          key={code}
-          type="button"
-          onClick={() => onChange(code)}
-          title={code.toUpperCase()}
-          className={`flex h-8 w-8 items-center justify-center rounded-full ${
-            locale === code ? 'bg-neutral-900' : 'hover:bg-neutral-50'
-          }`}
-        >
-          <span className={locale === code ? 'ring-2 ring-white ring-offset-1 ring-offset-neutral-900 rounded-[3px]' : ''}>
+    <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-2">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.selectLanguage}</p>
+      <div className="flex items-center gap-0.5">
+        {TARIFAS_LOCALES.map((code) => (
+          <button
+            key={code}
+            type="button"
+            onClick={() => onChange(code)}
+            title={names[code]}
+            className={`flex items-center gap-1.5 rounded-full px-2 py-1 ${
+              locale === code ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-50'
+            }`}
+          >
             <Flag code={code} />
-          </span>
-        </button>
-      ))}
+            {locale === code ? <span className="text-[11px] font-semibold">{names[code]}</span> : null}
+          </button>
+        ))}
+      </div>
     </div>
+  );
+}
+
+function AgeChip({ tone, children }: { tone: 'adult' | 'youth'; children: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+        tone === 'adult' ? 'bg-indigo-600 text-white' : 'bg-teal-600 text-white'
+      }`}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -171,13 +200,13 @@ function PvpLines({
 }: {
   item: TarifaProduct;
   channel: TarifaChannel;
-  mode: '' | 'adult' | 'youth' | 'both' | 'youthOnly';
+  mode: '' | TarifaAgeKind;
   copy: TarifasCopy;
   localeTag: string;
 }) {
   const adult = rrpPrice(item, channel, 'adult');
   const youth = rrpPrice(item, channel, 'youth');
-  const showAdult = mode !== 'youth' && mode !== 'youthOnly';
+  const showAdult = mode !== 'youthOnly';
   const showYouth = hasYouth(item) && mode !== 'adult';
   if (!showYouth) {
     return <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(adult, localeTag)}</p>;
@@ -210,7 +239,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [gender, setGender] = useState<TarifaGender | ''>('');
   const [kind, setKind] = useState<TarifaKind | ''>('');
   const [novelty, setNovelty] = useState<TarifaNovelty | ''>('');
-  const [ageFilter, setAgeFilter] = useState<'' | 'adult' | 'youth' | 'both' | 'youthOnly'>('');
+  const [ageFilter, setAgeFilter] = useState<'' | TarifaAgeKind>('');
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
@@ -249,16 +278,58 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   };
 
   const fees = channel ? channelFees(channel) : [];
-  const brands = useMemo(() => uniqueSorted(products, 'brand'), [products]);
-  const types = useMemo(() => uniqueSorted(products, 'productType'), [products]);
-  const colours = useMemo(() => {
-    const pool = products.filter((item) => (!brand || item.brand === brand) && (!type || item.productType === type));
-    return uniqueSorted(pool, 'colour');
-  }, [brand, products, type]);
-  const sports = useMemo(() => {
-    const present = Array.from(new Set(products.map((item) => item.sport)));
-    return SPORTS.filter((item) => present.includes(item)).concat(present.filter((item) => !SPORTS.includes(item as TarifaSport)));
-  }, [products]);
+  const filtersOn = Boolean(query || brand || type || colour || sport || gender || kind || novelty || ageFilter);
+
+  const facets = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase('es');
+    const pass = (item: TarifaProduct, skip: string) => {
+      if (skip !== 'brand' && brand && item.brand !== brand) return false;
+      if (skip !== 'type' && type && item.productType !== type) return false;
+      if (skip !== 'colour' && colour && item.colour !== colour) return false;
+      if (skip !== 'sport' && sport && item.sport !== sport) return false;
+      if (skip !== 'gender' && gender && item.gender !== gender) return false;
+      if (skip !== 'kind' && kind && kindOf(item) !== kind) return false;
+      if (skip !== 'novelty' && novelty && item.novelty !== novelty) return false;
+      if (skip !== 'age' && ageFilter && ageKind(item) !== ageFilter) return false;
+      if (skip !== 'query' && q) {
+        const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    };
+    const pool = (skip: string) => products.filter((item) => pass(item, skip));
+    const keep = (list: string[], current: string) => (current && !list.includes(current) ? [current, ...list] : list);
+    return {
+      brands: keep(uniqueSorted(pool('brand'), 'brand'), brand),
+      types: keep(uniqueSorted(pool('type'), 'productType'), type),
+      colours: keep(uniqueSorted(pool('colour'), 'colour'), colour),
+      sports: keep(
+        SPORTS.filter((item) => pool('sport').some((row) => row.sport === item)),
+        sport,
+      ) as TarifaSport[],
+      genders: keep(
+        GENDERS.filter((item) => pool('gender').some((row) => row.gender === item)),
+        gender,
+      ) as TarifaGender[],
+      kinds: KINDS.filter((item) => item === kind || pool('kind').some((row) => kindOf(row) === item)),
+      novelties: NOVELTIES.filter((item) => item === novelty || pool('novelty').some((row) => row.novelty === item)),
+      ages: (['both', 'adult', 'youthOnly'] as TarifaAgeKind[]).filter(
+        (item) => item === ageFilter || pool('age').some((row) => ageKind(row) === item),
+      ),
+    };
+  }, [ageFilter, brand, colour, gender, kind, novelty, products, query, sport, type]);
+
+  const clearFilters = () => {
+    setQuery('');
+    setBrand('');
+    setType('');
+    setColour('');
+    setSport('');
+    setGender('');
+    setKind('');
+    setNovelty('');
+    setAgeFilter('');
+  };
 
   const filtered = useMemo(() => {
     if (!channel) return [];
@@ -271,10 +342,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (gender && item.gender !== gender) return false;
       if (kind && kindOf(item) !== kind) return false;
       if (novelty && item.novelty !== novelty) return false;
-      if (ageFilter === 'adult' && hasYouth(item)) return false;
-      if (ageFilter === 'youth' && !hasYouth(item)) return false;
-      if (ageFilter === 'both' && !hasYouth(item)) return false;
-      if (ageFilter === 'youthOnly' && (hasAdult(item) || !hasYouth(item))) return false;
+      if (ageFilter && ageKind(item) !== ageFilter) return false;
       if (q) {
         const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
@@ -343,7 +411,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   const openItem = (item: TarifaProduct) => {
     setOpen(item);
-    setOpenAge(hasYouth(item) && ageFilter === 'youth' ? 'youth' : 'adult');
+    setOpenAge(ageKind(item) === 'youthOnly' || ageFilter === 'youthOnly' ? 'youth' : 'adult');
     setDraft(asProduct(item));
   };
 
@@ -394,7 +462,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     return (
       <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <LangSwitch locale={locale} onChange={pickLocale} />
+          <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
           <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
             <ArrowLeft className="h-4 w-4" /> {copy.tools}
           </button>
@@ -435,7 +503,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <LangSwitch locale={locale} onChange={pickLocale} />
+            <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
             {admin ? (
               <span className="rounded-full bg-neutral-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">{copy.adminOn}</span>
             ) : (
@@ -486,7 +554,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </button>
         </div>
 
-        {tab !== 'maestro' ? (
+        {tab === 'catalogo' ? (
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.tariff}</p>
             <div className="flex flex-wrap gap-2">
@@ -549,19 +617,19 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               </label>
               <select value={sport} onChange={(e) => setSport(e.target.value as TarifaSport | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="">{copy.sport}</option>
-                {sports.map((item) => <option key={item} value={item}>{copy.sports[item as TarifaSport] || item}</option>)}
+                {facets.sports.map((item) => <option key={item} value={item}>{copy.sports[item as TarifaSport] || item}</option>)}
               </select>
               <select value={gender} onChange={(e) => setGender(e.target.value as TarifaGender | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="">{copy.gender}</option>
-                {GENDERS.map((item) => <option key={item} value={item}>{copy.genders[item]}</option>)}
+                {facets.genders.map((item) => <option key={item} value={item}>{copy.genders[item]}</option>)}
               </select>
               <select value={type} onChange={(e) => { setType(e.target.value); setColour(''); }} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="">{copy.type}</option>
-                {types.map((item) => <option key={item} value={item}>{labelProductType(locale, item)}</option>)}
+                {facets.types.map((item) => <option key={item} value={item}>{labelProductType(locale, item)}</option>)}
               </select>
               <select value={colour} onChange={(e) => setColour(e.target.value)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="">{copy.colour}</option>
-                {colours.map((item) => <option key={item} value={item}>{item}</option>)}
+                {facets.colours.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
               <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="nombre">{copy.sortName}</option>
@@ -569,29 +637,49 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 <option value="precio">{copy.sortPrice}</option>
                 <option value="pvp">{copy.sortPvp}</option>
               </select>
+              {filtersOn ? (
+                <button type="button" onClick={clearFilters} className="h-10 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-neutral-600 hover:bg-neutral-50">
+                  {copy.clearFilters}
+                </button>
+              ) : null}
             </div>
 
-            <div className="flex flex-wrap gap-1.5">
-              <Pill active={!kind} onClick={() => setKind('')}>{copy.all}</Pill>
-              {KINDS.map((item) => (
-                <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{copy.kinds[item]}</Pill>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Pill active={!novelty} onClick={() => setNovelty('')}>{copy.all}</Pill>
-              <Pill active={novelty === 'Nueva'} onClick={() => setNovelty(novelty === 'Nueva' ? '' : 'Nueva')}>{copy.newCollection}</Pill>
-              <Pill active={novelty === 'Año pasado'} onClick={() => setNovelty(novelty === 'Año pasado' ? '' : 'Año pasado')}>{copy.lastSeason}</Pill>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>{copy.adultAndYouth}</Pill>
-              <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>{copy.adultOnly}</Pill>
-              <Pill active={ageFilter === 'youth'} onClick={() => setAgeFilter(ageFilter === 'youth' ? '' : 'youth')}>{copy.withYouth}</Pill>
-              <Pill active={ageFilter === 'youthOnly'} onClick={() => setAgeFilter(ageFilter === 'youthOnly' ? '' : 'youthOnly')}>{copy.youthOnly}</Pill>
-            </div>
+            {facets.kinds.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                <Pill active={!kind} onClick={() => setKind('')}>{copy.all}</Pill>
+                {facets.kinds.map((item) => (
+                  <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{copy.kinds[item]}</Pill>
+                ))}
+              </div>
+            ) : null}
+            {facets.novelties.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                <Pill active={!novelty} onClick={() => setNovelty('')}>{copy.all}</Pill>
+                {facets.novelties.includes('Nueva') || novelty === 'Nueva' ? (
+                  <Pill active={novelty === 'Nueva'} onClick={() => setNovelty(novelty === 'Nueva' ? '' : 'Nueva')}>{copy.newCollection}</Pill>
+                ) : null}
+                {facets.novelties.includes('Año pasado') || novelty === 'Año pasado' ? (
+                  <Pill active={novelty === 'Año pasado'} onClick={() => setNovelty(novelty === 'Año pasado' ? '' : 'Año pasado')}>{copy.lastSeason}</Pill>
+                ) : null}
+              </div>
+            ) : null}
+            {facets.ages.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {facets.ages.includes('both') ? (
+                  <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>{copy.adultAndYouth}</Pill>
+                ) : null}
+                {facets.ages.includes('adult') ? (
+                  <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>{copy.adultOnly}</Pill>
+                ) : null}
+                {facets.ages.includes('youthOnly') ? (
+                  <Pill active={ageFilter === 'youthOnly'} onClick={() => setAgeFilter(ageFilter === 'youthOnly' ? '' : 'youthOnly')}>{copy.youthOnly}</Pill>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap gap-1.5">
               <Pill active={!brand} onClick={() => setBrand('')}>{copy.brands}</Pill>
-              {brands.map((item) => (
+              {facets.brands.map((item) => (
                 <Pill key={item} active={brand === item} onClick={() => setBrand(item === brand ? '' : item)}>{item}</Pill>
               ))}
             </div>
@@ -607,8 +695,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
                       <div className="relative aspect-square bg-neutral-50">
                         <Photo key={item.image || item.id} src={item.image} alt={item.name} className="h-full w-full p-4 transition group-hover:scale-[1.02]" />
-                        {!hasYouth(item) ? (
-                          <span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-neutral-700">{copy.adultOnly}</span>
+                        {ageKind(item) === 'adult' ? (
+                          <span className="absolute left-2 top-2">
+                            <AgeChip tone="adult">{copy.adultOnly}</AgeChip>
+                          </span>
+                        ) : null}
+                        {ageKind(item) === 'youthOnly' ? (
+                          <span className="absolute left-2 top-2">
+                            <AgeChip tone="youth">{copy.youthOnly}</AgeChip>
+                          </span>
                         ) : null}
                         {isExpired(item.red) ? (
                           <span className="absolute right-2 top-2 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-semibold text-white">{copy.expired}</span>
@@ -651,7 +746,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               </p>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-neutral-200">
-                <table className="min-w-[860px] w-full text-left text-sm">
+                <table className="min-w-[980px] w-full text-left text-sm">
                   <thead className="bg-neutral-50 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
                     <tr>
                       <th className="px-3 py-2 font-semibold">#</th>
@@ -675,13 +770,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           <td className="px-3 py-3 tabular-nums text-neutral-400">{index + 1}</td>
                           <td className="px-3 py-3">
                             <div className="flex gap-3">
-                              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-neutral-100 bg-white">
-                                <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
+                              <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-neutral-100 bg-white sm:h-28 sm:w-28">
+                                <Photo src={item.image} alt={item.name} className="h-full w-full p-1.5" />
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
                                 <p className="font-semibold leading-snug">{item.name}</p>
                                 <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                                {ageKind(item) === 'adult' ? <div className="mt-1"><AgeChip tone="adult">{copy.adultOnly}</AgeChip></div> : null}
+                                {ageKind(item) === 'youthOnly' ? <div className="mt-1"><AgeChip tone="youth">{copy.youthOnly}</AgeChip></div> : null}
                               </div>
                             </div>
                           </td>
@@ -876,12 +973,16 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
                 {!editing ? (
                   <>
-                    <div className="mt-4 flex flex-wrap gap-1.5">
-                      <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>{copy.adult}</Pill>
-                      {hasYouth(draft) ? (
-                        <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>{copy.youth}</Pill>
+                    <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                      {ageKind(draft) === 'both' ? (
+                        <>
+                          <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>{copy.adult}</Pill>
+                          <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>{copy.youth}</Pill>
+                        </>
+                      ) : ageKind(draft) === 'youthOnly' ? (
+                        <AgeChip tone="youth">{copy.youthOnly}</AgeChip>
                       ) : (
-                        <span className="self-center rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-500">{copy.adultOnly}</span>
+                        <AgeChip tone="adult">{copy.adultOnly}</AgeChip>
                       )}
                     </div>
                     <p className="mt-2 font-mono text-sm text-neutral-700">{activeRef(draft, openAge) || '—'}</p>
@@ -934,7 +1035,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); }}
                       className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
                     >
-                      <Plus className="h-4 w-4" /> {copy.addToPack} · Fee {fee}
+                      <Plus className="h-4 w-4" /> {copy.addToPack}
                     </button>
                   </>
                 ) : (
