@@ -19,6 +19,7 @@ import {
   formatPct,
   formatRed,
   fueraPackPrice,
+  hasAdult,
   hasYouth,
   isExpired,
   kindOf,
@@ -41,7 +42,6 @@ import { loadTarifasCatalog, saveTarifasCatalog, type TarifasBackend } from '@/l
 import {
   TARIFAS_COPY,
   TARIFAS_LOCALES,
-  TARIFAS_LOCALE_LABEL,
   TARIFAS_LOCALE_TAG,
   labelProductType,
   readTarifasLocale,
@@ -49,7 +49,10 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Download, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Download, Lock, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+
+const ADMIN_KEY = '2627';
+const ADMIN_STORAGE = 'ts-tarifas-admin';
 
 const SEED = (catalog as unknown[]).map(asProduct);
 
@@ -101,19 +104,58 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const inputClass = 'h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm outline-none';
 
+function Flag({ code }: { code: TarifasLocale }) {
+  if (code === 'es') {
+    return (
+      <span className="flex h-4 w-[22px] flex-col overflow-hidden rounded-[3px] ring-1 ring-black/10">
+        <span className="h-[26%] bg-[#c60b1e]" />
+        <span className="h-[48%] bg-[#ffc400]" />
+        <span className="h-[26%] bg-[#c60b1e]" />
+      </span>
+    );
+  }
+  if (code === 'pt') {
+    return (
+      <span className="flex h-4 w-[22px] overflow-hidden rounded-[3px] ring-1 ring-black/10">
+        <span className="w-[40%] bg-[#006600]" />
+        <span className="w-[60%] bg-[#ff0000]" />
+      </span>
+    );
+  }
+  if (code === 'it') {
+    return (
+      <span className="flex h-4 w-[22px] overflow-hidden rounded-[3px] ring-1 ring-black/10">
+        <span className="w-1/3 bg-[#009246]" />
+        <span className="w-1/3 bg-white" />
+        <span className="w-1/3 bg-[#ce2b37]" />
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-4 w-[22px] overflow-hidden rounded-[3px] ring-1 ring-black/10">
+      <span className="w-1/3 bg-[#002654]" />
+      <span className="w-1/3 bg-white" />
+      <span className="w-1/3 bg-[#ed2939]" />
+    </span>
+  );
+}
+
 function LangSwitch({ locale, onChange }: { locale: TarifasLocale; onChange: (next: TarifasLocale) => void }) {
   return (
-    <div className="flex justify-end gap-1">
+    <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white p-1">
       {TARIFAS_LOCALES.map((code) => (
         <button
           key={code}
           type="button"
           onClick={() => onChange(code)}
-          className={`h-8 min-w-8 rounded-full px-2.5 text-[11px] font-semibold ${
-            locale === code ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:bg-neutral-100'
+          title={code.toUpperCase()}
+          className={`flex h-8 w-8 items-center justify-center rounded-full ${
+            locale === code ? 'bg-neutral-900' : 'hover:bg-neutral-50'
           }`}
         >
-          {TARIFAS_LOCALE_LABEL[code]}
+          <span className={locale === code ? 'ring-2 ring-white ring-offset-1 ring-offset-neutral-900 rounded-[3px]' : ''}>
+            <Flag code={code} />
+          </span>
         </button>
       ))}
     </div>
@@ -129,13 +171,13 @@ function PvpLines({
 }: {
   item: TarifaProduct;
   channel: TarifaChannel;
-  mode: '' | 'adult' | 'youth' | 'both';
+  mode: '' | 'adult' | 'youth' | 'both' | 'youthOnly';
   copy: TarifasCopy;
   localeTag: string;
 }) {
   const adult = rrpPrice(item, channel, 'adult');
   const youth = rrpPrice(item, channel, 'youth');
-  const showAdult = mode !== 'youth';
+  const showAdult = mode !== 'youth' && mode !== 'youthOnly';
   const showYouth = hasYouth(item) && mode !== 'adult';
   if (!showYouth) {
     return <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(adult, localeTag)}</p>;
@@ -168,22 +210,34 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [gender, setGender] = useState<TarifaGender | ''>('');
   const [kind, setKind] = useState<TarifaKind | ''>('');
   const [novelty, setNovelty] = useState<TarifaNovelty | ''>('');
-  const [ageFilter, setAgeFilter] = useState<'' | 'adult' | 'youth' | 'both'>('');
+  const [ageFilter, setAgeFilter] = useState<'' | 'adult' | 'youth' | 'both' | 'youthOnly'>('');
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
   const [draft, setDraft] = useState<TarifaProduct | null>(null);
   const [pack, setPack] = useState<PackLine[]>([]);
   const [locale, setLocale] = useState<TarifasLocale>('es');
+  const [admin, setAdmin] = useState(false);
+  const [pin, setPin] = useState('');
+  const [askPin, setAskPin] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
 
   useEffect(() => {
     setLocale(readTarifasLocale());
+    const params = new URLSearchParams(window.location.search);
+    const unlocked = params.get('admin') === '1' || window.localStorage.getItem(ADMIN_STORAGE) === '1';
+    if (params.get('admin') === '1') window.localStorage.setItem(ADMIN_STORAGE, '1');
+    setAdmin(unlocked);
     loadTarifasCatalog(SEED).then((loaded) => {
       setProducts(loaded.products);
       setBackend(loaded.backend);
       setSetupSql(loaded.setupSql);
     });
   }, []);
+
+  useEffect(() => {
+    if (!admin && tab === 'maestro') setTab('catalogo');
+  }, [admin, tab]);
 
   const copy = TARIFAS_COPY[locale];
   const localeTag = TARIFAS_LOCALE_TAG[locale];
@@ -220,6 +274,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (ageFilter === 'adult' && hasYouth(item)) return false;
       if (ageFilter === 'youth' && !hasYouth(item)) return false;
       if (ageFilter === 'both' && !hasYouth(item)) return false;
+      if (ageFilter === 'youthOnly' && (hasAdult(item) || !hasYouth(item))) return false;
       if (q) {
         const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
@@ -239,7 +294,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     [channel, pack, products],
   );
   const byId = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);
-  const editing = tab === 'maestro';
+  const editing = admin && tab === 'maestro';
+  const visibleTabs = admin
+    ? [
+        { id: 'catalogo', label: copy.catalog },
+        { id: 'pack', label: copy.pack },
+        { id: 'maestro', label: copy.master },
+      ]
+    : [
+        { id: 'catalogo', label: copy.catalog },
+        { id: 'pack', label: copy.pack },
+      ];
 
   const persist = async (next: TarifaProduct[]) => {
     setProducts(next);
@@ -256,6 +321,18 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (current.some((line) => line.id === item.id && line.fee === chosenFee)) return current;
       return [...current, { id: item.id, fee: chosenFee, stamp: 0, stampInput: '' }];
     });
+    setCartOpen(true);
+  };
+
+  const tryAdmin = () => {
+    if (pin.trim() === ADMIN_KEY) {
+      window.localStorage.setItem(ADMIN_STORAGE, '1');
+      setAdmin(true);
+      setAskPin(false);
+      setPin('');
+      return;
+    }
+    setStatus(copy.adminWrong);
   };
 
   const pickChannel = (next: TarifaChannel) => {
@@ -316,11 +393,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   if (!channel) {
     return (
       <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 py-8 sm:px-6">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <LangSwitch locale={locale} onChange={pickLocale} />
           <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
             <ArrowLeft className="h-4 w-4" /> {copy.tools}
           </button>
-          <LangSwitch locale={locale} onChange={pickLocale} />
         </div>
         <div className="mx-auto mt-16 max-w-2xl text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Tarifas 26/27</p>
@@ -357,20 +434,42 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 pb-24 pt-4 sm:px-6">
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <WorkspaceChrome
-              onBack={onBack}
-              backLabel={copy.tools}
-              tabs={[
-                { id: 'catalogo', label: copy.catalog },
-                { id: 'pack', label: copy.pack },
-                { id: 'maestro', label: copy.master },
-              ]}
-              active={tab}
-              onSelect={(id) => setTab(id as 'catalogo' | 'pack' | 'maestro')}
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <LangSwitch locale={locale} onChange={pickLocale} />
+            {admin ? (
+              <span className="rounded-full bg-neutral-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">{copy.adminOn}</span>
+            ) : (
+              <button type="button" onClick={() => setAskPin((open) => !open)} className="rounded-full p-2 text-neutral-400 hover:bg-neutral-50" aria-label={copy.adminUnlock}>
+                <Lock className="h-4 w-4" />
+              </button>
+            )}
+            {askPin && !admin ? (
+              <form
+                className="flex items-center gap-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  tryAdmin();
+                }}
+              >
+                <input
+                  type="password"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  placeholder={copy.adminUnlock}
+                  className="h-8 w-36 rounded-full border border-neutral-200 px-3 text-xs outline-none"
+                />
+                <button type="submit" className="h-8 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">{copy.adminEnter}</button>
+              </form>
+            ) : null}
+            {askPin && !admin && status ? <p className="text-[11px] text-red-600">{status}</p> : null}
           </div>
-          <LangSwitch locale={locale} onChange={pickLocale} />
+          <WorkspaceChrome
+            onBack={onBack}
+            backLabel={copy.tools}
+            tabs={visibleTabs}
+            active={tab}
+            onSelect={(id) => setTab(id as 'catalogo' | 'pack' | 'maestro')}
+          />
         </div>
 
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -477,12 +576,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               {KINDS.map((item) => (
                 <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{copy.kinds[item]}</Pill>
               ))}
-              {NOVELTIES.map((item) => (
-                <Pill key={item} active={novelty === item} onClick={() => setNovelty(novelty === item ? '' : item)}>{copy.novelties[item]}</Pill>
-              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill active={!novelty} onClick={() => setNovelty('')}>{copy.all}</Pill>
+              <Pill active={novelty === 'Nueva'} onClick={() => setNovelty(novelty === 'Nueva' ? '' : 'Nueva')}>{copy.newCollection}</Pill>
+              <Pill active={novelty === 'Año pasado'} onClick={() => setNovelty(novelty === 'Año pasado' ? '' : 'Año pasado')}>{copy.lastSeason}</Pill>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
               <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>{copy.adultAndYouth}</Pill>
               <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>{copy.adultOnly}</Pill>
               <Pill active={ageFilter === 'youth'} onClick={() => setAgeFilter(ageFilter === 'youth' ? '' : 'youth')}>{copy.withYouth}</Pill>
+              <Pill active={ageFilter === 'youthOnly'} onClick={() => setAgeFilter(ageFilter === 'youthOnly' ? '' : 'youthOnly')}>{copy.youthOnly}</Pill>
             </div>
 
             <div className="flex flex-wrap gap-1.5">
@@ -518,10 +622,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           {item.brand} · {labelProductType(locale, item.productType)}
                         </p>
                         <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{item.name}</p>
-                        <p className="flex items-center gap-1.5 truncate text-[11px] text-neutral-500">
-                          {item.colorHex ? <span className="h-2.5 w-2.5 rounded-full border border-neutral-200" style={{ background: item.colorHex }} /> : null}
-                          {item.colour}
-                        </p>
+                        <p className="truncate text-[11px] text-neutral-500">{item.colour}</p>
                         <p className="pt-1 font-display text-lg font-semibold tabular-nums">{euro(sellPrice(item, channel, fee, 'adult'))}</p>
                         <PvpLines item={item} channel={channel} mode={ageFilter} copy={copy} localeTag={localeTag} />
                       </div>
@@ -533,7 +634,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           onClick={() => addToPack(item)}
                           className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
                         >
-                          <Plus className="h-3.5 w-3.5" /> {copy.addPack} · Fee {fee}
+                          <Plus className="h-3.5 w-3.5" /> {copy.addToPack}
                         </button>
                       </div>
                     ) : null}
@@ -672,14 +773,78 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {pack.length > 0 && tab === 'catalogo' ? (
+      {tab === 'catalogo' ? (
         <button
           type="button"
-          onClick={() => setTab('pack')}
-          className="fixed bottom-5 left-1/2 z-40 -translate-x-1/2 rounded-full bg-neutral-900 px-5 py-3 text-sm font-semibold text-white shadow-lg"
+          onClick={() => setCartOpen(true)}
+          className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-lg"
         >
-          {copy.pack} · {pack.length} · {euro(totals.sale)}
+          <ShoppingBag className="h-4 w-4" />
+          {copy.pack}
+          {pack.length > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{pack.length}</span> : null}
         </button>
+      ) : null}
+
+      {cartOpen ? (
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 bg-neutral-900/30" aria-label={copy.close} onClick={() => setCartOpen(false)} />
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.pack}</p>
+                <h3 className="font-display text-2xl font-semibold">{copy.cartTitle}</h3>
+              </div>
+              <button type="button" onClick={() => setCartOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto">
+              {pack.length === 0 ? (
+                <p className="px-5 py-12 text-sm text-neutral-400">{copy.emptyPack}</p>
+              ) : (
+                <ul className="divide-y divide-neutral-100">
+                  {pack.map((line, index) => {
+                    const item = byId.get(line.id);
+                    if (!item) return null;
+                    return (
+                      <li key={`${line.id}-${line.fee}`} className="flex gap-3 px-5 py-3">
+                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-50">
+                          <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
+                          <p className="truncate text-sm font-semibold">{item.name}</p>
+                          <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                          <p className="mt-1 font-mono text-[10px] text-neutral-400">{item.adultRef || '—'}{item.youthRef ? ` · ${item.youthRef}` : ''}</p>
+                          <p className="mt-1 text-sm font-semibold tabular-nums">{euro(sellPrice(item, channel, line.fee, 'adult'))}</p>
+                        </div>
+                        <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="self-start p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <div className="border-t border-neutral-100 px-5 py-4">
+              <p className="font-display text-3xl font-semibold tabular-nums">{euro(totals.sale)}</p>
+              <p className="mt-1 text-[11px] text-neutral-400">{copy.outsidePack} {euro(totals.fuera)} · {copy.margin} {pct(totals.margin)}</p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setCartOpen(false); setTab('pack'); }}
+                  className="inline-flex h-11 flex-1 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                >
+                  {copy.goToPack}
+                </button>
+                {pack.length > 0 ? (
+                  <button type="button" onClick={() => setPack([])} className="h-11 rounded-full px-3 text-xs font-semibold text-neutral-500">{copy.clearPack}</button>
+                ) : null}
+              </div>
+            </div>
+          </aside>
+        </div>
       ) : null}
 
       {open && draft ? (
@@ -766,7 +931,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); setTab('pack'); }}
+                      onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); }}
                       className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
                     >
                       <Plus className="h-4 w-4" /> {copy.addToPack} · Fee {fee}
