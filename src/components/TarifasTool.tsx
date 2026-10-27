@@ -472,6 +472,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       setAdmin(true);
       setAskPin(false);
       setPin('');
+      setTab('maestro');
       return;
     }
     setStatus(copy.adminWrong);
@@ -588,10 +589,21 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <div className="flex flex-wrap items-center gap-2">
             <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
             {admin ? (
-              <span className="rounded-full bg-neutral-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">{copy.adminOn}</span>
+              <button
+                type="button"
+                onClick={() => setTab('maestro')}
+                className="rounded-full bg-neutral-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white"
+              >
+                {copy.adminOn}
+              </button>
             ) : (
-              <button type="button" onClick={() => setAskPin((open) => !open)} className="rounded-full p-2 text-neutral-400 hover:bg-neutral-50" aria-label={copy.adminUnlock}>
-                <Lock className="h-4 w-4" />
+              <button
+                type="button"
+                onClick={() => setAskPin((open) => !open)}
+                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold text-neutral-400 hover:bg-neutral-50 hover:text-neutral-700"
+                aria-label={copy.adminUnlock}
+              >
+                <Lock className="h-3.5 w-3.5" /> {copy.adminUnlock}
               </button>
             )}
             {askPin && !admin ? (
@@ -627,18 +639,13 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           />
         </div>
 
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-              {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : tab === 'reservas' ? copy.reservas : tab === 'outlet' ? copy.outlet : copy.catalog}
-            </p>
-            <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : tab === 'outlet' ? copy.outletTitle : copy.offer}
-            </h2>
-          </div>
-          <button type="button" onClick={() => { setChannel(null); setPack([]); }} className="text-xs font-semibold text-neutral-500">
-            {copy.changeTariff}
-          </button>
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
+            {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : tab === 'reservas' ? copy.reservas : tab === 'outlet' ? copy.outlet : copy.catalog}
+          </p>
+          <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+            {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : tab === 'outlet' ? copy.outletTitle : copy.offer}
+          </h2>
         </div>
 
         {shopTab ? (
