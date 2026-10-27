@@ -25,6 +25,7 @@ import {
   isExpired,
   kindOf,
   lineMargin,
+  newId,
   packTotals,
   rrpPrice,
   sellPrice,
@@ -56,7 +57,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, ChevronLeft, ChevronRight, Columns2, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -64,6 +65,21 @@ const COMPARE_MAX = 4;
 
 type TarifasTab = 'catalogo' | 'pack' | 'reservas' | 'maestro';
 type TarifasEntry = 'b2c' | 'b2b' | 'outlet';
+
+type PackDraft = {
+  id: string;
+  name: string;
+  season: string;
+  lines: PackLine[];
+};
+
+function emptyPackDraft(season = '26/27'): PackDraft {
+  return { id: newId('pack'), name: '', season, lines: [] };
+}
+
+function packDraftLabel(pack: PackDraft, fallback: string, index: number) {
+  return pack.name.trim() || `${fallback} ${index + 1}`;
+}
 
 const SEED = (catalog as unknown[]).map(asProduct);
 
@@ -250,6 +266,51 @@ function compareRows(
   ];
 }
 
+function packCompareRows(
+  packs: PackDraft[],
+  products: TarifaProduct[],
+  channel: TarifaChannel,
+  copy: TarifasCopy,
+  locale: TarifasLocale,
+  euro: (value: number | null | undefined) => string,
+  pct: (value: number | null | undefined) => string,
+): { section?: string; label: string; values: string[] }[] {
+  const byId = new Map(products.map((item) => [item.id, item]));
+  const totals = packs.map((pack) => packTotals(products, pack.lines, channel));
+  const types: string[] = [];
+  packs.forEach((pack) => {
+    pack.lines.forEach((line) => {
+      const type = byId.get(line.id)?.productType;
+      if (type && !types.includes(type)) types.push(type);
+    });
+  });
+  const composition = types.map((type, index) => ({
+    section: index === 0 ? copy.packComposition : undefined,
+    label: labelProductType(locale, type),
+    values: packs.map((pack) => {
+      const lines = pack.lines.filter((line) => byId.get(line.id)?.productType === type);
+      if (!lines.length) return '—';
+      return lines.map((line) => {
+        const item = byId.get(line.id);
+        if (!item) return '—';
+        const extra = line.stamp ? ` + ${euro(line.stamp)}` : '';
+        return `${item.name}${item.colour ? ` · ${item.colour}` : ''} · Fee ${line.fee} · ${euro(sellPrice(item, channel, line.fee, 'adult'))}${extra}`;
+      }).join('\n');
+    }),
+  }));
+  return [
+    { section: copy.totalPack, label: copy.fieldSeason, values: packs.map((pack) => pack.season.trim() || '—') },
+    { label: copy.packPieces, values: totals.map((row) => String(row.pieces)) },
+    { label: copy.clubPrice, values: totals.map((row) => euro(row.club)) },
+    { label: copy.stamping, values: totals.map((row) => euro(row.stamp)) },
+    { label: copy.totalPack, values: totals.map((row) => euro(row.sale)) },
+    { label: copy.outsidePack, values: totals.map((row) => euro(row.fuera)) },
+    { label: 'PVP', values: totals.map((row) => euro(row.rrp)) },
+    { label: copy.margin, values: totals.map((row) => pct(row.margin)) },
+    ...composition,
+  ];
+}
+
 export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [products, setProducts] = useState<TarifaProduct[]>(SEED);
   const [backend, setBackend] = useState<TarifasBackend>('local');
@@ -274,9 +335,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
   const [draft, setDraft] = useState<TarifaProduct | null>(null);
-  const [pack, setPack] = useState<PackLine[]>([]);
-  const [packName, setPackName] = useState('');
-  const [packSeason, setPackSeason] = useState('26/27');
+  const [packs, setPacks] = useState<PackDraft[]>(() => [emptyPackDraft()]);
+  const [activePack, setActivePack] = useState(0);
+  const [packCompareOpen, setPackCompareOpen] = useState(false);
   const [locale, setLocale] = useState<TarifasLocale>('es');
   const [admin, setAdmin] = useState(false);
   const [pin, setPin] = useState('');
@@ -303,6 +364,33 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       setReservasSql(loaded.setupSql);
     });
   }, []);
+
+  const currentPack = packs[Math.min(activePack, Math.max(packs.length - 1, 0))] ?? packs[0];
+  const pack = currentPack?.lines ?? [];
+  const packName = currentPack?.name ?? '';
+  const packSeason = currentPack?.season ?? '26/27';
+  const filledPacks = packs.filter((item) => item.lines.length > 0);
+
+  const setPack = (update: PackLine[] | ((current: PackLine[]) => PackLine[])) => {
+    setPacks((all) => {
+      const index = Math.min(activePack, all.length - 1);
+      return all.map((item, i) => {
+        if (i !== index) return item;
+        return { ...item, lines: typeof update === 'function' ? update(item.lines) : update };
+      });
+    });
+  };
+  const setPackName = (name: string) => {
+    setPacks((all) => all.map((item, i) => (i === activePack ? { ...item, name } : item)));
+  };
+  const setPackSeason = (season: string) => {
+    setPacks((all) => all.map((item, i) => (i === activePack ? { ...item, season } : item)));
+  };
+  const resetPacks = () => {
+    setPacks([emptyPackDraft()]);
+    setActivePack(0);
+    setPackCompareOpen(false);
+  };
 
   useEffect(() => {
     if (!admin && tab === 'maestro') setTab('catalogo');
@@ -476,6 +564,52 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     });
   };
 
+  const addPackSlot = () => {
+    if (packs.length >= COMPARE_MAX) return;
+    const created = emptyPackDraft(packSeason || '26/27');
+    setPacks((all) => [...all, created]);
+    setActivePack(packs.length);
+  };
+
+  const duplicatePack = () => {
+    if (packs.length >= COMPARE_MAX) return;
+    const source = currentPack;
+    if (!source) return;
+    const clone: PackDraft = {
+      id: newId('pack'),
+      name: source.name.trim() ? `${source.name.trim()} 2` : '',
+      season: source.season,
+      lines: source.lines.map((line) => ({ ...line })),
+    };
+    setPacks((all) => [...all, clone]);
+    setActivePack(packs.length);
+  };
+
+  const removePackSlot = () => {
+    if (packs.length <= 1) return;
+    const currentId = currentPack?.id;
+    const next = packs.filter((item) => item.id !== currentId);
+    setPacks(next.length ? next : [emptyPackDraft()]);
+    setActivePack(Math.max(0, activePack - 1));
+    if (next.filter((item) => item.lines.length > 0).length < 2) setPackCompareOpen(false);
+  };
+
+  const movePack = (id: string, dir: -1 | 1) => {
+    const filled = packs.filter((item) => item.lines.length > 0);
+    const index = filled.findIndex((item) => item.id === id);
+    const next = index + dir;
+    if (index < 0 || next < 0 || next >= filled.length) return;
+    const from = packs.findIndex((item) => item.id === filled[index].id);
+    const to = packs.findIndex((item) => item.id === filled[next].id);
+    const ordered = [...packs];
+    const currentId = currentPack?.id;
+    const swap = ordered[from];
+    ordered[from] = ordered[to];
+    ordered[to] = swap;
+    setPacks(ordered);
+    setActivePack(Math.max(0, ordered.findIndex((item) => item.id === currentId)));
+  };
+
   const enterAdmin = (otpauth?: string | null) => {
     window.localStorage.setItem(ADMIN_STORAGE, '1');
     setAdmin(true);
@@ -521,7 +655,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     setEntry(next);
     setFee(1);
     setTab('catalogo');
-    setPack([]);
+    resetPacks();
     setCompare([]);
     setCompareOpen(false);
     clearFilters();
@@ -701,7 +835,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <WorkspaceChrome
             onBack={() => {
               setEntry(null);
-              setPack([]);
+              resetPacks();
               setTab('catalogo');
               setCompare([]);
               setCompareOpen(false);
@@ -1010,6 +1144,27 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </>
         ) : (
           <div className="mx-auto max-w-6xl space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {packs.map((item, index) => (
+                <Pill key={item.id} active={index === activePack} onClick={() => setActivePack(index)}>
+                  {packDraftLabel(item, copy.pack, index)}
+                  {item.lines.length ? ` · ${item.lines.length}` : ''}
+                </Pill>
+              ))}
+              {packs.length < COMPARE_MAX ? (
+                <button type="button" onClick={addPackSlot} className="inline-flex h-9 items-center gap-1 rounded-full border border-neutral-200 px-3 text-xs font-semibold text-neutral-600">
+                  <Plus className="h-3.5 w-3.5" /> {copy.newPack}
+                </button>
+              ) : null}
+              {pack.length > 0 && packs.length < COMPARE_MAX ? (
+                <button type="button" onClick={duplicatePack} className="inline-flex h-9 items-center gap-1 rounded-full border border-neutral-200 px-3 text-xs font-semibold text-neutral-600">
+                  <Copy className="h-3.5 w-3.5" /> {copy.duplicatePack}
+                </button>
+              ) : null}
+              {packs.length > 1 ? (
+                <button type="button" onClick={removePackSlot} className="text-xs font-semibold text-neutral-400">{copy.removeThisPack}</button>
+              ) : null}
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{copy.packName}</span>
@@ -1151,6 +1306,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-3">
+                {filledPacks.length >= 2 ? (
+                  <button
+                    type="button"
+                    onClick={() => { setPackCompareOpen(true); setCompareOpen(false); setOpen(null); setDraft(null); }}
+                    className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold"
+                  >
+                    <Columns2 className="h-4 w-4" /> {copy.comparePacks}
+                  </button>
+                ) : null}
                 {pack.length > 0 ? (
                   <button type="button" onClick={downloadPack} className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white">
                     <Download className="h-4 w-4" /> {copy.exportPack}
@@ -1168,7 +1332,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {shopTab && compare.length > 0 && !compareOpen ? (
+      {shopTab && compare.length > 0 && !compareOpen && !packCompareOpen ? (
         <div className="fixed bottom-5 left-5 z-40 flex max-w-[min(100%-2.5rem,42rem)] items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg">
           <Columns2 className="h-4 w-4 shrink-0 text-neutral-500" />
           <div className="flex min-w-0 items-center gap-2">
@@ -1192,7 +1356,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         </div>
       ) : null}
 
-      {shopTab && !inOutlet && !compareOpen ? (
+      {shopTab && !inOutlet && !compareOpen && !packCompareOpen ? (
         <button
           type="button"
           onClick={() => setCartOpen(true)}
@@ -1214,6 +1378,23 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   {packSeason.trim() ? `${copy.pack} · ${packSeason.trim()}` : copy.pack}
                 </p>
                 <h3 className="font-display text-2xl font-semibold">{packName.trim() || copy.cartTitle}</h3>
+                {packs.length > 1 ? (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {packs.map((item, index) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setActivePack(index)}
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          index === activePack ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                        }`}
+                      >
+                        {packDraftLabel(item, copy.pack, index)}
+                        {item.lines.length ? ` · ${item.lines.length}` : ''}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <button type="button" onClick={() => setCartOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
                 <X className="h-5 w-5" />
@@ -1456,6 +1637,98 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {packCompareOpen && filledPacks.length >= 2 && channel ? (
+        <div className="abonos-modal-backdrop" onClick={() => setPackCompareOpen(false)}>
+          <div
+            className="abonos-modal overflow-hidden bg-white"
+            style={{ width: filledPacks.length > 2 ? 'min(1180px, 100%)' : 'min(920px, 100%)' }}
+            role="dialog"
+            aria-modal="true"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-6 py-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{channel.toUpperCase()}</p>
+                <h3 className="font-display text-2xl font-semibold">{copy.comparePacksTitle}</h3>
+              </div>
+              <button type="button" onClick={() => setPackCompareOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="max-h-[80vh] overflow-auto">
+              <div
+                className="grid gap-3 px-6 py-4"
+                style={{ gridTemplateColumns: `8rem repeat(${filledPacks.length}, minmax(0, 1fr))` }}
+              >
+                <div />
+                {filledPacks.map((item, index) => {
+                  const photos = item.lines.map((line) => byId.get(line.id)).filter((row): row is TarifaProduct => Boolean(row?.image)).slice(0, 4);
+                  const packIndex = packs.findIndex((row) => row.id === item.id);
+                  return (
+                    <div key={item.id} className="min-w-0">
+                      <div className="mb-2 flex items-center justify-between">
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={() => movePack(item.id, -1)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                          aria-label={copy.compareForward}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{index + 1}</span>
+                        <button
+                          type="button"
+                          disabled={index === filledPacks.length - 1}
+                          onClick={() => movePack(item.id, 1)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                          aria-label={copy.compareBack}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className={`overflow-hidden rounded-xl bg-neutral-50 ${photos.length > 1 ? 'grid grid-cols-2 gap-1 p-1' : ''}`}>
+                        {(photos.length ? photos : [null]).map((product, photoIndex) => (
+                          <div key={product?.id || photoIndex} className="aspect-square overflow-hidden">
+                            <TarifasPhoto src={product?.image || null} alt={product?.name || item.name} className="h-full w-full p-2" onOpen={product?.image ? openPhoto : undefined} />
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-3 font-display text-lg font-semibold leading-snug">{packDraftLabel(item, copy.pack, packIndex === -1 ? index : packIndex)}</p>
+                      <p className="text-[11px] text-neutral-500">{item.season.trim() || '—'} · {item.lines.length} {copy.packPieces.toLowerCase()}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <table className="w-full text-sm">
+                <tbody>
+                  {packCompareRows(filledPacks, products, channel, copy, locale, euro, pct).map((row) => {
+                    const differs = row.values.some((value) => value !== row.values[0]);
+                    return (
+                      <Fragment key={`${row.section || ''}-${row.label}`}>
+                        {row.section ? (
+                          <tr className="border-t border-neutral-100">
+                            <td colSpan={filledPacks.length + 1} className="bg-neutral-50 px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                              {row.section}
+                            </td>
+                          </tr>
+                        ) : null}
+                        <tr className="border-t border-neutral-100">
+                          <td className="w-[10rem] px-6 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</td>
+                          {row.values.map((value, index) => (
+                            <td key={`${filledPacks[index].id}-${row.label}`} className={`px-4 py-2 whitespace-pre-line ${differs ? 'bg-amber-50 font-semibold' : ''}`}>{value}</td>
+                          ))}
+                        </tr>
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
