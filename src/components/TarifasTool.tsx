@@ -40,6 +40,10 @@ import {
   type TarifaSport,
 } from '@/lib/tarifas-model';
 import { loadTarifasCatalog, saveTarifasCatalog, type TarifasBackend } from '@/lib/tarifas-store';
+import { emptyReservasCatalog, type ReservasCatalog } from '@/lib/reservas-model';
+import { loadReservasCatalog, saveReservasCatalog, type ReservasBackend } from '@/lib/reservas-store';
+import ReservasPanel from '@/components/ReservasPanel';
+import ReservasMaestro from '@/components/ReservasMaestro';
 import {
   TARIFAS_COPY,
   TARIFAS_LOCALES,
@@ -229,7 +233,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [setupSql, setSetupSql] = useState<string>();
   const [status, setStatus] = useState('');
   const [channel, setChannel] = useState<TarifaChannel | null>(null);
-  const [tab, setTab] = useState<'catalogo' | 'pack' | 'maestro'>('catalogo');
+  const [tab, setTab] = useState<'catalogo' | 'pack' | 'reservas' | 'maestro'>('catalogo');
   const [fee, setFee] = useState<FeeLevel>(1);
   const [query, setQuery] = useState('');
   const [brand, setBrand] = useState('');
@@ -252,6 +256,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [pin, setPin] = useState('');
   const [askPin, setAskPin] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+  const [reservas, setReservas] = useState<ReservasCatalog>(emptyReservasCatalog());
+  const [reservasBackend, setReservasBackend] = useState<ReservasBackend>('local');
+  const [reservasSql, setReservasSql] = useState<string>();
 
   useEffect(() => {
     setLocale(readTarifasLocale());
@@ -263,6 +270,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       setProducts(loaded.products);
       setBackend(loaded.backend);
       setSetupSql(loaded.setupSql);
+    });
+    loadReservasCatalog().then((loaded) => {
+      setReservas(loaded.catalog);
+      setReservasBackend(loaded.backend);
+      setReservasSql(loaded.setupSql);
     });
   }, []);
 
@@ -373,12 +385,24 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     ? [
         { id: 'catalogo', label: copy.catalog },
         { id: 'pack', label: copy.pack },
+        { id: 'reservas', label: copy.reservas },
         { id: 'maestro', label: copy.master },
       ]
     : [
         { id: 'catalogo', label: copy.catalog },
         { id: 'pack', label: copy.pack },
+        { id: 'reservas', label: copy.reservas },
       ];
+
+  const persistReservas = async (next: ReservasCatalog) => {
+    setReservas(next);
+    try {
+      await saveReservasCatalog(next, reservasBackend);
+      setStatus(reservasBackend === 'supabase' ? copy.savedNetwork : copy.savedLocal);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : copy.saveError);
+    }
+  };
 
   const persist = async (next: TarifaProduct[]) => {
     setProducts(next);
@@ -558,17 +582,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             backLabel={copy.tools}
             tabs={visibleTabs}
             active={tab}
-            onSelect={(id) => setTab(id as 'catalogo' | 'pack' | 'maestro')}
+            onSelect={(id) => setTab(id as 'catalogo' | 'pack' | 'reservas' | 'maestro')}
           />
         </div>
 
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-              {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : copy.catalog}
+              {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : tab === 'reservas' ? copy.reservas : copy.catalog}
             </p>
             <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : copy.offer}
+              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : copy.offer}
             </h2>
           </div>
           <button type="button" onClick={() => { setChannel(null); setPack([]); }} className="text-xs font-semibold text-neutral-500">
@@ -587,7 +611,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </div>
         ) : null}
 
-        {tab === 'catalogo' || tab === 'maestro' ? (
+        {tab === 'reservas' ? (
+          <ReservasPanel
+            products={products}
+            pack={pack}
+            catalog={reservas}
+            copy={copy}
+            locale={locale}
+          />
+        ) : tab === 'catalogo' || tab === 'maestro' ? (
           <>
             {tab === 'maestro' ? (
               <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
@@ -625,6 +657,16 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   </p>
                 ) : null}
               </div>
+            ) : null}
+            {tab === 'maestro' ? (
+              <ReservasMaestro
+                products={products}
+                catalog={reservas}
+                copy={copy}
+                localeTag={localeTag}
+                setupSql={reservasSql}
+                onChange={(next) => { void persistReservas(next); }}
+              />
             ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
@@ -896,6 +938,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 ) : null}
                 {pack.length > 0 ? (
                   <button type="button" onClick={() => setPack([])} className="text-xs font-semibold text-neutral-500">{copy.clearPack}</button>
+                ) : null}
+                {pack.length > 0 ? (
+                  <button type="button" onClick={() => setTab('reservas')} className="text-xs font-semibold text-neutral-700">{copy.reservasFromPack}</button>
                 ) : null}
               </div>
             </div>
