@@ -137,16 +137,16 @@ function FilterSelect({
       ? (options.find((item) => item.value === selected[0])?.label || selected[0])
       : `${label} · ${selected.length}`;
   return (
-    <div ref={root} className={`relative ${open ? 'z-30' : ''}`}>
+    <div ref={root} className={`relative min-w-[8.5rem] flex-1 ${open ? 'z-30' : ''}`}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border pl-3 pr-2.5 text-sm ${
+        className={`inline-flex h-10 w-full items-center justify-between gap-1.5 rounded-full border pl-3.5 pr-2.5 text-sm ${
           selected.length ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700'
         }`}
       >
-        {title}
-        <ChevronDown className={`h-3.5 w-3.5 opacity-60 ${open ? 'rotate-180' : ''}`} />
+        <span className="min-w-0 truncate">{title}</span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 opacity-60 ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
         <div className="absolute left-0 top-full z-20 mt-1 max-h-72 min-w-[14rem] overflow-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-lg">
@@ -1053,8 +1053,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             ) : null}
 
             <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="relative min-w-[180px] flex-1">
+              <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+                <label className="relative w-[18rem] max-w-full shrink-0">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                   <input
                     value={query}
@@ -1077,11 +1077,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   onToggle={(value) => setColours(toggleItem(colours, value))}
                   onClear={() => setColours([])}
                 />
-                <div className="relative">
+                <div className="relative min-w-[8.5rem] flex-1">
                   <select
                     value={sort}
                     onChange={(e) => setSort(e.target.value as typeof sort)}
-                    className="h-10 appearance-none rounded-full border border-neutral-200 bg-white pl-3 pr-8 text-sm"
+                    className="h-10 w-full appearance-none rounded-full border border-neutral-200 bg-white pl-3.5 pr-8 text-sm"
                   >
                     <option value="nombre">{copy.sortName}</option>
                     <option value="marca">{copy.sortBrand}</option>
@@ -1091,7 +1091,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
                 <FilterSelect
                   label={copy.gender}
                   options={facets.genders.map((item) => ({ value: item, label: copy.genders[item] }))}
@@ -1140,7 +1140,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   />
                 ) : null}
                 {filtersOn ? (
-                  <button type="button" onClick={clearFilters} className="h-10 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-neutral-600 hover:bg-neutral-50">
+                  <button type="button" onClick={clearFilters} className="h-10 shrink-0 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-neutral-600 hover:bg-neutral-50">
                     {copy.clearFilters}
                   </button>
                 ) : null}
