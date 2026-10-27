@@ -55,7 +55,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -141,11 +141,12 @@ function FilterSelect({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={`h-10 rounded-full border px-3 text-sm ${
+        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border pl-3 pr-2.5 text-sm ${
           selected.length ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700'
         }`}
       >
         {title}
+        <ChevronDown className={`h-3.5 w-3.5 opacity-60 ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
         <div className="absolute left-0 top-full z-20 mt-1 max-h-72 min-w-[14rem] overflow-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-lg">
@@ -857,7 +858,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 pb-24 pt-4 sm:px-6">
+    <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-5 pb-24 pt-4 sm:px-8">
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -925,14 +926,18 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           />
         </div>
 
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-            {inOutlet ? copy.outlet : channel.toUpperCase()}{tab === 'pack' ? ` · ${copy.pack}` : tab === 'maestro' ? ` · ${copy.master}` : tab === 'reservas' ? ` · ${copy.reservas}` : ''}
-          </p>
-          <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-            {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : inOutlet ? copy.outletTitle : copy.offer}
-          </h2>
-        </div>
+        {tab === 'catalogo' && !inOutlet ? (
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">{channel.toUpperCase()}</p>
+        ) : (
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
+              {inOutlet ? copy.outlet : channel.toUpperCase()}{tab === 'pack' ? ` · ${copy.pack}` : tab === 'maestro' ? ` · ${copy.master}` : tab === 'reservas' ? ` · ${copy.reservas}` : ''}
+            </p>
+            <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : copy.outletTitle}
+            </h2>
+          </div>
+        )}
 
         {shopTab ? (
           <div>
@@ -1047,95 +1052,99 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               />
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="relative min-w-[180px] flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={copy.search}
-                  className="h-10 w-full rounded-full border border-neutral-200 bg-white py-0 pl-9 pr-4 text-sm outline-none"
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="relative min-w-[180px] flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={copy.search}
+                    className="h-10 w-full rounded-full border border-neutral-200 bg-white py-0 pl-9 pr-4 text-sm outline-none"
+                  />
+                </label>
+                <FilterSelect
+                  label={copy.type}
+                  options={facets.types.map((item) => ({ value: item, label: labelProductType(locale, item) }))}
+                  selected={types}
+                  onToggle={(value) => setTypes(toggleItem(types, value))}
+                  onClear={() => setTypes([])}
                 />
-              </label>
-              <FilterSelect
-                label={copy.sport}
-                options={facets.sports.map((item) => ({ value: item, label: copy.sports[item as TarifaSport] || item }))}
-                selected={sports}
-                onToggle={(value) => setSports(toggleItem(sports, value as TarifaSport))}
-                onClear={() => setSports([])}
-              />
-              <FilterSelect
-                label={copy.gender}
-                options={facets.genders.map((item) => ({ value: item, label: copy.genders[item] }))}
-                selected={genders}
-                onToggle={(value) => setGenders(toggleItem(genders, value as TarifaGender))}
-                onClear={() => setGenders([])}
-              />
-              <FilterSelect
-                label={copy.type}
-                options={facets.types.map((item) => ({ value: item, label: labelProductType(locale, item) }))}
-                selected={types}
-                onToggle={(value) => setTypes(toggleItem(types, value))}
-                onClear={() => setTypes([])}
-              />
-              <FilterSelect
-                label={copy.colour}
-                options={facets.colours.map((item) => ({ value: item, label: item }))}
-                selected={colours}
-                onToggle={(value) => setColours(toggleItem(colours, value))}
-                onClear={() => setColours([])}
-              />
-              <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="nombre">{copy.sortName}</option>
-                <option value="marca">{copy.sortBrand}</option>
-                <option value="precio">{copy.sortPrice}</option>
-                <option value="pvp">{copy.sortPvp}</option>
-              </select>
-              {filtersOn ? (
-                <button type="button" onClick={clearFilters} className="h-10 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-neutral-600 hover:bg-neutral-50">
-                  {copy.clearFilters}
-                </button>
-              ) : null}
-            </div>
-
-            {facets.kinds.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                <Pill active={!kinds.length} onClick={() => setKinds([])}>{copy.all}</Pill>
-                {facets.kinds.map((item) => (
-                  <Pill key={item} active={kinds.includes(item)} onClick={() => setKinds(toggleItem(kinds, item))}>{copy.kinds[item]}</Pill>
-                ))}
+                <FilterSelect
+                  label={copy.colour}
+                  options={facets.colours.map((item) => ({ value: item, label: item }))}
+                  selected={colours}
+                  onToggle={(value) => setColours(toggleItem(colours, value))}
+                  onClear={() => setColours([])}
+                />
+                <div className="relative">
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as typeof sort)}
+                    className="h-10 appearance-none rounded-full border border-neutral-200 bg-white pl-3 pr-8 text-sm"
+                  >
+                    <option value="nombre">{copy.sortName}</option>
+                    <option value="marca">{copy.sortBrand}</option>
+                    <option value="precio">{copy.sortPrice}</option>
+                    <option value="pvp">{copy.sortPvp}</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
+                </div>
               </div>
-            ) : null}
-            {facets.novelties.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                <Pill active={!novelties.length} onClick={() => setNovelties([])}>{copy.all}</Pill>
-                {facets.novelties.includes('Nueva') || novelties.includes('Nueva') ? (
-                  <Pill active={novelties.includes('Nueva')} onClick={() => setNovelties(toggleItem(novelties, 'Nueva'))}>{copy.newCollection}</Pill>
+              <div className="flex flex-wrap items-center gap-2">
+                <FilterSelect
+                  label={copy.gender}
+                  options={facets.genders.map((item) => ({ value: item, label: copy.genders[item] }))}
+                  selected={genders}
+                  onToggle={(value) => setGenders(toggleItem(genders, value as TarifaGender))}
+                  onClear={() => setGenders([])}
+                />
+                <FilterSelect
+                  label={copy.sport}
+                  options={facets.sports.map((item) => ({ value: item, label: copy.sports[item as TarifaSport] || item }))}
+                  selected={sports}
+                  onToggle={(value) => setSports(toggleItem(sports, value as TarifaSport))}
+                  onClear={() => setSports([])}
+                />
+                <FilterSelect
+                  label={copy.fieldKind}
+                  options={facets.kinds.map((item) => ({ value: item, label: copy.kinds[item] }))}
+                  selected={kinds}
+                  onToggle={(value) => setKinds(toggleItem(kinds, value as TarifaKind))}
+                  onClear={() => setKinds([])}
+                />
+                <FilterSelect
+                  label={copy.audience}
+                  options={facets.ages.map((item) => ({
+                    value: item,
+                    label: item === 'both' ? copy.adultAndYouth : item === 'youthOnly' ? copy.youthOnly : copy.adultOnly,
+                  }))}
+                  selected={ages}
+                  onToggle={(value) => setAges(toggleItem(ages, value as TarifaAgeKind))}
+                  onClear={() => setAges([])}
+                />
+                <FilterSelect
+                  label={copy.brands}
+                  options={facets.brands.map((item) => ({ value: item, label: item }))}
+                  selected={brands}
+                  onToggle={(value) => setBrands(toggleItem(brands, value))}
+                  onClear={() => setBrands([])}
+                />
+                {facets.novelties.length > 0 ? (
+                  <FilterSelect
+                    label={copy.fieldNovelty}
+                    options={facets.novelties.map((item) => ({ value: item, label: copy.novelties[item] }))}
+                    selected={novelties}
+                    onToggle={(value) => setNovelties(toggleItem(novelties, value as TarifaNovelty))}
+                    onClear={() => setNovelties([])}
+                  />
                 ) : null}
-                {facets.novelties.includes('Año pasado') || novelties.includes('Año pasado') ? (
-                  <Pill active={novelties.includes('Año pasado')} onClick={() => setNovelties(toggleItem(novelties, 'Año pasado'))}>{copy.lastSeason}</Pill>
+                {filtersOn ? (
+                  <button type="button" onClick={clearFilters} className="h-10 rounded-full border border-neutral-200 px-4 text-xs font-semibold text-neutral-600 hover:bg-neutral-50">
+                    {copy.clearFilters}
+                  </button>
                 ) : null}
               </div>
-            ) : null}
-            {facets.ages.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {facets.ages.includes('both') ? (
-                  <Pill active={ages.includes('both')} onClick={() => setAges(toggleItem(ages, 'both'))}>{copy.adultAndYouth}</Pill>
-                ) : null}
-                {facets.ages.includes('adult') ? (
-                  <Pill active={ages.includes('adult')} onClick={() => setAges(toggleItem(ages, 'adult'))}>{copy.adultOnly}</Pill>
-                ) : null}
-                {facets.ages.includes('youthOnly') ? (
-                  <Pill active={ages.includes('youthOnly')} onClick={() => setAges(toggleItem(ages, 'youthOnly'))}>{copy.youthOnly}</Pill>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap gap-1.5">
-              <Pill active={!brands.length} onClick={() => setBrands([])}>{copy.brands}</Pill>
-              {facets.brands.map((item) => (
-                <Pill key={item} active={brands.includes(item)} onClick={() => setBrands(toggleItem(brands, item))}>{item}</Pill>
-              ))}
             </div>
 
             <p className="text-xs tabular-nums text-neutral-400">{filtered.length.toLocaleString(localeTag)} {copy.products}</p>

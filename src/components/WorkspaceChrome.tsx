@@ -25,7 +25,7 @@ export default function WorkspaceChrome({
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
+        className="flex items-center gap-2 rounded-md py-1.5 pl-3 pr-2 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
       >
         <ArrowLeft className="h-4 w-4" />
         {backLabel}
