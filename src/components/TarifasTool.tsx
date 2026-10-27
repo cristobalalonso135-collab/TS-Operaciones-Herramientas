@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import catalog from '@/data/tarifas-catalog.json';
@@ -44,6 +44,7 @@ import { emptyReservasCatalog, type ReservasCatalog } from '@/lib/reservas-model
 import { loadReservasCatalog, saveReservasCatalog, type ReservasBackend } from '@/lib/reservas-store';
 import ReservasPanel from '@/components/ReservasPanel';
 import ReservasMaestro from '@/components/ReservasMaestro';
+import { PhotoLightbox, TarifasPhoto } from '@/components/TarifasPhoto';
 import {
   TARIFAS_COPY,
   TARIFAS_LOCALES,
@@ -58,31 +59,9 @@ import { ArrowLeft, Columns2, Download, Lock, Plus, Search, ShoppingBag, Trash2,
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
+const COMPARE_MAX = 4;
 
 const SEED = (catalog as unknown[]).map(asProduct);
-
-function Photo({ src, alt, className }: { src: string | null; alt: string; className?: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!src || failed) {
-    return (
-      <div className={`flex items-center justify-center bg-neutral-50 ${className || ''}`}>
-        <span className="font-display text-3xl font-semibold tracking-tight text-neutral-300">
-          {alt.slice(0, 1).toUpperCase()}
-        </span>
-      </div>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className={`bg-white object-contain object-center ${className || ''}`}
-    />
-  );
-}
 
 function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
@@ -227,6 +206,46 @@ function PvpLines({
   );
 }
 
+function compareRows(
+  items: TarifaProduct[],
+  channel: TarifaChannel,
+  fees: FeeLevel[],
+  copy: TarifasCopy,
+  euro: (value: number | null | undefined) => string,
+): { section?: string; label: string; values: string[] }[] {
+  const ageLabel = (item: TarifaProduct) => (
+    ageKind(item) === 'both' ? copy.adultAndYouth : ageKind(item) === 'youthOnly' ? copy.youthOnly : copy.adultOnly
+  );
+  return [
+    {
+      section: copy.lifecycle,
+      label: copy.fieldNovelty,
+      values: items.map((item) => (item.novelty ? copy.novelties[item.novelty] : copy.fieldNone)),
+    },
+    { label: copy.fieldSeason, values: items.map((item) => item.season || '—') },
+    { label: copy.fieldCollection, values: items.map((item) => item.collection || '—') },
+    {
+      label: copy.validity,
+      values: items.map((item) => (item.red ? `${formatRed(item.red)}${isExpired(item.red) ? ` · ${copy.expired}` : ''}` : '—')),
+    },
+    { section: copy.comparePrices, label: `PVP ${copy.adult}`, values: items.map((item) => euro(rrpPrice(item, channel, 'adult'))) },
+    {
+      label: `PVP ${copy.youth}`,
+      values: items.map((item) => (hasYouth(item) ? euro(rrpPrice(item, channel, 'youth')) : '—')),
+    },
+    ...fees.map((level) => ({
+      label: `Fee ${level}`,
+      values: items.map((item) => euro(sellPrice(item, channel, level, 'adult'))),
+    })),
+    { section: copy.fieldKind, label: copy.fieldKind, values: items.map((item) => copy.kinds[kindOf(item)]) },
+    { label: copy.sport, values: items.map((item) => copy.sports[item.sport as TarifaSport] || item.sport) },
+    { label: copy.gender, values: items.map((item) => copy.genders[item.gender]) },
+    { label: copy.adultAndYouth, values: items.map(ageLabel) },
+    { label: copy.colAdultRef, values: items.map((item) => item.adultRef || '—') },
+    { label: copy.colYouthRef, values: items.map((item) => item.youthRef || '—') },
+  ];
+}
+
 export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [products, setProducts] = useState<TarifaProduct[]>(SEED);
   const [backend, setBackend] = useState<TarifasBackend>('local');
@@ -249,6 +268,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
   const [compare, setCompare] = useState<string[]>([]);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
   const [draft, setDraft] = useState<TarifaProduct | null>(null);
   const [pack, setPack] = useState<PackLine[]>([]);
   const [locale, setLocale] = useState<TarifasLocale>('es');
@@ -376,10 +396,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     [channel, pack, products],
   );
   const byId = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);
-  const comparePair = useMemo(
+  const compareItems = useMemo(
     () => compare.map((id) => byId.get(id)).filter((item): item is TarifaProduct => Boolean(item)),
     [byId, compare],
   );
+  const openPhoto = (src: string, alt: string) => setZoom({ src, alt });
   const editing = admin && tab === 'maestro';
   const visibleTabs = admin
     ? [
@@ -425,16 +446,12 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const toggleCompare = (id: string) => {
     setCompare((current) => {
       if (current.includes(id)) {
-        setCompareOpen(false);
-        return current.filter((item) => item !== id);
+        const next = current.filter((item) => item !== id);
+        if (next.length < 2) setCompareOpen(false);
+        return next;
       }
-      const next = current.length >= 2 ? [current[1], id] : [...current, id];
-      if (next.length === 2) {
-        setCompareOpen(true);
-        setOpen(null);
-        setDraft(null);
-      }
-      return next;
+      if (current.length >= COMPARE_MAX) return current;
+      return [...current, id];
     });
   };
 
@@ -756,26 +773,35 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {filtered.map((item) => (
                   <article key={item.id} className={`group overflow-hidden rounded-2xl border bg-white ${compare.includes(item.id) ? 'border-neutral-900' : 'border-neutral-200'}`}>
+                    <div className="relative aspect-square bg-neutral-50">
+                      <TarifasPhoto
+                        key={item.image || item.id}
+                        src={item.image}
+                        alt={item.name}
+                        className="h-full w-full p-4 transition group-hover:scale-[1.02]"
+                        onOpen={item.image ? openPhoto : undefined}
+                      />
+                      {!item.image ? (
+                        <button type="button" onClick={() => openItem(item)} className="absolute inset-0" aria-label={item.name} />
+                      ) : null}
+                      {ageKind(item) === 'adult' ? (
+                        <span className="pointer-events-none absolute left-2 top-2">
+                          <AgeChip tone="adult">{copy.adultOnly}</AgeChip>
+                        </span>
+                      ) : null}
+                      {ageKind(item) === 'youthOnly' ? (
+                        <span className="pointer-events-none absolute left-2 top-2">
+                          <AgeChip tone="youth">{copy.youthOnly}</AgeChip>
+                        </span>
+                      ) : null}
+                      {isExpired(item.red) ? (
+                        <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-semibold text-white">{copy.expired}</span>
+                      ) : null}
+                      {item.novelty === 'Nueva' ? (
+                        <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">{copy.newBadge}</span>
+                      ) : null}
+                    </div>
                     <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
-                      <div className="relative aspect-square bg-neutral-50">
-                        <Photo key={item.image || item.id} src={item.image} alt={item.name} className="h-full w-full p-4 transition group-hover:scale-[1.02]" />
-                        {ageKind(item) === 'adult' ? (
-                          <span className="absolute left-2 top-2">
-                            <AgeChip tone="adult">{copy.adultOnly}</AgeChip>
-                          </span>
-                        ) : null}
-                        {ageKind(item) === 'youthOnly' ? (
-                          <span className="absolute left-2 top-2">
-                            <AgeChip tone="youth">{copy.youthOnly}</AgeChip>
-                          </span>
-                        ) : null}
-                        {isExpired(item.red) ? (
-                          <span className="absolute right-2 top-2 rounded-full bg-neutral-900/80 px-2 py-0.5 text-[10px] font-semibold text-white">{copy.expired}</span>
-                        ) : null}
-                        {item.novelty === 'Nueva' ? (
-                          <span className="absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">{copy.newBadge}</span>
-                        ) : null}
-                      </div>
                       <div className="space-y-1 px-3 pb-3 pt-3">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                           {item.brand} · {labelProductType(locale, item.productType)}
@@ -791,7 +817,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         <button
                           type="button"
                           onClick={() => toggleCompare(item.id)}
-                          className={`inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border text-[11px] font-semibold ${
+                          disabled={!compare.includes(item.id) && compare.length >= COMPARE_MAX}
+                          className={`inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
                             compare.includes(item.id)
                               ? 'border-neutral-900 bg-neutral-900 text-white'
                               : 'border-neutral-200 text-neutral-700 hover:bg-neutral-50'
@@ -846,7 +873,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           <td className="px-3 py-3">
                             <div className="flex gap-3">
                               <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-neutral-100 bg-white sm:h-28 sm:w-28">
-                                <Photo src={item.image} alt={item.name} className="h-full w-full p-1.5" />
+                                <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-1.5" onOpen={item.image ? openPhoto : undefined} />
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
@@ -949,21 +976,20 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       </div>
 
       {tab === 'catalogo' && compare.length > 0 && !compareOpen ? (
-        <div className="fixed bottom-5 left-5 z-40 flex max-w-[min(100%-2.5rem,28rem)] items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg">
+        <div className="fixed bottom-5 left-5 z-40 flex max-w-[min(100%-2.5rem,42rem)] items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg">
           <Columns2 className="h-4 w-4 shrink-0 text-neutral-500" />
           <div className="flex min-w-0 items-center gap-2">
-            {comparePair.map((item) => (
-              <span key={item.id} className="flex min-w-0 items-center gap-2">
-                <span className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-neutral-50">
-                  <Photo src={item.image} alt={item.name} className="h-full w-full p-0.5" />
-                </span>
-                <span className="hidden truncate text-xs font-semibold sm:block">{item.name}</span>
+            {compareItems.map((item) => (
+              <span key={item.id} className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-neutral-50">
+                <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-0.5" />
               </span>
             ))}
-            {compare.length === 1 ? <span className="text-xs text-neutral-400">{copy.compareHint}</span> : null}
+            {compare.length < 2 ? <span className="text-xs text-neutral-400">{copy.compareHint}</span> : (
+              <span className="hidden truncate text-xs font-semibold text-neutral-500 sm:block">{compare.length}/{COMPARE_MAX}</span>
+            )}
           </div>
-          {compare.length === 2 ? (
-            <button type="button" onClick={() => setCompareOpen(true)} className="h-8 shrink-0 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">
+          {compare.length >= 2 ? (
+            <button type="button" onClick={() => { setCompareOpen(true); setOpen(null); setDraft(null); }} className="h-8 shrink-0 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">
               {copy.compareView}
             </button>
           ) : null}
@@ -1009,7 +1035,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     return (
                       <li key={`${line.id}-${line.fee}`} className="flex gap-3 px-5 py-3">
                         <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-50">
-                          <Photo src={item.image} alt={item.name} className="h-full w-full p-1" />
+                          <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-1" onOpen={item.image ? openPhoto : undefined} />
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
@@ -1058,7 +1084,13 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           >
             <div className="grid md:grid-cols-2">
               <div className="bg-neutral-50 p-6">
-                <Photo key={draft.image || draft.id} src={draft.image} alt={draft.name} className="mx-auto max-h-[520px] w-full" />
+                <TarifasPhoto
+                  key={draft.image || draft.id}
+                  src={draft.image}
+                  alt={draft.name}
+                  className="mx-auto max-h-[520px] w-full"
+                  onOpen={draft.image ? openPhoto : undefined}
+                />
               </div>
               <div className="flex flex-col p-6">
                 <div className="flex items-start justify-between gap-3">
@@ -1231,11 +1263,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         </div>
       ) : null}
 
-      {compareOpen && comparePair.length === 2 && channel ? (
+      {compareOpen && compareItems.length >= 2 && channel ? (
         <div className="abonos-modal-backdrop" onClick={() => setCompareOpen(false)}>
           <div
             className="abonos-modal overflow-hidden bg-white"
-            style={{ width: 'min(920px, 100%)' }}
+            style={{ width: compareItems.length > 2 ? 'min(1180px, 100%)' : 'min(920px, 100%)' }}
             role="dialog"
             aria-modal="true"
             onClick={(event) => event.stopPropagation()}
@@ -1250,12 +1282,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               </button>
             </div>
             <div className="max-h-[80vh] overflow-auto">
-              <div className="grid grid-cols-[8rem_1fr_1fr] gap-3 px-6 py-4 sm:grid-cols-[10rem_1fr_1fr]">
+              <div
+                className="grid gap-3 px-6 py-4"
+                style={{ gridTemplateColumns: `8rem repeat(${compareItems.length}, minmax(0, 1fr))` }}
+              >
                 <div />
-                {comparePair.map((item) => (
+                {compareItems.map((item) => (
                   <div key={item.id} className="min-w-0">
                     <div className="aspect-square overflow-hidden rounded-xl bg-neutral-50">
-                      <Photo src={item.image} alt={item.name} className="h-full w-full p-3" />
+                      <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-3" onOpen={item.image ? openPhoto : undefined} />
                     </div>
                     <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                       {item.brand} · {labelProductType(locale, item.productType)}
@@ -1267,64 +1302,41 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               </div>
               <table className="w-full text-sm">
                 <tbody>
-                  {(() => {
-                    const [left, right] = comparePair;
-                    const noveltyLeft = left.novelty ? copy.novelties[left.novelty] : copy.fieldNone;
-                    const noveltyRight = right.novelty ? copy.novelties[right.novelty] : copy.fieldNone;
-                    const ageLeft = ageKind(left) === 'both' ? copy.adultAndYouth : ageKind(left) === 'youthOnly' ? copy.youthOnly : copy.adultOnly;
-                    const ageRight = ageKind(right) === 'both' ? copy.adultAndYouth : ageKind(right) === 'youthOnly' ? copy.youthOnly : copy.adultOnly;
-                    const rows: { section?: string; label: string; a: string; b: string }[] = [
-                      { section: copy.lifecycle, label: copy.fieldNovelty, a: noveltyLeft, b: noveltyRight },
-                      { label: copy.fieldSeason, a: left.season || '—', b: right.season || '—' },
-                      { label: copy.fieldCollection, a: left.collection || '—', b: right.collection || '—' },
-                      { label: copy.validity, a: left.red ? `${formatRed(left.red)}${isExpired(left.red) ? ` · ${copy.expired}` : ''}` : '—', b: right.red ? `${formatRed(right.red)}${isExpired(right.red) ? ` · ${copy.expired}` : ''}` : '—' },
-                      { section: copy.comparePrices, label: `PVP ${copy.adult}`, a: euro(rrpPrice(left, channel, 'adult')), b: euro(rrpPrice(right, channel, 'adult')) },
-                      { label: `PVP ${copy.youth}`, a: hasYouth(left) ? euro(rrpPrice(left, channel, 'youth')) : '—', b: hasYouth(right) ? euro(rrpPrice(right, channel, 'youth')) : '—' },
-                      ...fees.map((level) => ({
-                        label: `Fee ${level}`,
-                        a: euro(sellPrice(left, channel, level, 'adult')),
-                        b: euro(sellPrice(right, channel, level, 'adult')),
-                      })),
-                      { section: copy.fieldKind, label: copy.fieldKind, a: copy.kinds[kindOf(left)], b: copy.kinds[kindOf(right)] },
-                      { label: copy.sport, a: copy.sports[left.sport as TarifaSport] || left.sport, b: copy.sports[right.sport as TarifaSport] || right.sport },
-                      { label: copy.gender, a: copy.genders[left.gender], b: copy.genders[right.gender] },
-                      { label: copy.adultAndYouth, a: ageLeft, b: ageRight },
-                      { label: copy.colAdultRef, a: left.adultRef || '—', b: right.adultRef || '—' },
-                      { label: copy.colYouthRef, a: left.youthRef || '—', b: right.youthRef || '—' },
-                    ];
-                    return rows.map((row) => (
-                      <tr key={`${row.section || ''}-${row.label}`} className="border-t border-neutral-100">
+                  {compareRows(compareItems, channel, fees, copy, euro).map((row) => {
+                    const differs = row.values.some((value) => value !== row.values[0]);
+                    return (
+                      <Fragment key={`${row.section || ''}-${row.label}`}>
                         {row.section ? (
-                          <td colSpan={3} className="bg-neutral-50 px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                            {row.section}
-                          </td>
+                          <tr className="border-t border-neutral-100">
+                            <td colSpan={compareItems.length + 1} className="bg-neutral-50 px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                              {row.section}
+                            </td>
+                          </tr>
                         ) : null}
-                        {!row.section ? (
-                          <>
-                            <td className="w-[10rem] px-6 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</td>
-                            <td className={`px-4 py-2 ${row.a !== row.b ? 'bg-amber-50 font-semibold' : ''}`}>{row.a}</td>
-                            <td className={`px-4 py-2 ${row.a !== row.b ? 'bg-amber-50 font-semibold' : ''}`}>{row.b}</td>
-                          </>
-                        ) : null}
-                      </tr>
-                    )).flatMap((node, index) => {
-                      const row = rows[index];
-                      if (!row.section) return [node];
-                      return [
-                        node,
-                        <tr key={`${row.section}-${row.label}-data`} className="border-t border-neutral-100">
+                        <tr className="border-t border-neutral-100">
                           <td className="w-[10rem] px-6 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</td>
-                          <td className={`px-4 py-2 ${row.a !== row.b ? 'bg-amber-50 font-semibold' : ''}`}>{row.a}</td>
-                          <td className={`px-4 py-2 ${row.a !== row.b ? 'bg-amber-50 font-semibold' : ''}`}>{row.b}</td>
-                        </tr>,
-                      ];
-                    });
-                  })()}
+                          {row.values.map((value, index) => (
+                            <td key={compareItems[index].id} className={`px-4 py-2 ${differs ? 'bg-amber-50 font-semibold' : ''}`}>{value}</td>
+                          ))}
+                        </tr>
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         </div>
+      ) : null}
+
+      {zoom ? (
+        <PhotoLightbox
+          src={zoom.src}
+          alt={zoom.alt}
+          downloadLabel={copy.downloadPhoto}
+          closeLabel={copy.close}
+          onClose={() => setZoom(null)}
+        />
       ) : null}
     </div>
   );

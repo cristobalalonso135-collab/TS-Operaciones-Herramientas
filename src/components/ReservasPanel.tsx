@@ -17,28 +17,8 @@ import { reservaRpExportRows } from '@/lib/reservas-excel';
 import { readReservaDraft, writeReservaDraft } from '@/lib/reservas-store';
 import { type PackLine, type TarifaProduct } from '@/lib/tarifas-model';
 import { labelProductType, type TarifasCopy, type TarifasLocale } from '@/lib/tarifas-i18n';
+import { PhotoLightbox, TarifasPhoto } from '@/components/TarifasPhoto';
 import { Download, Plus, Trash2 } from 'lucide-react';
-
-function Photo({ src, alt }: { src: string | null; alt: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!src || failed) {
-    return (
-      <div className="flex h-full w-full items-center justify-center bg-neutral-50">
-        <span className="font-display text-2xl font-semibold text-neutral-300">{alt.slice(0, 1).toUpperCase()}</span>
-      </div>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className="h-full w-full bg-white object-contain p-1.5"
-    />
-  );
-}
 
 function SizeRow({
   cells,
@@ -82,6 +62,7 @@ export default function ReservasPanel({
   const [players, setPlayers] = useState(0);
   const [mixAdult, setMixAdult] = useState(70);
   const [query, setQuery] = useState('');
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
 
   const byId = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);
   const curves = useMemo(() => buildCurves(catalog, products), [catalog, products]);
@@ -238,7 +219,7 @@ export default function ReservasPanel({
             <li key={item.id}>
               <button type="button" onClick={() => { addProduct(item); setQuery(''); }} className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-neutral-50">
                 <span className="h-10 w-10 overflow-hidden rounded-md bg-neutral-50">
-                  <Photo src={item.image} alt={item.name} />
+                  <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-1" />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{item.name}</span>
@@ -263,7 +244,12 @@ export default function ReservasPanel({
               <article key={line.id} className="rounded-2xl border border-neutral-200 p-4">
                 <div className="flex gap-3">
                   <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-neutral-50">
-                    <Photo src={item.image} alt={item.name} />
+                    <TarifasPhoto
+                      src={item.image}
+                      alt={item.name}
+                      className="h-full w-full p-1.5"
+                      onOpen={item.image ? (src, alt) => setZoom({ src, alt }) : undefined}
+                    />
                   </div>
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex items-start justify-between gap-2">
@@ -382,6 +368,15 @@ export default function ReservasPanel({
           })}
         </div>
       )}
+      {zoom ? (
+        <PhotoLightbox
+          src={zoom.src}
+          alt={zoom.alt}
+          downloadLabel={copy.downloadPhoto}
+          closeLabel={copy.close}
+          onClose={() => setZoom(null)}
+        />
+      ) : null}
     </div>
   );
 }
