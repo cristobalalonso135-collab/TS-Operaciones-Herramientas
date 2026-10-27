@@ -11,7 +11,6 @@ import {
   NOVELTIES,
   SPORTS,
   ageKind,
-  activeRef,
   asOutletProduct,
   asProduct,
   channelFees,
@@ -32,7 +31,6 @@ import {
   uniqueSorted,
   type FeeLevel,
   type PackLine,
-  type TarifaAge,
   type TarifaAgeKind,
   type TarifaChannel,
   type TarifaGender,
@@ -413,7 +411,6 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [ages, setAges] = useState<TarifaAgeKind[]>([]);
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
-  const [openAge, setOpenAge] = useState<TarifaAge>('adult');
   const [compare, setCompare] = useState<string[]>([]);
   const [compareOpen, setCompareOpen] = useState(false);
   const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
@@ -745,7 +742,6 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   const openItem = (item: TarifaProduct) => {
     setOpen(item);
-    setOpenAge(ageKind(item) === 'youthOnly' || (ages.length === 1 && ages[0] === 'youthOnly') ? 'youth' : 'adult');
     setDraft(asProduct(item));
   };
 
@@ -1579,19 +1575,30 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
                 {!editing ? (
                   <>
-                    <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                      {ageKind(draft) === 'both' ? (
-                        <>
-                          <Pill active={openAge === 'adult'} onClick={() => setOpenAge('adult')}>{copy.adult}</Pill>
-                          <Pill active={openAge === 'youth'} onClick={() => setOpenAge('youth')}>{copy.youth}</Pill>
-                        </>
-                      ) : ageKind(draft) === 'youthOnly' ? (
+                    <div className="mt-4">
+                      {ageKind(draft) === 'youthOnly' ? (
                         <AgeChip tone="youth">{copy.youthOnly}</AgeChip>
+                      ) : ageKind(draft) === 'both' ? (
+                        <AgeChip tone="adult">{copy.adultAndYouth}</AgeChip>
                       ) : (
                         <AgeChip tone="adult">{copy.adultOnly}</AgeChip>
                       )}
+                      <div className="mt-2 space-y-1">
+                        {draft.adultRef ? (
+                          <p className="font-mono text-sm text-neutral-700">
+                            <span className="mr-2 font-sans text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{copy.colAdultRef}</span>
+                            {draft.adultRef}
+                          </p>
+                        ) : null}
+                        {draft.youthRef ? (
+                          <p className="font-mono text-sm text-neutral-700">
+                            <span className="mr-2 font-sans text-[11px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{copy.colYouthRef}</span>
+                            {draft.youthRef}
+                          </p>
+                        ) : null}
+                        {!draft.adultRef && !draft.youthRef ? <p className="font-mono text-sm text-neutral-400">—</p> : null}
+                      </div>
                     </div>
-                    <p className="mt-2 font-mono text-sm text-neutral-700">{activeRef(draft, openAge) || '—'}</p>
                     {draft.red ? (
                       <p className={`mt-1 text-[11px] ${isExpired(draft.red) ? 'font-semibold text-neutral-900' : 'text-neutral-400'}`}>
                         {copy.validity} {formatRed(draft.red)}
@@ -1602,19 +1609,27 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     <div className="mt-2 overflow-hidden rounded-xl border border-neutral-200">
                       <table className="w-full text-sm">
                         <tbody>
-                          <tr className="border-b border-neutral-100">
-                            <td className="px-3 py-2 text-neutral-500">PVP</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{euro(rrpPrice(draft, channel, openAge))}</td>
-                          </tr>
+                          {ageKind(draft) !== 'youthOnly' ? (
+                            <tr className="border-b border-neutral-100">
+                              <td className="px-3 py-2 text-neutral-500">PVP{hasYouth(draft) ? ` ${copy.adult}` : ''}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{euro(rrpPrice(draft, channel, 'adult'))}</td>
+                            </tr>
+                          ) : null}
+                          {hasYouth(draft) ? (
+                            <tr className="border-b border-neutral-100">
+                              <td className="px-3 py-2 text-neutral-500">PVP {copy.youth}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{euro(rrpPrice(draft, channel, 'youth'))}</td>
+                            </tr>
+                          ) : null}
                           {fees.map((level) => (
                             <tr key={level} className="border-b border-neutral-100 last:border-0">
                               <td className="px-3 py-2 text-neutral-500">Fee {level}</td>
-                              <td className="px-3 py-2 text-right font-semibold tabular-nums">{euro(sellPrice(draft, channel, level, openAge))}</td>
+                              <td className="px-3 py-2 text-right font-semibold tabular-nums">{euro(sellPrice(draft, channel, level, ageKind(draft) === 'youthOnly' ? 'youth' : 'adult'))}</td>
                             </tr>
                           ))}
                           <tr>
                             <td className="px-3 py-2 text-[11px] text-neutral-400">{copy.marginFee} {fee}</td>
-                            <td className="px-3 py-2 text-right text-[11px] tabular-nums text-neutral-400">{pct(lineMargin(draft, channel, fee, openAge))}</td>
+                            <td className="px-3 py-2 text-right text-[11px] tabular-nums text-neutral-400">{pct(lineMargin(draft, channel, fee, ageKind(draft) === 'youthOnly' ? 'youth' : 'adult'))}</td>
                           </tr>
                         </tbody>
                       </table>
