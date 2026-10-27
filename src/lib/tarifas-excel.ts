@@ -4,6 +4,7 @@ import {
   formatPct,
   fueraPackPrice,
   lineMargin,
+  packQty,
   rrpPrice,
   sellPrice,
   type PackLine,
@@ -313,6 +314,7 @@ export function packExportRows(
     'Producto',
     'Nombre',
     'Color',
+    'Cantidad',
     'Precio club',
     'Precio estampac.',
     'Precio fuera pack',
@@ -321,7 +323,8 @@ export function packExportRows(
   ];
   const body = lines.map((line, index) => {
     const item = byId.get(line.id);
-    if (!item) return [index + 1, '', '', '', '', '', '', line.stampInput || line.stamp || 0, '', '', ''];
+    const n = packQty(line);
+    if (!item) return [index + 1, '', '', '', '', '', n, line.stampInput || line.stamp || 0, '', '', ''];
     return [
       index + 1,
       item.adultRef,
@@ -329,6 +332,7 @@ export function packExportRows(
       item.productType,
       item.name,
       item.colour,
+      n,
       formatEuro(sellPrice(item, channel, line.fee, 'adult'), locale),
       formatEuro(line.stamp || 0, locale),
       formatEuro(fueraPackPrice(item, channel), locale),

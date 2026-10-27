@@ -24,6 +24,7 @@ import {
   isExpired,
   kindOf,
   lineMargin,
+  packQty,
   packTotals,
   rrpPrice,
   sellPrice,
@@ -50,7 +51,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Download, Lock, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Download, Lock, Minus, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -179,6 +180,38 @@ function LangSwitch({
   );
 }
 
+function QtyStepper({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div className="inline-flex h-9 items-center rounded-full border border-neutral-200 bg-white" aria-label={ariaLabel}>
+      <button
+        type="button"
+        onClick={() => onChange(value - 1)}
+        className="grid h-9 w-9 place-items-center text-neutral-500 hover:text-neutral-900"
+        aria-label="-"
+      >
+        <Minus className="h-3.5 w-3.5" />
+      </button>
+      <span className="min-w-[1.25rem] text-center text-sm font-semibold tabular-nums">{value}</span>
+      <button
+        type="button"
+        onClick={() => onChange(value + 1)}
+        className="grid h-9 w-9 place-items-center text-neutral-500 hover:text-neutral-900"
+        aria-label="+"
+      >
+        <Plus className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function AgeChip({ tone, children }: { tone: 'adult' | 'youth'; children: ReactNode }) {
   return (
     <span
@@ -243,6 +276,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
+  const [openQty, setOpenQty] = useState(1);
   const [draft, setDraft] = useState<TarifaProduct | null>(null);
   const [pack, setPack] = useState<PackLine[]>([]);
   const [locale, setLocale] = useState<TarifasLocale>('es');
@@ -384,12 +418,23 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const addToPack = (item: TarifaProduct, chosenFee = fee) => {
+  const addToPack = (item: TarifaProduct, chosenFee = fee, qty = 1) => {
+    const add = Math.max(1, Math.min(99, Math.round(qty)));
     setPack((current) => {
-      if (current.some((line) => line.id === item.id && line.fee === chosenFee)) return current;
-      return [...current, { id: item.id, fee: chosenFee, stamp: 0, stampInput: '' }];
+      const index = current.findIndex((line) => line.id === item.id && line.fee === chosenFee);
+      if (index >= 0) {
+        return current.map((line, i) => (i === index ? { ...line, qty: Math.min(99, packQty(line) + add) } : line));
+      }
+      return [...current, { id: item.id, fee: chosenFee, stamp: 0, stampInput: '', qty: add }];
     });
     setCartOpen(true);
+  };
+
+  const setLineQty = (index: number, next: number) => {
+    setPack((current) => {
+      if (next < 1) return current.filter((_, i) => i !== index);
+      return current.map((line, i) => (i === index ? { ...line, qty: Math.min(99, next) } : line));
+    });
   };
 
   const tryAdmin = () => {
@@ -412,6 +457,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const openItem = (item: TarifaProduct) => {
     setOpen(item);
     setOpenAge(ageKind(item) === 'youthOnly' || ageFilter === 'youthOnly' ? 'youth' : 'adult');
+    setOpenQty(1);
     setDraft(asProduct(item));
   };
 
@@ -754,6 +800,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       <th className="px-3 py-2 font-semibold">{copy.colAdultRef}</th>
                       <th className="px-3 py-2 font-semibold">{copy.colYouthRef}</th>
                       <th className="px-3 py-2 font-semibold">{copy.colClubFee}</th>
+                      <th className="px-3 py-2 font-semibold">{copy.colQty}</th>
                       <th className="px-3 py-2 font-semibold text-right">{copy.colClubPrice}</th>
                       <th className="px-3 py-2 font-semibold text-right">{copy.colStamp}</th>
                       <th className="px-3 py-2 font-semibold text-right">{copy.colOutside}</th>
@@ -764,7 +811,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     {pack.map((line, index) => {
                       const item = byId.get(line.id);
                       if (!item) return null;
+                      const n = packQty(line);
                       const price = sellPrice(item, channel, line.fee, 'adult');
+                      const out = fueraPackPrice(item, channel);
                       return (
                         <tr key={`${line.id}-${line.fee}`} className="bg-white align-top">
                           <td className="px-3 py-3 tabular-nums text-neutral-400">{index + 1}</td>
@@ -800,7 +849,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                               ))}
                             </div>
                           </td>
-                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{euro(price)}</td>
+                          <td className="px-3 py-3">
+                            <QtyStepper value={n} onChange={(next) => setLineQty(index, next)} ariaLabel={copy.qtyAria} />
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{euro(price != null ? price * n : null)}</td>
                           <td className="px-3 py-3 text-right">
                             <input
                               inputMode="decimal"
@@ -816,7 +868,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                               aria-label={copy.stampAria}
                             />
                           </td>
-                          <td className="px-3 py-3 text-right tabular-nums text-neutral-500">{euro(fueraPackPrice(item, channel))}</td>
+                          <td className="px-3 py-3 text-right tabular-nums text-neutral-500">{euro(out != null ? out * n : null)}</td>
                           <td className="px-3 py-3">
                             <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
                               <Trash2 className="h-4 w-4" />
@@ -878,7 +930,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         >
           <ShoppingBag className="h-4 w-4" />
           {copy.pack}
-          {pack.length > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{pack.length}</span> : null}
+          {totals.pieces > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{totals.pieces}</span> : null}
         </button>
       ) : null}
 
@@ -903,6 +955,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   {pack.map((line, index) => {
                     const item = byId.get(line.id);
                     if (!item) return null;
+                    const n = packQty(line);
+                    const price = sellPrice(item, channel, line.fee, 'adult');
                     return (
                       <li key={`${line.id}-${line.fee}`} className="flex gap-3 px-5 py-3">
                         <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-50">
@@ -913,7 +967,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           <p className="truncate text-sm font-semibold">{item.name}</p>
                           <p className="text-[11px] text-neutral-500">{item.colour}</p>
                           <p className="mt-1 font-mono text-[10px] text-neutral-400">{item.adultRef || '—'}{item.youthRef ? ` · ${item.youthRef}` : ''}</p>
-                          <p className="mt-1 text-sm font-semibold tabular-nums">{euro(sellPrice(item, channel, line.fee, 'adult'))}</p>
+                          <p className="mt-1 text-sm font-semibold tabular-nums">{euro(price != null ? price * n : null)}</p>
+                          <div className="mt-2">
+                            <QtyStepper value={n} onChange={(next) => setLineQty(index, next)} ariaLabel={copy.qtyAria} />
+                          </div>
                         </div>
                         <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="self-start p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
                           <Trash2 className="h-4 w-4" />
@@ -1030,13 +1087,16 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         </div>
                       </div>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); }}
-                      className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
-                    >
-                      <Plus className="h-4 w-4" /> {copy.addToPack}
-                    </button>
+                    <div className="mt-6 flex flex-wrap items-center gap-3">
+                      <QtyStepper value={openQty} onChange={(next) => setOpenQty(Math.max(1, Math.min(99, next)))} ariaLabel={copy.qtyAria} />
+                      <button
+                        type="button"
+                        onClick={() => { addToPack(draft, fee, openQty); setOpen(null); setDraft(null); }}
+                        className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                      >
+                        <Plus className="h-4 w-4" /> {copy.addToPack}
+                      </button>
+                    </div>
                   </>
                 ) : (
                   <div className="mt-4 grid max-h-[70vh] grid-cols-2 gap-2 overflow-auto pr-1">
