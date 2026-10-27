@@ -56,13 +56,14 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Columns2, Download, Lock, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Columns2, Download, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
 const COMPARE_MAX = 4;
 
-type TarifasTab = 'catalogo' | 'outlet' | 'pack' | 'reservas' | 'maestro';
+type TarifasTab = 'catalogo' | 'pack' | 'reservas' | 'maestro';
+type TarifasEntry = 'b2c' | 'b2b' | 'outlet';
 
 const SEED = (catalog as unknown[]).map(asProduct);
 
@@ -254,7 +255,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [backend, setBackend] = useState<TarifasBackend>('local');
   const [setupSql, setSetupSql] = useState<string>();
   const [status, setStatus] = useState('');
-  const [channel, setChannel] = useState<TarifaChannel | null>(null);
+  const [entry, setEntry] = useState<TarifasEntry | null>(null);
   const [tab, setTab] = useState<TarifasTab>('catalogo');
   const [fee, setFee] = useState<FeeLevel>(1);
   const [query, setQuery] = useState('');
@@ -278,6 +279,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [admin, setAdmin] = useState(false);
   const [pin, setPin] = useState('');
   const [askPin, setAskPin] = useState(false);
+  const [totpReady, setTotpReady] = useState(false);
+  const [totpUri, setTotpUri] = useState<string | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [reservas, setReservas] = useState<ReservasCatalog>(emptyReservasCatalog());
   const [reservasBackend, setReservasBackend] = useState<ReservasBackend>('local');
@@ -285,10 +288,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     setLocale(readTarifasLocale());
-    const params = new URLSearchParams(window.location.search);
-    const unlocked = params.get('admin') === '1' || window.localStorage.getItem(ADMIN_STORAGE) === '1';
-    if (params.get('admin') === '1') window.localStorage.setItem(ADMIN_STORAGE, '1');
-    setAdmin(unlocked);
+    setAdmin(window.localStorage.getItem(ADMIN_STORAGE) === '1');
+    fetch('/api/tarifas-admin').then((res) => res.json()).then((data) => setTotpReady(Boolean(data?.totp))).catch(() => setTotpReady(false));
     loadTarifasCatalog(SEED).then((loaded) => {
       setProducts(loaded.products);
       setBackend(loaded.backend);
@@ -314,12 +315,14 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     writeTarifasLocale(next);
   };
 
-  const fees = channel ? channelFees(channel) : [];
+  const channel: TarifaChannel = entry === 'b2b' ? 'b2b' : 'b2c';
+  const inOutlet = entry === 'outlet';
+  const fees = channelFees(channel);
   const filtersOn = Boolean(query || brand || type || colour || sport || gender || kind || novelty || ageFilter);
 
   const listing = useMemo(
-    () => products.filter((item) => (tab === 'outlet' ? item.outlet : !item.outlet)),
-    [products, tab],
+    () => products.filter((item) => (inOutlet ? item.outlet : !item.outlet)),
+    [inOutlet, products],
   );
 
   const facets = useMemo(() => {
@@ -374,7 +377,6 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   };
 
   const filtered = useMemo(() => {
-    if (!channel) return [];
     const q = query.trim().toLocaleLowerCase('es');
     const rows = listing.filter((item) => {
       if (brand && item.brand !== brand) return false;
@@ -409,22 +411,16 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     [byId, compare],
   );
   const openPhoto = (src: string, alt: string) => setZoom({ src, alt });
-  const editing = admin && (tab === 'maestro' || tab === 'outlet');
-  const shopTab = tab === 'catalogo' || tab === 'outlet';
-  const visibleTabs = admin
-    ? [
-        { id: 'catalogo', label: copy.catalog },
-        { id: 'outlet', label: copy.outlet },
-        { id: 'pack', label: copy.pack },
-        { id: 'reservas', label: copy.reservas },
-        { id: 'maestro', label: copy.master },
-      ]
-    : [
-        { id: 'catalogo', label: copy.catalog },
-        { id: 'outlet', label: copy.outlet },
-        { id: 'pack', label: copy.pack },
-        { id: 'reservas', label: copy.reservas },
-      ];
+  const editing = admin && (tab === 'maestro' || inOutlet);
+  const shopTab = tab === 'catalogo';
+  const visibleTabs = [
+    { id: 'catalogo', label: inOutlet ? copy.outlet : copy.catalog },
+    ...(!inOutlet ? [
+      { id: 'pack', label: copy.pack },
+      { id: 'reservas', label: copy.reservas },
+    ] : []),
+    ...(admin ? [{ id: 'maestro', label: copy.master }] : []),
+  ];
 
   const persistReservas = async (next: ReservasCatalog) => {
     setReservas(next);
@@ -466,22 +462,55 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     });
   };
 
-  const tryAdmin = () => {
-    if (pin.trim() === ADMIN_KEY) {
-      window.localStorage.setItem(ADMIN_STORAGE, '1');
-      setAdmin(true);
-      setAskPin(false);
-      setPin('');
-      setTab('maestro');
-      return;
-    }
-    setStatus(copy.adminWrong);
+  const enterAdmin = (otpauth?: string | null) => {
+    window.localStorage.setItem(ADMIN_STORAGE, '1');
+    setAdmin(true);
+    setAskPin(false);
+    setPin('');
+    setTotpUri(otpauth || null);
+    setTab('maestro');
   };
 
-  const pickChannel = (next: TarifaChannel) => {
-    setChannel(next);
+  const exitAdmin = () => {
+    window.localStorage.removeItem(ADMIN_STORAGE);
+    setAdmin(false);
+    setAskPin(false);
+    setPin('');
+    setTotpUri(null);
+    if (tab === 'maestro') setTab('catalogo');
+  };
+
+  const tryAdmin = async () => {
+    const value = pin.trim();
+    try {
+      const res = await fetch('/api/tarifas-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(/^\d{6}$/.test(value) ? { code: value } : { pin: value }),
+      });
+      const data = await res.json().catch(() => ({})) as { ok?: boolean; otpauth?: string };
+      if (!res.ok || !data.ok) {
+        setStatus(copy.adminWrong);
+        return;
+      }
+      enterAdmin(data.otpauth);
+    } catch {
+      if (value === ADMIN_KEY) {
+        enterAdmin(null);
+        return;
+      }
+      setStatus(copy.adminWrong);
+    }
+  };
+
+  const pickEntry = (next: TarifasEntry) => {
+    setEntry(next);
     setFee(1);
     setTab('catalogo');
+    setPack([]);
+    setCompare([]);
+    setCompareOpen(false);
+    clearFilters();
   };
 
   const openItem = (item: TarifaProduct) => {
@@ -512,7 +541,6 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const downloadCatalog = () => downloadZone(false);
 
   const downloadPack = async () => {
-    if (!channel) return;
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(packExportRows(products, pack, channel, copy.packHeaders, localeTag)), 'Pack');
@@ -539,10 +567,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     });
     await persist(outlet ? [...keep, ...incoming] : [...incoming, ...keep]);
     setStatus(`${incoming.length.toLocaleString(localeTag)} ${copy.imported}`);
-    if (outlet) setTab('outlet');
   };
 
-  if (!channel) {
+  if (!entry) {
     return (
       <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -558,10 +585,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             {copy.tariffHint}
           </p>
         </div>
-        <div className="mx-auto mt-12 grid max-w-2xl gap-4 sm:grid-cols-2">
+        <div className="mx-auto mt-12 grid max-w-4xl gap-4 sm:grid-cols-3">
           <button
             type="button"
-            onClick={() => pickChannel('b2c')}
+            onClick={() => pickEntry('b2c')}
             className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.clubsWeb}</p>
@@ -570,12 +597,21 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </button>
           <button
             type="button"
-            onClick={() => pickChannel('b2b')}
+            onClick={() => pickEntry('b2b')}
             className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.distribution}</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2B</p>
             <p className="mt-2 text-sm text-neutral-500">{copy.b2bFees}</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => pickEntry('outlet')}
+            className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.outletTitle}</p>
+            <p className="mt-2 font-display text-3xl font-semibold">{copy.outlet}</p>
+            <p className="mt-2 text-sm text-neutral-500">{copy.outletDoorHint}</p>
           </button>
         </div>
       </div>
@@ -589,13 +625,22 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <div className="flex flex-wrap items-center gap-2">
             <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
             {admin ? (
-              <button
-                type="button"
-                onClick={() => setTab('maestro')}
-                className="rounded-full bg-neutral-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white"
-              >
-                {copy.adminOn}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setTab('maestro')}
+                  className="rounded-full bg-neutral-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white"
+                >
+                  {copy.adminOn}
+                </button>
+                <button
+                  type="button"
+                  onClick={exitAdmin}
+                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-neutral-500 hover:bg-neutral-50"
+                >
+                  <LogOut className="h-3.5 w-3.5" /> {copy.adminExit}
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -611,40 +656,43 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 className="flex items-center gap-1"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  tryAdmin();
+                  void tryAdmin();
                 }}
               >
                 <input
-                  type="password"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
-                  placeholder={copy.adminUnlock}
-                  className="h-8 w-36 rounded-full border border-neutral-200 px-3 text-xs outline-none"
+                  placeholder={totpReady ? copy.adminCode : copy.adminUnlock}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="h-8 w-40 rounded-full border border-neutral-200 px-3 text-xs outline-none"
                 />
-                <button type="submit" className="h-8 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">{copy.adminEnter}</button>
+                <button type="button" onClick={() => void tryAdmin()} className="h-8 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">{copy.adminEnter}</button>
               </form>
             ) : null}
             {askPin && !admin && status ? <p className="text-[11px] text-red-600">{status}</p> : null}
           </div>
           <WorkspaceChrome
-            onBack={onBack}
-            backLabel={copy.tools}
+            onBack={() => {
+              setEntry(null);
+              setPack([]);
+              setTab('catalogo');
+              setCompare([]);
+              setCompareOpen(false);
+            }}
+            backLabel={copy.lists}
             tabs={visibleTabs}
             active={tab}
-            onSelect={(id) => {
-              const next = id as TarifasTab;
-              if ((next === 'catalogo' || next === 'outlet') && next !== tab) clearFilters();
-              setTab(next);
-            }}
+            onSelect={(id) => setTab(id as TarifasTab)}
           />
         </div>
 
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-            {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : tab === 'reservas' ? copy.reservas : tab === 'outlet' ? copy.outlet : copy.catalog}
+            {inOutlet ? copy.outlet : channel.toUpperCase()}{tab === 'pack' ? ` · ${copy.pack}` : tab === 'maestro' ? ` · ${copy.master}` : tab === 'reservas' ? ` · ${copy.reservas}` : ''}
           </p>
           <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-            {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : tab === 'outlet' ? copy.outletTitle : copy.offer}
+            {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : inOutlet ? copy.outletTitle : copy.offer}
           </h2>
         </div>
 
@@ -667,7 +715,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             copy={copy}
             locale={locale}
           />
-        ) : tab === 'catalogo' || tab === 'outlet' || tab === 'maestro' ? (
+        ) : tab === 'catalogo' || tab === 'maestro' ? (
           <>
             {tab === 'maestro' ? (
               <div className="grid gap-3 lg:grid-cols-2">
@@ -734,6 +782,19 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       <Plus className="h-4 w-4" /> {copy.newOutletRef}
                     </button>
                   </div>
+                </div>
+              </div>
+            ) : null}
+            {tab === 'maestro' && totpUri ? (
+              <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-neutral-200 p-4">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(totpUri)}`}
+                  alt={copy.adminCode}
+                  className="h-40 w-40 rounded-xl border border-neutral-100 bg-white"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.adminCode}</p>
+                  <p className="mt-1 text-sm text-neutral-500">{copy.adminTotpHint}</p>
                 </div>
               </div>
             ) : null}
@@ -831,7 +892,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
             {filtered.length === 0 ? (
               <p className="py-16 text-center text-sm text-neutral-400">
-                {tab === 'outlet' && listing.length === 0 && !filtersOn ? copy.outletEmpty : copy.emptyFilters}
+                {inOutlet && listing.length === 0 && !filtersOn ? copy.outletEmpty : copy.emptyFilters}
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
@@ -893,13 +954,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         >
                           <Columns2 className="h-3.5 w-3.5" /> {compare.includes(item.id) ? copy.compareOn : copy.compare}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => addToPack(item)}
-                          className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
-                        >
-                          <Plus className="h-3.5 w-3.5" /> {copy.addToPack}
-                        </button>
+                        {!inOutlet ? (
+                          <button
+                            type="button"
+                            onClick={() => addToPack(item)}
+                            className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                          >
+                            <Plus className="h-3.5 w-3.5" /> {copy.addToPack}
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                   </article>
@@ -1067,7 +1130,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         </div>
       ) : null}
 
-      {shopTab && !compareOpen ? (
+      {shopTab && !inOutlet && !compareOpen ? (
         <button
           type="button"
           onClick={() => setCartOpen(true)}
@@ -1244,13 +1307,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       >
                         <Columns2 className="h-4 w-4" /> {compare.includes(draft.id) ? copy.compareOn : copy.compare}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); }}
-                        className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
-                      >
-                        <Plus className="h-4 w-4" /> {copy.addToPack}
-                      </button>
+                      {!inOutlet ? (
+                        <button
+                          type="button"
+                          onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); }}
+                          className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                        >
+                          <Plus className="h-4 w-4" /> {copy.addToPack}
+                        </button>
+                      ) : null}
                     </div>
                   </>
                 ) : (
