@@ -12,6 +12,7 @@ import {
   SPORTS,
   ageKind,
   activeRef,
+  asOutletProduct,
   asProduct,
   channelFees,
   colourways,
@@ -60,6 +61,8 @@ import { ArrowLeft, Columns2, Download, Lock, Plus, Search, ShoppingBag, Trash2,
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
 const COMPARE_MAX = 4;
+
+type TarifasTab = 'catalogo' | 'outlet' | 'pack' | 'reservas' | 'maestro';
 
 const SEED = (catalog as unknown[]).map(asProduct);
 
@@ -252,7 +255,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [setupSql, setSetupSql] = useState<string>();
   const [status, setStatus] = useState('');
   const [channel, setChannel] = useState<TarifaChannel | null>(null);
-  const [tab, setTab] = useState<'catalogo' | 'pack' | 'reservas' | 'maestro'>('catalogo');
+  const [tab, setTab] = useState<TarifasTab>('catalogo');
   const [fee, setFee] = useState<FeeLevel>(1);
   const [query, setQuery] = useState('');
   const [brand, setBrand] = useState('');
@@ -314,6 +317,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const fees = channel ? channelFees(channel) : [];
   const filtersOn = Boolean(query || brand || type || colour || sport || gender || kind || novelty || ageFilter);
 
+  const listing = useMemo(
+    () => products.filter((item) => (tab === 'outlet' ? item.outlet : !item.outlet)),
+    [products, tab],
+  );
+
   const facets = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('es');
     const pass = (item: TarifaProduct, skip: string) => {
@@ -331,7 +339,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       }
       return true;
     };
-    const pool = (skip: string) => products.filter((item) => pass(item, skip));
+    const pool = (skip: string) => listing.filter((item) => pass(item, skip));
     const keep = (list: string[], current: string) => (current && !list.includes(current) ? [current, ...list] : list);
     return {
       brands: keep(uniqueSorted(pool('brand'), 'brand'), brand),
@@ -351,7 +359,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         (item) => item === ageFilter || pool('age').some((row) => ageKind(row) === item),
       ),
     };
-  }, [ageFilter, brand, colour, gender, kind, novelty, products, query, sport, type]);
+  }, [ageFilter, brand, colour, gender, kind, listing, novelty, query, sport, type]);
 
   const clearFilters = () => {
     setQuery('');
@@ -368,7 +376,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const filtered = useMemo(() => {
     if (!channel) return [];
     const q = query.trim().toLocaleLowerCase('es');
-    const rows = products.filter((item) => {
+    const rows = listing.filter((item) => {
       if (brand && item.brand !== brand) return false;
       if (type && item.productType !== type) return false;
       if (colour && item.colour !== colour) return false;
@@ -389,7 +397,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (sort === 'pvp') return (rrpPrice(a, channel) ?? 0) - (rrpPrice(b, channel) ?? 0);
       return a.name.localeCompare(b.name, 'es') || a.colour.localeCompare(b.colour, 'es');
     });
-  }, [ageFilter, brand, channel, colour, fee, gender, kind, novelty, products, query, sort, sport, type]);
+  }, [ageFilter, brand, channel, colour, fee, gender, kind, listing, novelty, query, sort, sport, type]);
 
   const totals = useMemo(
     () => (channel ? packTotals(products, pack, channel) : { pieces: 0, club: 0, stamp: 0, sale: 0, rrp: 0, fuera: 0, margin: null }),
@@ -401,16 +409,19 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     [byId, compare],
   );
   const openPhoto = (src: string, alt: string) => setZoom({ src, alt });
-  const editing = admin && tab === 'maestro';
+  const editing = admin && (tab === 'maestro' || tab === 'outlet');
+  const shopTab = tab === 'catalogo' || tab === 'outlet';
   const visibleTabs = admin
     ? [
         { id: 'catalogo', label: copy.catalog },
+        { id: 'outlet', label: copy.outlet },
         { id: 'pack', label: copy.pack },
         { id: 'reservas', label: copy.reservas },
         { id: 'maestro', label: copy.master },
       ]
     : [
         { id: 'catalogo', label: copy.catalog },
+        { id: 'outlet', label: copy.outlet },
         { id: 'pack', label: copy.pack },
         { id: 'reservas', label: copy.reservas },
       ];
@@ -480,19 +491,24 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   const saveDraft = async () => {
     if (!draft) return;
-    const next = products.some((item) => item.id === draft.id)
-      ? products.map((item) => (item.id === draft.id ? asProduct(draft) : item))
-      : [asProduct(draft), ...products];
+    const saved = draft.outlet ? asOutletProduct(asProduct(draft)) : { ...asProduct(draft), outlet: false };
+    const next = products.some((item) => item.id === saved.id)
+      ? products.map((item) => (item.id === saved.id ? saved : item))
+      : [saved, ...products];
     await persist(next);
-    setOpen(asProduct(draft));
+    setOpen(saved);
+    setDraft(saved);
   };
 
-  const downloadCatalog = async () => {
+  const downloadZone = async (outlet: boolean) => {
+    const rows = products.filter((item) => (outlet ? item.outlet : !item.outlet));
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(catalogExportRows(products)), 'Tarifas');
-    XLSX.writeFile(workbook, 'Tarifas_maestro.xlsx');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(catalogExportRows(rows)), outlet ? 'Outlet' : 'Tarifas');
+    XLSX.writeFile(workbook, outlet ? 'Tarifas_outlet.xlsx' : 'Tarifas_maestro.xlsx');
   };
+
+  const downloadCatalog = () => downloadZone(false);
 
   const downloadPack = async () => {
     if (!channel) return;
@@ -502,23 +518,27 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     XLSX.writeFile(workbook, `Pack_${channel.toUpperCase()}.xlsx`);
   };
 
-  const importSheets = async (sheets: Record<string, unknown[][]>) => {
+  const importSheets = async (sheets: Record<string, unknown[][]>, outlet = false) => {
     const parsed = parseTarifasSheets(sheets);
     if (parsed.length === 0) {
       setStatus(copy.emptyExcel);
       return;
     }
+    const keep = products.filter((item) => (outlet ? !item.outlet : item.outlet));
+    const source = products.filter((item) => (outlet ? item.outlet : !item.outlet));
     const photos = new Map<string, string>();
-    products.forEach((item) => {
+    source.forEach((item) => {
       if (!item.image) return;
       if (item.adultRef) photos.set(item.adultRef, item.image);
       if (item.youthRef) photos.set(item.youthRef, item.image);
     });
-    const next = parsed.map((item) => (
-      item.image ? item : { ...item, image: photos.get(item.adultRef) || photos.get(item.youthRef) || null }
-    ));
-    await persist(next);
-    setStatus(`${next.length.toLocaleString(localeTag)} ${copy.imported}`);
+    const incoming = parsed.map((item) => {
+      const withPhoto = item.image ? item : { ...item, image: photos.get(item.adultRef) || photos.get(item.youthRef) || null };
+      return outlet ? asOutletProduct(withPhoto) : { ...withPhoto, outlet: false };
+    });
+    await persist(outlet ? [...keep, ...incoming] : [...incoming, ...keep]);
+    setStatus(`${incoming.length.toLocaleString(localeTag)} ${copy.imported}`);
+    if (outlet) setTab('outlet');
   };
 
   if (!channel) {
@@ -599,17 +619,21 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             backLabel={copy.tools}
             tabs={visibleTabs}
             active={tab}
-            onSelect={(id) => setTab(id as 'catalogo' | 'pack' | 'reservas' | 'maestro')}
+            onSelect={(id) => {
+              const next = id as TarifasTab;
+              if ((next === 'catalogo' || next === 'outlet') && next !== tab) clearFilters();
+              setTab(next);
+            }}
           />
         </div>
 
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
-              {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : tab === 'reservas' ? copy.reservas : copy.catalog}
+              {channel.toUpperCase()} · {tab === 'pack' ? copy.pack : tab === 'maestro' ? copy.master : tab === 'reservas' ? copy.reservas : tab === 'outlet' ? copy.outlet : copy.catalog}
             </p>
             <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
-              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : copy.offer}
+              {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : tab === 'outlet' ? copy.outletTitle : copy.offer}
             </h2>
           </div>
           <button type="button" onClick={() => { setChannel(null); setPack([]); }} className="text-xs font-semibold text-neutral-500">
@@ -617,7 +641,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </button>
         </div>
 
-        {tab === 'catalogo' ? (
+        {shopTab ? (
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.tariff}</p>
             <div className="flex flex-wrap gap-2">
@@ -636,48 +660,79 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             copy={copy}
             locale={locale}
           />
-        ) : tab === 'catalogo' || tab === 'maestro' ? (
+        ) : tab === 'catalogo' || tab === 'outlet' || tab === 'maestro' ? (
           <>
             {tab === 'maestro' ? (
-              <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
-                <p className="text-sm text-neutral-500">
-                  {copy.masterHint}
-                </p>
-                <FileUpload
-                  label={copy.masterUpload}
-                  hint={copy.masterUploadHint}
-                  inputId="tarifas-maestro"
-                  compact
-                  onFileLoaded={() => undefined}
-                  onWorkbookLoaded={(sheets) => importSheets(sheets)}
-                />
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={downloadCatalog} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
-                    <Download className="h-4 w-4" /> {copy.downloadMaster}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const created = emptyProduct();
-                      created.season = '26/27';
-                      openItem(created);
-                    }}
-                    className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
-                  >
-                    <Plus className="h-4 w-4" /> {copy.newReference}
-                  </button>
-                </div>
-                {status ? <p className="text-xs text-neutral-500">{status}</p> : null}
-                {setupSql ? (
-                  <p className="text-xs text-amber-700">
-                    {copy.setupSql}
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
+                  <p className="text-sm text-neutral-500">
+                    {copy.masterHint}
                   </p>
-                ) : null}
+                  <FileUpload
+                    label={copy.masterUpload}
+                    hint={copy.masterUploadHint}
+                    inputId="tarifas-maestro"
+                    compact
+                    onFileLoaded={() => undefined}
+                    onWorkbookLoaded={(sheets) => importSheets(sheets, false)}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={downloadCatalog} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
+                      <Download className="h-4 w-4" /> {copy.downloadMaster}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const created = emptyProduct();
+                        created.season = '26/27';
+                        created.outlet = false;
+                        openItem(created);
+                      }}
+                      className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
+                    >
+                      <Plus className="h-4 w-4" /> {copy.newReference}
+                    </button>
+                  </div>
+                  {status ? <p className="text-xs text-neutral-500">{status}</p> : null}
+                  {setupSql ? (
+                    <p className="text-xs text-amber-700">
+                      {copy.setupSql}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.outlet}</p>
+                  <p className="text-sm text-neutral-500">{copy.outletHint}</p>
+                  <FileUpload
+                    label={copy.outletUpload}
+                    hint={copy.masterUploadHint}
+                    inputId="tarifas-outlet"
+                    compact
+                    onFileLoaded={() => undefined}
+                    onWorkbookLoaded={(sheets) => importSheets(sheets, true)}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => downloadZone(true)} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
+                      <Download className="h-4 w-4" /> {copy.downloadOutlet}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const created = asOutletProduct(emptyProduct());
+                        created.season = '';
+                        openItem(created);
+                      }}
+                      className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
+                    >
+                      <Plus className="h-4 w-4" /> {copy.newOutletRef}
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
             {tab === 'maestro' ? (
               <ReservasMaestro
-                products={products}
+                products={products.filter((item) => !item.outlet)}
                 catalog={reservas}
                 copy={copy}
                 localeTag={localeTag}
@@ -768,7 +823,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             <p className="text-xs tabular-nums text-neutral-400">{filtered.length.toLocaleString(localeTag)} {copy.products}</p>
 
             {filtered.length === 0 ? (
-              <p className="py-16 text-center text-sm text-neutral-400">{copy.emptyFilters}</p>
+              <p className="py-16 text-center text-sm text-neutral-400">
+                {tab === 'outlet' && listing.length === 0 && !filtersOn ? copy.outletEmpty : copy.emptyFilters}
+              </p>
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {filtered.map((item) => (
@@ -800,6 +857,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       {item.novelty === 'Nueva' ? (
                         <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">{copy.newBadge}</span>
                       ) : null}
+                      {item.outlet ? (
+                        <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">{copy.outletBadge}</span>
+                      ) : null}
                     </div>
                     <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
                       <div className="space-y-1 px-3 pb-3 pt-3">
@@ -812,7 +872,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         <PvpLines item={item} channel={channel} mode={ageFilter} copy={copy} localeTag={localeTag} />
                       </div>
                     </button>
-                    {tab === 'catalogo' ? (
+                    {shopTab ? (
                       <div className="flex gap-2 px-3 pb-3">
                         <button
                           type="button"
@@ -879,6 +939,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
                                 <p className="font-semibold leading-snug">{item.name}</p>
                                 <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                                {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
                                 {ageKind(item) === 'adult' ? <div className="mt-1"><AgeChip tone="adult">{copy.adultOnly}</AgeChip></div> : null}
                                 {ageKind(item) === 'youthOnly' ? <div className="mt-1"><AgeChip tone="youth">{copy.youthOnly}</AgeChip></div> : null}
                               </div>
@@ -975,7 +1036,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {tab === 'catalogo' && compare.length > 0 && !compareOpen ? (
+      {shopTab && compare.length > 0 && !compareOpen ? (
         <div className="fixed bottom-5 left-5 z-40 flex max-w-[min(100%-2.5rem,42rem)] items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg">
           <Columns2 className="h-4 w-4 shrink-0 text-neutral-500" />
           <div className="flex min-w-0 items-center gap-2">
@@ -999,7 +1060,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         </div>
       ) : null}
 
-      {tab === 'catalogo' && !compareOpen ? (
+      {shopTab && !compareOpen ? (
         <button
           type="button"
           onClick={() => setCartOpen(true)}
@@ -1040,7 +1101,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
                           <p className="truncate text-sm font-semibold">{item.name}</p>
-                          <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                          <p className="text-[11px] text-neutral-500">{item.colour}{item.outlet ? ` · ${copy.outletBadge}` : ''}</p>
                           <p className="mt-1 font-mono text-[10px] text-neutral-400">{item.adultRef || '—'}{item.youthRef ? ` · ${item.youthRef}` : ''}</p>
                           <p className="mt-1 text-sm font-semibold tabular-nums">{euro(sellPrice(item, channel, line.fee, 'adult'))}</p>
                         </div>
@@ -1100,6 +1161,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     </p>
                     <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{draft.name || copy.newRef}</h3>
                     <p className="mt-1 text-sm text-neutral-500">{draft.colour}</p>
+                    {draft.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
                   </div>
                   <button type="button" onClick={() => { setOpen(null); setDraft(null); }} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
                     <X className="h-5 w-5" />
@@ -1297,6 +1359,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     </p>
                     <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
                     <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                    {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
                   </div>
                 ))}
               </div>

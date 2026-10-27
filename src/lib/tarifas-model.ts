@@ -66,6 +66,7 @@ export interface TarifaProduct {
   collection: string;
   season: string;
   novelty: TarifaNovelty | '';
+  outlet: boolean;
   stock: TarifaStock;
   b2c: TarifaB2C;
   b2b: TarifaB2B;
@@ -216,6 +217,7 @@ export function emptyProduct(): TarifaProduct {
     collection: '',
     season: '26/27',
     novelty: '',
+    outlet: false,
     stock: emptyStock(),
     b2c,
     b2b: {
@@ -232,6 +234,11 @@ export function emptyProduct(): TarifaProduct {
       discountPct: null,
     },
   };
+}
+
+export function asOutletProduct(item: TarifaProduct): TarifaProduct {
+  const id = item.id.startsWith('ol-') ? item.id : `ol-${item.adultRef || item.youthRef || item.id}`;
+  return { ...item, outlet: true, id };
 }
 
 export function asProduct(value: unknown): TarifaProduct {
@@ -258,6 +265,7 @@ export function asProduct(value: unknown): TarifaProduct {
     collection: String(row.collection || ''),
     season: String(row.season || seed.season),
     novelty: asNovelty(row.novelty),
+    outlet: Boolean(row.outlet),
     stock,
     b2c: { ...seed.b2c, ...(row.b2c || {}) },
     b2b: { ...seed.b2b, ...(row.b2b || {}) },
