@@ -56,7 +56,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Columns2, Download, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Columns2, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -275,6 +275,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null);
   const [draft, setDraft] = useState<TarifaProduct | null>(null);
   const [pack, setPack] = useState<PackLine[]>([]);
+  const [packName, setPackName] = useState('');
+  const [packSeason, setPackSeason] = useState('26/27');
   const [locale, setLocale] = useState<TarifasLocale>('es');
   const [admin, setAdmin] = useState(false);
   const [pin, setPin] = useState('');
@@ -543,8 +545,20 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const downloadPack = async () => {
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(packExportRows(products, pack, channel, copy.packHeaders, localeTag)), 'Pack');
-    XLSX.writeFile(workbook, `Pack_${channel.toUpperCase()}.xlsx`);
+    const table = packExportRows(products, pack, channel, copy.packHeaders, localeTag);
+    const sheet = [
+      [copy.packName, packName.trim() || copy.pack],
+      [copy.fieldSeason, packSeason.trim() || '—'],
+      [copy.tariff, channel.toUpperCase()],
+      [],
+      ...table,
+    ];
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheet), 'Pack');
+    const slug = [packName, packSeason, channel.toUpperCase()]
+      .map((part) => part.trim().replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, ''))
+      .filter(Boolean)
+      .join('_');
+    XLSX.writeFile(workbook, `Pack_${slug || channel.toUpperCase()}.xlsx`);
   };
 
   const importSheets = async (sheets: Record<string, unknown[][]>, outlet = false) => {
@@ -926,8 +940,20 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold">{copy.newBadge}</span>
                       ) : null}
                       {item.outlet ? (
-                        <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">{copy.outletBadge}</span>
+                        <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">{copy.outletBadge}</span>
                       ) : null}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openItem(item);
+                        }}
+                        className="absolute bottom-2 right-2 z-10 inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
+                        aria-label={copy.viewSheet}
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">{copy.viewSheet}</span>
+                      </button>
                     </div>
                     <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
                       <div className="space-y-1 px-3 pb-3 pt-3">
@@ -972,6 +998,26 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </>
         ) : (
           <div className="mx-auto max-w-6xl space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{copy.packName}</span>
+                <input
+                  value={packName}
+                  onChange={(event) => setPackName(event.target.value)}
+                  placeholder={copy.packNameHint}
+                  className="h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{copy.fieldSeason}</span>
+                <input
+                  value={packSeason}
+                  onChange={(event) => setPackSeason(event.target.value)}
+                  placeholder="26/27"
+                  className="h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm outline-none"
+                />
+              </label>
+            </div>
             {pack.length === 0 ? (
               <p className="py-16 text-center text-sm text-neutral-400">
                 {copy.emptyPack}
@@ -1064,7 +1110,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             )}
 
             <div className="rounded-2xl border border-neutral-200 bg-white p-6">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.totalPack} · {channel.toUpperCase()}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                {packName.trim() || copy.totalPack}
+                {packSeason.trim() ? ` · ${packSeason.trim()}` : ''}
+                {' · '}{channel.toUpperCase()}
+              </p>
               <p className="mt-2 font-display text-4xl font-semibold tabular-nums">{euro(totals.sale)}</p>
               <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
                 <div>
@@ -1148,8 +1198,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.pack}</p>
-                <h3 className="font-display text-2xl font-semibold">{copy.cartTitle}</h3>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                  {packSeason.trim() ? `${copy.pack} · ${packSeason.trim()}` : copy.pack}
+                </p>
+                <h3 className="font-display text-2xl font-semibold">{packName.trim() || copy.cartTitle}</h3>
               </div>
               <button type="button" onClick={() => setCartOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
                 <X className="h-5 w-5" />
