@@ -379,13 +379,6 @@ export interface PackLine {
   fee: FeeLevel;
   stamp: number;
   stampInput: string;
-  qty: number;
-}
-
-export function packQty(line: PackLine): number {
-  const n = Number(line.qty);
-  if (!Number.isFinite(n) || n < 1) return 1;
-  return Math.min(99, Math.round(n));
 }
 
 export function fueraPackFee(channel: TarifaChannel): FeeLevel {
@@ -408,29 +401,26 @@ export function packTotals(
   let fuera = 0;
   let cost = 0;
   let hasCost = false;
-  let pieces = 0;
   lines.forEach((line) => {
     const item = byId.get(line.id);
     if (!item) return;
-    const n = packQty(line);
     const price = sellPrice(item, channel, line.fee, 'adult');
     const pvp = rrpPrice(item, channel, 'adult');
     const extra = Number.isFinite(line.stamp) ? line.stamp : 0;
     const unit = lineCost(item, channel, 'adult');
-    pieces += n;
-    if (price != null) club += price * n;
-    stamp += extra * n;
-    if (pvp != null) rrp += pvp * n;
+    if (price != null) club += price;
+    stamp += extra;
+    if (pvp != null) rrp += pvp;
     const out = fueraPackPrice(item, channel);
-    if (out != null) fuera += out * n;
+    if (out != null) fuera += out;
     if (unit != null) {
-      cost += unit * n;
+      cost += unit;
       hasCost = true;
     }
   });
   const sale = Math.round((club + stamp) * 100) / 100;
   return {
-    pieces,
+    pieces: lines.length,
     club: Math.round(club * 100) / 100,
     stamp: Math.round(stamp * 100) / 100,
     sale,
