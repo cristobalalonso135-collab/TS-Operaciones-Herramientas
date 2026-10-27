@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import catalog from '@/data/tarifas-catalog.json';
@@ -94,6 +94,89 @@ function Pill({ active, onClick, children }: { active: boolean; onClick: () => v
     >
       {children}
     </button>
+  );
+}
+
+function toggleItem<T extends string>(list: T[], value: T): T[] {
+  return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
+}
+
+function picked(list: string[], value: string) {
+  return list.length === 0 || list.includes(value);
+}
+
+function keepSelected(list: string[], selected: string[]) {
+  const missing = selected.filter((item) => !list.includes(item));
+  return missing.length ? [...missing, ...list] : list;
+}
+
+function FilterSelect({
+  label,
+  options,
+  selected,
+  onToggle,
+  onClear,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const title = selected.length === 0
+    ? label
+    : selected.length === 1
+      ? (options.find((item) => item.value === selected[0])?.label || selected[0])
+      : `${label} · ${selected.length}`;
+  return (
+    <div ref={root} className={`relative ${open ? 'z-30' : ''}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`h-10 rounded-full border px-3 text-sm ${
+          selected.length ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700'
+        }`}
+      >
+        {title}
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-full z-20 mt-1 max-h-72 min-w-[14rem] overflow-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={onClear}
+            className={`flex w-full px-3 py-1.5 text-left text-sm ${selected.length === 0 ? 'font-semibold text-neutral-900' : 'text-neutral-400'}`}
+          >
+            {label}
+          </button>
+          {options.map((item) => {
+            const on = selected.includes(item.value);
+            return (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => onToggle(item.value)}
+                className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm hover:bg-neutral-50"
+              >
+                <span>{item.label}</span>
+                <span className={`inline-flex h-4 w-4 items-center justify-center rounded border ${on ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300'}`}>
+                  {on ? <span className="h-1.5 w-1.5 rounded-sm bg-white" /> : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -203,14 +286,14 @@ function PvpLines({
 }: {
   item: TarifaProduct;
   channel: TarifaChannel;
-  mode: '' | TarifaAgeKind;
+  mode: TarifaAgeKind[];
   copy: TarifasCopy;
   localeTag: string;
 }) {
   const adult = rrpPrice(item, channel, 'adult');
   const youth = rrpPrice(item, channel, 'youth');
-  const showAdult = mode !== 'youthOnly';
-  const showYouth = hasYouth(item) && mode !== 'adult';
+  const showAdult = mode.length === 0 || mode.some((item) => item !== 'youthOnly');
+  const showYouth = hasYouth(item) && (mode.length === 0 || mode.some((item) => item !== 'adult'));
   if (!showYouth) {
     return <p className="text-[11px] tabular-nums text-neutral-400">PVP {formatEuro(adult, localeTag)}</p>;
   }
@@ -320,14 +403,14 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<TarifasTab>('catalogo');
   const [fee, setFee] = useState<FeeLevel>(1);
   const [query, setQuery] = useState('');
-  const [brand, setBrand] = useState('');
-  const [type, setType] = useState('');
-  const [colour, setColour] = useState('');
-  const [sport, setSport] = useState<TarifaSport | ''>('');
-  const [gender, setGender] = useState<TarifaGender | ''>('');
-  const [kind, setKind] = useState<TarifaKind | ''>('');
-  const [novelty, setNovelty] = useState<TarifaNovelty | ''>('');
-  const [ageFilter, setAgeFilter] = useState<'' | TarifaAgeKind>('');
+  const [brands, setBrands] = useState<string[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
+  const [colours, setColours] = useState<string[]>([]);
+  const [sports, setSports] = useState<TarifaSport[]>([]);
+  const [genders, setGenders] = useState<TarifaGender[]>([]);
+  const [kinds, setKinds] = useState<TarifaKind[]>([]);
+  const [novelties, setNovelties] = useState<TarifaNovelty[]>([]);
+  const [ages, setAges] = useState<TarifaAgeKind[]>([]);
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
   const [openAge, setOpenAge] = useState<TarifaAge>('adult');
@@ -408,7 +491,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const channel: TarifaChannel = entry === 'b2b' ? 'b2b' : 'b2c';
   const inOutlet = entry === 'outlet';
   const fees = channelFees(channel);
-  const filtersOn = Boolean(query || brand || type || colour || sport || gender || kind || novelty || ageFilter);
+  const filtersOn = Boolean(query || brands.length || types.length || colours.length || sports.length || genders.length || kinds.length || novelties.length || ages.length);
 
   const listing = useMemo(
     () => products.filter((item) => (inOutlet ? item.outlet : !item.outlet)),
@@ -418,14 +501,14 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const facets = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('es');
     const pass = (item: TarifaProduct, skip: string) => {
-      if (skip !== 'brand' && brand && item.brand !== brand) return false;
-      if (skip !== 'type' && type && item.productType !== type) return false;
-      if (skip !== 'colour' && colour && item.colour !== colour) return false;
-      if (skip !== 'sport' && sport && item.sport !== sport) return false;
-      if (skip !== 'gender' && gender && item.gender !== gender) return false;
-      if (skip !== 'kind' && kind && kindOf(item) !== kind) return false;
-      if (skip !== 'novelty' && novelty && item.novelty !== novelty) return false;
-      if (skip !== 'age' && ageFilter && ageKind(item) !== ageFilter) return false;
+      if (skip !== 'brand' && !picked(brands, item.brand)) return false;
+      if (skip !== 'type' && !picked(types, item.productType)) return false;
+      if (skip !== 'colour' && !picked(colours, item.colour)) return false;
+      if (skip !== 'sport' && !picked(sports, item.sport)) return false;
+      if (skip !== 'gender' && !picked(genders, item.gender)) return false;
+      if (skip !== 'kind' && !picked(kinds, kindOf(item))) return false;
+      if (skip !== 'novelty' && !picked(novelties, item.novelty)) return false;
+      if (skip !== 'age' && !picked(ages, ageKind(item))) return false;
       if (skip !== 'query' && q) {
         const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
@@ -433,50 +516,49 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       return true;
     };
     const pool = (skip: string) => listing.filter((item) => pass(item, skip));
-    const keep = (list: string[], current: string) => (current && !list.includes(current) ? [current, ...list] : list);
     return {
-      brands: keep(uniqueSorted(pool('brand'), 'brand'), brand),
-      types: keep(uniqueSorted(pool('type'), 'productType'), type),
-      colours: keep(uniqueSorted(pool('colour'), 'colour'), colour),
-      sports: keep(
+      brands: keepSelected(uniqueSorted(pool('brand'), 'brand'), brands),
+      types: keepSelected(uniqueSorted(pool('type'), 'productType'), types),
+      colours: keepSelected(uniqueSorted(pool('colour'), 'colour'), colours),
+      sports: keepSelected(
         SPORTS.filter((item) => pool('sport').some((row) => row.sport === item)),
-        sport,
+        sports,
       ) as TarifaSport[],
-      genders: keep(
+      genders: keepSelected(
         GENDERS.filter((item) => pool('gender').some((row) => row.gender === item)),
-        gender,
+        genders,
       ) as TarifaGender[],
-      kinds: KINDS.filter((item) => item === kind || pool('kind').some((row) => kindOf(row) === item)),
-      novelties: NOVELTIES.filter((item) => item === novelty || pool('novelty').some((row) => row.novelty === item)),
+      kinds: KINDS.filter((item) => kinds.includes(item) || pool('kind').some((row) => kindOf(row) === item)),
+      novelties: NOVELTIES.filter((item) => novelties.includes(item) || pool('novelty').some((row) => row.novelty === item)),
       ages: (['both', 'adult', 'youthOnly'] as TarifaAgeKind[]).filter(
-        (item) => item === ageFilter || pool('age').some((row) => ageKind(row) === item),
+        (item) => ages.includes(item) || pool('age').some((row) => ageKind(row) === item),
       ),
     };
-  }, [ageFilter, brand, colour, gender, kind, listing, novelty, query, sport, type]);
+  }, [ages, brands, colours, genders, kinds, listing, novelties, query, sports, types]);
 
   const clearFilters = () => {
     setQuery('');
-    setBrand('');
-    setType('');
-    setColour('');
-    setSport('');
-    setGender('');
-    setKind('');
-    setNovelty('');
-    setAgeFilter('');
+    setBrands([]);
+    setTypes([]);
+    setColours([]);
+    setSports([]);
+    setGenders([]);
+    setKinds([]);
+    setNovelties([]);
+    setAges([]);
   };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('es');
     const rows = listing.filter((item) => {
-      if (brand && item.brand !== brand) return false;
-      if (type && item.productType !== type) return false;
-      if (colour && item.colour !== colour) return false;
-      if (sport && item.sport !== sport) return false;
-      if (gender && item.gender !== gender) return false;
-      if (kind && kindOf(item) !== kind) return false;
-      if (novelty && item.novelty !== novelty) return false;
-      if (ageFilter && ageKind(item) !== ageFilter) return false;
+      if (!picked(brands, item.brand)) return false;
+      if (!picked(types, item.productType)) return false;
+      if (!picked(colours, item.colour)) return false;
+      if (!picked(sports, item.sport)) return false;
+      if (!picked(genders, item.gender)) return false;
+      if (!picked(kinds, kindOf(item))) return false;
+      if (!picked(novelties, item.novelty)) return false;
+      if (!picked(ages, ageKind(item))) return false;
       if (q) {
         const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
@@ -489,7 +571,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (sort === 'pvp') return (rrpPrice(a, channel) ?? 0) - (rrpPrice(b, channel) ?? 0);
       return a.name.localeCompare(b.name, 'es') || a.colour.localeCompare(b.colour, 'es');
     });
-  }, [ageFilter, brand, channel, colour, fee, gender, kind, listing, novelty, query, sort, sport, type]);
+  }, [ages, brands, channel, colours, fee, genders, kinds, listing, novelties, query, sort, sports, types]);
 
   const totals = useMemo(
     () => (channel ? packTotals(products, pack, channel) : { pieces: 0, club: 0, stamp: 0, sale: 0, rrp: 0, fuera: 0, margin: null }),
@@ -663,7 +745,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   const openItem = (item: TarifaProduct) => {
     setOpen(item);
-    setOpenAge(ageKind(item) === 'youthOnly' || ageFilter === 'youthOnly' ? 'youth' : 'adult');
+    setOpenAge(ageKind(item) === 'youthOnly' || (ages.length === 1 && ages[0] === 'youthOnly') ? 'youth' : 'adult');
     setDraft(asProduct(item));
   };
 
@@ -979,22 +1061,34 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   className="h-10 w-full rounded-full border border-neutral-200 bg-white py-0 pl-9 pr-4 text-sm outline-none"
                 />
               </label>
-              <select value={sport} onChange={(e) => setSport(e.target.value as TarifaSport | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">{copy.sport}</option>
-                {facets.sports.map((item) => <option key={item} value={item}>{copy.sports[item as TarifaSport] || item}</option>)}
-              </select>
-              <select value={gender} onChange={(e) => setGender(e.target.value as TarifaGender | '')} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">{copy.gender}</option>
-                {facets.genders.map((item) => <option key={item} value={item}>{copy.genders[item]}</option>)}
-              </select>
-              <select value={type} onChange={(e) => { setType(e.target.value); setColour(''); }} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">{copy.type}</option>
-                {facets.types.map((item) => <option key={item} value={item}>{labelProductType(locale, item)}</option>)}
-              </select>
-              <select value={colour} onChange={(e) => setColour(e.target.value)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
-                <option value="">{copy.colour}</option>
-                {facets.colours.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
+              <FilterSelect
+                label={copy.sport}
+                options={facets.sports.map((item) => ({ value: item, label: copy.sports[item as TarifaSport] || item }))}
+                selected={sports}
+                onToggle={(value) => setSports(toggleItem(sports, value as TarifaSport))}
+                onClear={() => setSports([])}
+              />
+              <FilterSelect
+                label={copy.gender}
+                options={facets.genders.map((item) => ({ value: item, label: copy.genders[item] }))}
+                selected={genders}
+                onToggle={(value) => setGenders(toggleItem(genders, value as TarifaGender))}
+                onClear={() => setGenders([])}
+              />
+              <FilterSelect
+                label={copy.type}
+                options={facets.types.map((item) => ({ value: item, label: labelProductType(locale, item) }))}
+                selected={types}
+                onToggle={(value) => setTypes(toggleItem(types, value))}
+                onClear={() => setTypes([])}
+              />
+              <FilterSelect
+                label={copy.colour}
+                options={facets.colours.map((item) => ({ value: item, label: item }))}
+                selected={colours}
+                onToggle={(value) => setColours(toggleItem(colours, value))}
+                onClear={() => setColours([])}
+              />
               <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className="h-10 rounded-full border border-neutral-200 bg-white px-3 text-sm">
                 <option value="nombre">{copy.sortName}</option>
                 <option value="marca">{copy.sortBrand}</option>
@@ -1010,41 +1104,41 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
             {facets.kinds.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
-                <Pill active={!kind} onClick={() => setKind('')}>{copy.all}</Pill>
+                <Pill active={!kinds.length} onClick={() => setKinds([])}>{copy.all}</Pill>
                 {facets.kinds.map((item) => (
-                  <Pill key={item} active={kind === item} onClick={() => setKind(kind === item ? '' : item)}>{copy.kinds[item]}</Pill>
+                  <Pill key={item} active={kinds.includes(item)} onClick={() => setKinds(toggleItem(kinds, item))}>{copy.kinds[item]}</Pill>
                 ))}
               </div>
             ) : null}
             {facets.novelties.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
-                <Pill active={!novelty} onClick={() => setNovelty('')}>{copy.all}</Pill>
-                {facets.novelties.includes('Nueva') || novelty === 'Nueva' ? (
-                  <Pill active={novelty === 'Nueva'} onClick={() => setNovelty(novelty === 'Nueva' ? '' : 'Nueva')}>{copy.newCollection}</Pill>
+                <Pill active={!novelties.length} onClick={() => setNovelties([])}>{copy.all}</Pill>
+                {facets.novelties.includes('Nueva') || novelties.includes('Nueva') ? (
+                  <Pill active={novelties.includes('Nueva')} onClick={() => setNovelties(toggleItem(novelties, 'Nueva'))}>{copy.newCollection}</Pill>
                 ) : null}
-                {facets.novelties.includes('Año pasado') || novelty === 'Año pasado' ? (
-                  <Pill active={novelty === 'Año pasado'} onClick={() => setNovelty(novelty === 'Año pasado' ? '' : 'Año pasado')}>{copy.lastSeason}</Pill>
+                {facets.novelties.includes('Año pasado') || novelties.includes('Año pasado') ? (
+                  <Pill active={novelties.includes('Año pasado')} onClick={() => setNovelties(toggleItem(novelties, 'Año pasado'))}>{copy.lastSeason}</Pill>
                 ) : null}
               </div>
             ) : null}
             {facets.ages.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {facets.ages.includes('both') ? (
-                  <Pill active={ageFilter === 'both'} onClick={() => setAgeFilter(ageFilter === 'both' ? '' : 'both')}>{copy.adultAndYouth}</Pill>
+                  <Pill active={ages.includes('both')} onClick={() => setAges(toggleItem(ages, 'both'))}>{copy.adultAndYouth}</Pill>
                 ) : null}
                 {facets.ages.includes('adult') ? (
-                  <Pill active={ageFilter === 'adult'} onClick={() => setAgeFilter(ageFilter === 'adult' ? '' : 'adult')}>{copy.adultOnly}</Pill>
+                  <Pill active={ages.includes('adult')} onClick={() => setAges(toggleItem(ages, 'adult'))}>{copy.adultOnly}</Pill>
                 ) : null}
                 {facets.ages.includes('youthOnly') ? (
-                  <Pill active={ageFilter === 'youthOnly'} onClick={() => setAgeFilter(ageFilter === 'youthOnly' ? '' : 'youthOnly')}>{copy.youthOnly}</Pill>
+                  <Pill active={ages.includes('youthOnly')} onClick={() => setAges(toggleItem(ages, 'youthOnly'))}>{copy.youthOnly}</Pill>
                 ) : null}
               </div>
             ) : null}
 
             <div className="flex flex-wrap gap-1.5">
-              <Pill active={!brand} onClick={() => setBrand('')}>{copy.brands}</Pill>
+              <Pill active={!brands.length} onClick={() => setBrands([])}>{copy.brands}</Pill>
               {facets.brands.map((item) => (
-                <Pill key={item} active={brand === item} onClick={() => setBrand(item === brand ? '' : item)}>{item}</Pill>
+                <Pill key={item} active={brands.includes(item)} onClick={() => setBrands(toggleItem(brands, item))}>{item}</Pill>
               ))}
             </div>
 
@@ -1109,7 +1203,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{item.name}</p>
                         <p className="truncate text-[11px] text-neutral-500">{item.colour}</p>
                         <p className="pt-1 font-display text-lg font-semibold tabular-nums">{euro(sellPrice(item, channel, fee, 'adult'))}</p>
-                        <PvpLines item={item} channel={channel} mode={ageFilter} copy={copy} localeTag={localeTag} />
+                        <PvpLines item={item} channel={channel} mode={ages} copy={copy} localeTag={localeTag} />
                       </div>
                     </button>
                     {shopTab ? (
