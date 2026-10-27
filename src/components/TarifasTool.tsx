@@ -56,7 +56,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Columns2, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Columns2, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -461,6 +461,18 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       }
       if (current.length >= COMPARE_MAX) return current;
       return [...current, id];
+    });
+  };
+
+  const moveCompare = (id: string, dir: -1 | 1) => {
+    setCompare((current) => {
+      const index = current.indexOf(id);
+      const next = index + dir;
+      if (index < 0 || next < 0 || next >= current.length) return current;
+      const ordered = [...current];
+      const [item] = ordered.splice(index, 1);
+      ordered.splice(next, 0, item);
+      return ordered;
     });
   };
 
@@ -912,7 +924,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {filtered.map((item) => (
                   <article key={item.id} className={`group overflow-hidden rounded-2xl border bg-white ${compare.includes(item.id) ? 'border-neutral-900' : 'border-neutral-200'}`}>
-                    <div className="relative aspect-square bg-neutral-50">
+                    <div className="relative z-[1] aspect-square bg-neutral-50">
                       <TarifasPhoto
                         key={item.image || item.id}
                         src={item.image}
@@ -948,7 +960,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           event.stopPropagation();
                           openItem(item);
                         }}
-                        className="absolute bottom-2 right-2 z-10 inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
+                        className="absolute -bottom-3 right-2 z-10 inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
                         aria-label={copy.viewSheet}
                       >
                         <Info className="h-3.5 w-3.5" />
@@ -956,7 +968,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       </button>
                     </div>
                     <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
-                      <div className="space-y-1 px-3 pb-3 pt-3">
+                      <div className="space-y-1 px-3 pb-3 pt-5">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                           {item.brand} · {labelProductType(locale, item.productType)}
                         </p>
@@ -1473,8 +1485,29 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 style={{ gridTemplateColumns: `8rem repeat(${compareItems.length}, minmax(0, 1fr))` }}
               >
                 <div />
-                {compareItems.map((item) => (
+                {compareItems.map((item, index) => (
                   <div key={item.id} className="min-w-0">
+                    <div className="mb-2 flex items-center justify-between">
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={() => moveCompare(item.id, -1)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                        aria-label={copy.compareForward}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{index + 1}</span>
+                      <button
+                        type="button"
+                        disabled={index === compareItems.length - 1}
+                        onClick={() => moveCompare(item.id, 1)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                        aria-label={copy.compareBack}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
                     <div className="aspect-square overflow-hidden rounded-xl bg-neutral-50">
                       <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-3" onOpen={item.image ? openPhoto : undefined} />
                     </div>
