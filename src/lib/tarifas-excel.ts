@@ -3,6 +3,7 @@ import {
   formatEuro,
   formatPct,
   fueraPackPrice,
+  lineAge,
   lineMargin,
   rrpPrice,
   sellPrice,
@@ -322,18 +323,19 @@ export function packExportRows(
   const body = lines.map((line, index) => {
     const item = byId.get(line.id);
     if (!item) return [index + 1, '', '', '', '', '', '', line.stampInput || line.stamp || 0, '', '', ''];
+    const age = lineAge(line);
     return [
       index + 1,
-      item.adultRef,
-      item.youthRef || '',
+      age === 'adult' ? item.adultRef : '',
+      age === 'youth' ? item.youthRef || '' : '',
       item.productType,
       item.name,
       item.colour,
-      formatEuro(sellPrice(item, channel, line.fee, 'adult'), locale),
+      formatEuro(sellPrice(item, channel, line.fee, age), locale),
       formatEuro(line.stamp || 0, locale),
       formatEuro(fueraPackPrice(item, channel), locale),
-      formatEuro(rrpPrice(item, channel, 'adult'), locale),
-      formatPct(lineMargin(item, channel, line.fee, 'adult'), locale),
+      formatEuro(rrpPrice(item, channel, age), locale),
+      formatPct(lineMargin(item, channel, line.fee, age), locale),
     ];
   });
   return [header, ...body];

@@ -389,8 +389,19 @@ export function uniqueSorted(
 export interface PackLine {
   id: string;
   fee: FeeLevel;
+  age: TarifaAge;
   stamp: number;
   stampInput: string;
+}
+
+export function lineAge(line: PackLine): TarifaAge {
+  return line.age === 'youth' ? 'youth' : 'adult';
+}
+
+export function packAgeOf(item: TarifaProduct, age?: TarifaAge): TarifaAge {
+  if (age === 'youth' && hasYouth(item)) return 'youth';
+  if (hasAdult(item)) return 'adult';
+  return hasYouth(item) ? 'youth' : 'adult';
 }
 
 export function fueraPackFee(channel: TarifaChannel): FeeLevel {
@@ -416,10 +427,11 @@ export function packTotals(
   lines.forEach((line) => {
     const item = byId.get(line.id);
     if (!item) return;
-    const price = sellPrice(item, channel, line.fee, 'adult');
-    const pvp = rrpPrice(item, channel, 'adult');
+    const age = lineAge(line);
+    const price = sellPrice(item, channel, line.fee, age);
+    const pvp = rrpPrice(item, channel, age);
     const extra = Number.isFinite(line.stamp) ? line.stamp : 0;
-    const unit = lineCost(item, channel, 'adult');
+    const unit = lineCost(item, channel, age);
     if (price != null) club += price;
     stamp += extra;
     if (pvp != null) rrp += pvp;

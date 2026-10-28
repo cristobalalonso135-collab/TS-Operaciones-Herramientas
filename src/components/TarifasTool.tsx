@@ -10,6 +10,7 @@ import {
   KINDS,
   NOVELTIES,
   SPORTS,
+  activeRef,
   ageKind,
   asOutletProduct,
   asProduct,
@@ -20,11 +21,14 @@ import {
   formatPct,
   formatRed,
   fueraPackPrice,
+  hasAdult,
   hasYouth,
   isExpired,
   kindOf,
+  lineAge,
   lineMargin,
   newId,
+  packAgeOf,
   packTotals,
   redYear,
   rrpPrice,
@@ -32,6 +36,7 @@ import {
   uniqueSorted,
   type FeeLevel,
   type PackLine,
+  type TarifaAge,
   type TarifaAgeKind,
   type TarifaChannel,
   type TarifaGender,
@@ -134,6 +139,112 @@ function RankBadge({ tone, copy }: { tone: 'low' | 'high' | null; copy: TarifasC
     }`}>
       {tone === 'low' ? copy.cheapest : copy.dearest}
     </span>
+  );
+}
+
+function toneClass(tone: 'low' | 'high' | null | undefined, differs = false) {
+  if (tone === 'low') return 'bg-emerald-50 font-semibold text-emerald-950';
+  if (tone === 'high') return 'bg-rose-50 font-semibold text-rose-950';
+  if (differs) return 'bg-amber-50 font-semibold';
+  return '';
+}
+
+function CompareSheet({
+  count,
+  heads,
+  rows,
+}: {
+  count: number;
+  heads: ReactNode[];
+  rows: { section?: string; label: string; values: ReactNode[]; tones?: Array<'low' | 'high' | null>; differs?: boolean }[];
+}) {
+  return (
+    <div
+      className="grid"
+      style={{ gridTemplateColumns: `7.5rem repeat(${count}, minmax(0, 1fr))` }}
+    >
+      <div className="px-3 py-4" />
+      {heads.map((head, index) => (
+        <div key={index} className="min-w-0 px-2 py-4">{head}</div>
+      ))}
+      {rows.map((row) => (
+        <Fragment key={`${row.section || ''}-${row.label}`}>
+          {row.section ? (
+            <div className="col-span-full bg-neutral-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+              {row.section}
+            </div>
+          ) : null}
+          <div className="border-t border-neutral-100 px-3 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</div>
+          {row.values.map((value, index) => (
+            <div
+              key={`${row.label}-${index}`}
+              className={`min-w-0 border-t border-neutral-100 px-2 py-2 text-sm whitespace-pre-line ${toneClass(row.tones?.[index], row.differs)}`}
+            >
+              {value}
+            </div>
+          ))}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function AgeFeePicker({
+  item,
+  age,
+  fee,
+  fees,
+  copy,
+  onAge,
+  onFee,
+}: {
+  item: TarifaProduct;
+  age: TarifaAge;
+  fee: FeeLevel;
+  fees: FeeLevel[];
+  copy: TarifasCopy;
+  onAge: (age: TarifaAge) => void;
+  onFee: (fee: FeeLevel) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      {hasAdult(item) || hasYouth(item) ? (
+        <div className="flex flex-wrap gap-1">
+          {hasAdult(item) ? (
+            <button
+              type="button"
+              onClick={() => onAge('adult')}
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${age === 'adult' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+            >
+              {copy.adult}
+            </button>
+          ) : null}
+          {hasYouth(item) ? (
+            <button
+              type="button"
+              onClick={() => onAge('youth')}
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${age === 'youth' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+            >
+              {copy.youth}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-1">
+        {fees.map((level) => (
+          <button
+            key={level}
+            type="button"
+            onClick={() => onFee(level)}
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+              fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+            }`}
+          >
+            {level}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -462,7 +573,8 @@ function packCompareRows(
         const item = byId.get(line.id);
         if (!item) return '—';
         const extra = line.stamp ? ` + ${euro(line.stamp)}` : '';
-        return `${item.name}${item.colour ? ` · ${item.colour}` : ''} · Fee ${line.fee} · ${euro(sellPrice(item, channel, line.fee, 'adult'))}${extra}`;
+        const age = lineAge(line);
+        return `${item.name}${item.colour ? ` · ${item.colour}` : ''} · ${age === 'youth' ? copy.youth : copy.adult} · Fee ${line.fee} · ${euro(sellPrice(item, channel, line.fee, age))}${extra}`;
       }).join('\n');
     }),
   }));
@@ -514,6 +626,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [totpReady, setTotpReady] = useState(false);
   const [totpUri, setTotpUri] = useState<string | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const [sheetAge, setSheetAge] = useState<TarifaAge>('adult');
   const [reservas, setReservas] = useState<ReservasCatalog>(emptyReservasCatalog());
   const [reservasBackend, setReservasBackend] = useState<ReservasBackend>('local');
   const [reservasSql, setReservasSql] = useState<string>();
@@ -707,12 +820,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const addToPack = (item: TarifaProduct, chosenFee = fee) => {
+  const addToPack = (item: TarifaProduct, chosenFee = fee, age?: TarifaAge) => {
+    const chosen = packAgeOf(item, age);
     setPack((current) => {
-      if (current.some((line) => line.id === item.id && line.fee === chosenFee)) return current;
-      return [...current, { id: item.id, fee: chosenFee, stamp: 0, stampInput: '' }];
+      if (current.some((line) => line.id === item.id && line.fee === chosenFee && lineAge(line) === chosen)) return current;
+      return [...current, { id: item.id, fee: chosenFee, age: chosen, stamp: 0, stampInput: '' }];
     });
     setCartOpen(true);
+  };
+
+  const patchPackLine = (index: number, patch: Partial<PackLine>) => {
+    setPack((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
 
   const toggleCompare = (id: string) => {
@@ -839,6 +957,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const openItem = (item: TarifaProduct) => {
     setOpen(item);
     setDraft(asProduct(item));
+    setSheetAge(packAgeOf(item));
   };
 
   const saveDraft = async () => {
@@ -1429,9 +1548,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 {pack.map((line, index) => {
                   const item = byId.get(line.id);
                   if (!item) return null;
-                  const price = sellPrice(item, channel, line.fee, 'adult');
+                  const age = lineAge(line);
+                  const price = sellPrice(item, channel, line.fee, age);
                   return (
-                    <article key={`${line.id}-${line.fee}-${index}`} className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                    <article key={`${line.id}-${line.fee}-${age}-${index}`} className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white">
                       <div className="relative aspect-square bg-neutral-50">
                         <TarifasPhoto
                           src={item.image}
@@ -1459,24 +1579,23 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           </p>
                           <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
                           <p className="text-[11px] text-neutral-500">{item.colour}</p>
-                          <p className="pt-1 font-display text-2xl font-semibold tabular-nums">{euro(price)}</p>
+                          <p className="font-mono text-[10px] text-neutral-400">{activeRef(item, age) || '—'}</p>
+                          <p className="pt-1 font-display text-2xl font-semibold tabular-nums">
+                            {euro(price)}
+                            <span className="ml-1 text-[10px] font-medium text-neutral-400">{copy.vatIncluded}</span>
+                          </p>
                         </div>
                       </button>
-                      <div className="flex items-center justify-between gap-2 px-4 pb-3">
-                        <div className="flex flex-wrap gap-1">
-                          {fees.map((level) => (
-                            <button
-                              key={level}
-                              type="button"
-                              onClick={() => setPack((current) => current.map((row, i) => (i === index ? { ...row, fee: level } : row)))}
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                line.fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
-                              }`}
-                            >
-                              {level}
-                            </button>
-                          ))}
-                        </div>
+                      <div className="flex items-start justify-between gap-2 px-4 pb-3">
+                        <AgeFeePicker
+                          item={item}
+                          age={age}
+                          fee={line.fee}
+                          fees={fees}
+                          copy={copy}
+                          onAge={(next) => patchPackLine(index, { age: next })}
+                          onFee={(next) => patchPackLine(index, { fee: next })}
+                        />
                         <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -1521,9 +1640,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     {pack.map((line, index) => {
                       const item = byId.get(line.id);
                       if (!item) return null;
-                      const price = sellPrice(item, channel, line.fee, 'adult');
+                      const age = lineAge(line);
+                      const price = sellPrice(item, channel, line.fee, age);
                       return (
-                        <tr key={`${line.id}-${line.fee}`} className="bg-white align-top">
+                        <tr key={`${line.id}-${line.fee}-${age}`} className="bg-white align-top">
                           <td className="px-3 py-3 tabular-nums text-neutral-400">{index + 1}</td>
                           <td className="px-3 py-3">
                             <div className="flex gap-3">
@@ -1537,30 +1657,26 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                                 </button>
                                 <p className="text-[11px] text-neutral-500">{item.colour}</p>
                                 {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
-                                {ageKind(item) === 'adult' ? <div className="mt-1"><AgeChip tone="adult">{copy.adultOnly}</AgeChip></div> : null}
-                                {ageKind(item) === 'youthOnly' ? <div className="mt-1"><AgeChip tone="youth">{copy.youthOnly}</AgeChip></div> : null}
                               </div>
                             </div>
                           </td>
-                          <td className="px-3 py-3 font-mono text-[11px]">{item.adultRef || '—'}</td>
-                          <td className="px-3 py-3 font-mono text-[11px]">{item.youthRef || '—'}</td>
+                          <td className={`px-3 py-3 font-mono text-[11px] ${age === 'adult' ? 'font-semibold text-neutral-900' : 'text-neutral-300'}`}>{item.adultRef || '—'}</td>
+                          <td className={`px-3 py-3 font-mono text-[11px] ${age === 'youth' ? 'font-semibold text-neutral-900' : 'text-neutral-300'}`}>{item.youthRef || '—'}</td>
                           <td className="px-3 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              {fees.map((level) => (
-                                <button
-                                  key={level}
-                                  type="button"
-                                  onClick={() => setPack((current) => current.map((row, i) => (i === index ? { ...row, fee: level } : row)))}
-                                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                                    line.fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
-                                  }`}
-                                >
-                                  {level}
-                                </button>
-                              ))}
-                            </div>
+                            <AgeFeePicker
+                              item={item}
+                              age={age}
+                              fee={line.fee}
+                              fees={fees}
+                              copy={copy}
+                              onAge={(next) => patchPackLine(index, { age: next })}
+                              onFee={(next) => patchPackLine(index, { fee: next })}
+                            />
                           </td>
-                          <td className="px-3 py-3 text-right font-semibold tabular-nums">{euro(price)}</td>
+                          <td className="px-3 py-3 text-right font-semibold tabular-nums">
+                            {euro(price)}
+                            <span className="mt-0.5 block text-[10px] font-medium text-neutral-400">{copy.vatIncluded}</span>
+                          </td>
                           <td className="px-3 py-3 text-right">
                             <input
                               inputMode="decimal"
@@ -1596,7 +1712,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 {packSeason.trim() ? ` · ${packSeason.trim()}` : ''}
                 {' · '}{channel.toUpperCase()}
               </p>
-              <p className="mt-2 font-display text-4xl font-semibold tabular-nums">{euro(totals.sale)}</p>
+              <p className="mt-2 font-display text-4xl font-semibold tabular-nums">
+                {euro(totals.sale)}
+                <span className="ml-2 text-sm font-medium text-neutral-400">{copy.vatIncluded}</span>
+              </p>
               <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
                 <div>
                   <p className="text-[11px] text-neutral-400">{copy.clubPrice}</p>
@@ -1722,8 +1841,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   {pack.map((line, index) => {
                     const item = byId.get(line.id);
                     if (!item) return null;
+                    const age = lineAge(line);
                     return (
-                      <li key={`${line.id}-${line.fee}`} className="flex gap-3 px-5 py-3">
+                      <li key={`${line.id}-${line.fee}-${age}`} className="flex gap-3 px-5 py-3">
                         <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-50">
                           <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-1" onOpen={item.image ? openPhoto : undefined} />
                         </div>
@@ -1731,8 +1851,22 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
                           <p className="truncate text-sm font-semibold">{item.name}</p>
                           <p className="text-[11px] text-neutral-500">{item.colour}{item.outlet ? ` · ${copy.outletBadge}` : ''}</p>
-                          <p className="mt-1 font-mono text-[10px] text-neutral-400">{item.adultRef || '—'}{item.youthRef ? ` · ${item.youthRef}` : ''}</p>
-                          <p className="mt-1 text-sm font-semibold tabular-nums">{euro(sellPrice(item, channel, line.fee, 'adult'))}</p>
+                          <p className="mt-1 font-mono text-[10px] text-neutral-500">{activeRef(item, age) || '—'}</p>
+                          <div className="mt-2">
+                            <AgeFeePicker
+                              item={item}
+                              age={age}
+                              fee={line.fee}
+                              fees={fees}
+                              copy={copy}
+                              onAge={(next) => patchPackLine(index, { age: next })}
+                              onFee={(next) => patchPackLine(index, { fee: next })}
+                            />
+                          </div>
+                          <p className="mt-2 text-sm font-semibold tabular-nums">
+                            {euro(sellPrice(item, channel, line.fee, age))}
+                            <span className="ml-1 text-[10px] font-medium text-neutral-400">{copy.vatIncluded}</span>
+                          </p>
                         </div>
                         <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="self-start p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
                           <Trash2 className="h-4 w-4" />
@@ -1744,7 +1878,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               )}
             </div>
             <div className="border-t border-neutral-100 px-5 py-4">
-              <p className="font-display text-3xl font-semibold tabular-nums">{euro(totals.sale)}</p>
+              <p className="font-display text-3xl font-semibold tabular-nums">
+                {euro(totals.sale)}
+                <span className="ml-2 text-sm font-medium text-neutral-400">{copy.vatIncluded}</span>
+              </p>
               <p className="mt-1 text-[11px] text-neutral-400">{copy.outsidePack} {euro(totals.fuera)} · {copy.margin} {pct(totals.margin)}</p>
               <div className="mt-3 flex gap-2">
                 <button
@@ -1875,25 +2012,46 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         </div>
                       </div>
                     ) : null}
-                    <div className="mt-6 flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleCompare(draft.id)}
-                        className={`inline-flex h-11 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold ${
-                          compare.includes(draft.id) ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 text-neutral-700'
-                        }`}
-                      >
-                        <Columns2 className="h-4 w-4" /> {compare.includes(draft.id) ? copy.compareOn : copy.compare}
-                      </button>
+                    <div className="mt-6 space-y-3">
                       {!inOutlet ? (
+                        <div>
+                          <p className="mb-1.5 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{copy.addToPack}</p>
+                          <AgeFeePicker
+                            item={draft}
+                            age={sheetAge}
+                            fee={fee}
+                            fees={fees}
+                            copy={copy}
+                            onAge={setSheetAge}
+                            onFee={setFee}
+                          />
+                          <p className="mt-2 font-mono text-[11px] text-neutral-500">{activeRef(draft, sheetAge) || '—'}</p>
+                          <p className="mt-1 text-sm font-semibold tabular-nums">
+                            {euro(sellPrice(draft, channel, fee, sheetAge))}
+                            <span className="ml-1 text-[10px] font-medium text-neutral-400">{copy.vatIncluded}</span>
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => { addToPack(draft, fee); setOpen(null); setDraft(null); }}
-                          className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                          onClick={() => toggleCompare(draft.id)}
+                          className={`inline-flex h-11 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold ${
+                            compare.includes(draft.id) ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 text-neutral-700'
+                          }`}
                         >
-                          <Plus className="h-4 w-4" /> {copy.addToPack}
+                          <Columns2 className="h-4 w-4" /> {compare.includes(draft.id) ? copy.compareOn : copy.compare}
                         </button>
-                      ) : null}
+                        {!inOutlet ? (
+                          <button
+                            type="button"
+                            onClick={() => { addToPack(draft, fee, sheetAge); setOpen(null); setDraft(null); }}
+                            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                          >
+                            <Plus className="h-4 w-4" /> {copy.addToPack}
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </>
                 ) : (
@@ -1993,13 +2151,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="max-h-[80vh] overflow-auto">
-              <div
-                className="grid gap-3 px-6 py-4"
-                style={{ gridTemplateColumns: `8rem repeat(${filledPacks.length}, minmax(0, 1fr))` }}
-              >
-                <div />
-                {filledPacks.map((item, index) => {
+            <div className="max-h-[80vh] overflow-auto px-4">
+              <CompareSheet
+                count={filledPacks.length}
+                heads={filledPacks.map((item, index) => {
                   const photos = item.lines.map((line) => byId.get(line.id)).filter((row): row is TarifaProduct => Boolean(row?.image)).slice(0, 4);
                   const packIndex = packs.findIndex((row) => row.id === item.id);
                   return (
@@ -2037,31 +2192,13 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     </div>
                   );
                 })}
-              </div>
-              <table className="w-full text-sm">
-                <tbody>
-                  {packCompareRows(filledPacks, products, channel, copy, locale, euro, pct).map((row) => {
-                    const differs = row.values.some((value) => value !== row.values[0]);
-                    return (
-                      <Fragment key={`${row.section || ''}-${row.label}`}>
-                        {row.section ? (
-                          <tr className="border-t border-neutral-100">
-                            <td colSpan={filledPacks.length + 1} className="bg-neutral-50 px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                              {row.section}
-                            </td>
-                          </tr>
-                        ) : null}
-                        <tr className="border-t border-neutral-100">
-                          <td className="w-[10rem] px-6 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</td>
-                          {row.values.map((value, index) => (
-                            <td key={`${filledPacks[index].id}-${row.label}`} className={`px-4 py-2 whitespace-pre-line ${differs ? 'bg-amber-50 font-semibold' : ''}`}>{value}</td>
-                          ))}
-                        </tr>
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+                rows={packCompareRows(filledPacks, products, channel, copy, locale, euro, pct).map((row) => ({
+                  section: row.section,
+                  label: row.label,
+                  values: row.values,
+                  differs: row.values.some((value) => value !== row.values[0]),
+                }))}
+              />
             </div>
           </div>
         </div>
@@ -2085,18 +2222,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="max-h-[80vh] overflow-auto">
-              <div
-                className="grid gap-3 px-6 py-4"
-                style={{ gridTemplateColumns: `8rem repeat(${compareItems.length}, minmax(0, 1fr))` }}
-              >
-                <div />
-                {compareItems.map((item, index) => {
+            <div className="max-h-[80vh] overflow-auto px-4">
+              <CompareSheet
+                count={compareItems.length}
+                heads={compareItems.map((item, index) => {
                   const tone = rankTone(compareItems.map((row) => sellPrice(row, channel, fee, 'adult')), index);
                   return (
                     <div
                       key={item.id}
-                      className={`min-w-0 rounded-2xl p-2 ${
+                      className={`h-full min-w-0 rounded-2xl p-2 ${
                         tone === 'low' ? 'bg-emerald-50/70 ring-1 ring-emerald-100' : tone === 'high' ? 'bg-rose-50/70 ring-1 ring-rose-100' : ''
                       }`}
                     >
@@ -2143,47 +2277,14 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     </div>
                   );
                 })}
-              </div>
-              <table className="w-full text-sm">
-                <tbody>
-                  {compareRows(compareItems, channel, fees, copy, euro).map((row) => {
-                    const differs = !row.nums && row.values.some((value) => value !== row.values[0]);
-                    return (
-                      <Fragment key={`${row.section || ''}-${row.label}`}>
-                        {row.section ? (
-                          <tr className="border-t border-neutral-100">
-                            <td colSpan={compareItems.length + 1} className="bg-neutral-50 px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                              {row.section}
-                            </td>
-                          </tr>
-                        ) : null}
-                        <tr className="border-t border-neutral-100">
-                          <td className="w-[10rem] px-6 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</td>
-                          {row.values.map((value, index) => {
-                            const tone = rankTone(row.nums || [], index);
-                            return (
-                              <td
-                                key={compareItems[index].id}
-                                className={`px-4 py-2 ${
-                                  tone === 'low'
-                                    ? 'bg-emerald-50 font-semibold text-emerald-950'
-                                    : tone === 'high'
-                                      ? 'bg-rose-50 font-semibold text-rose-950'
-                                      : differs
-                                        ? 'bg-amber-50 font-semibold'
-                                        : ''
-                                }`}
-                              >
-                                {value}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+                rows={compareRows(compareItems, channel, fees, copy, euro).map((row) => ({
+                  section: row.section,
+                  label: row.label,
+                  values: row.values,
+                  tones: row.nums ? row.nums.map((_, index) => rankTone(row.nums || [], index)) : undefined,
+                  differs: !row.nums && row.values.some((value) => value !== row.values[0]),
+                }))}
+              />
             </div>
           </div>
         </div>
