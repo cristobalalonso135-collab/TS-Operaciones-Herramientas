@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import catalog from '@/data/tarifas-catalog.json';
@@ -149,6 +150,18 @@ function toneClass(tone: 'low' | 'high' | null | undefined, differs = false) {
   return '';
 }
 
+function useCompact(query = '(max-width: 767px)') {
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const apply = () => setCompact(media.matches);
+    apply();
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, [query]);
+  return compact;
+}
+
 function CompareSheet({
   count,
   heads,
@@ -159,32 +172,37 @@ function CompareSheet({
   rows: { section?: string; label: string; values: ReactNode[]; tones?: Array<'low' | 'high' | null>; differs?: boolean }[];
 }) {
   return (
-    <div
-      className="grid"
-      style={{ gridTemplateColumns: `7.5rem repeat(${count}, minmax(0, 1fr))` }}
-    >
-      <div className="px-3 py-4" />
-      {heads.map((head, index) => (
-        <div key={index} className="min-w-0 px-2 py-4">{head}</div>
-      ))}
-      {rows.map((row) => (
-        <Fragment key={`${row.section || ''}-${row.label}`}>
-          {row.section ? (
-            <div className="col-span-full bg-neutral-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              {row.section}
-            </div>
-          ) : null}
-          <div className="border-t border-neutral-100 px-3 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</div>
-          {row.values.map((value, index) => (
-            <div
-              key={`${row.label}-${index}`}
-              className={`min-w-0 border-t border-neutral-100 px-2 py-2 text-sm whitespace-pre-line ${toneClass(row.tones?.[index], row.differs)}`}
-            >
-              {value}
-            </div>
-          ))}
-        </Fragment>
-      ))}
+    <div className="-mx-1 overflow-x-auto overscroll-x-contain">
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: `minmax(4.5rem, 5.5rem) repeat(${count}, minmax(9.5rem, 1fr))`,
+          minWidth: `${4.75 + count * 10}rem`,
+        }}
+      >
+        <div className="sticky left-0 z-[1] bg-white px-3 py-4" />
+        {heads.map((head, index) => (
+          <div key={index} className="min-w-0 px-2 py-4">{head}</div>
+        ))}
+        {rows.map((row) => (
+          <Fragment key={`${row.section || ''}-${row.label}`}>
+            {row.section ? (
+              <div className="col-span-full bg-neutral-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                {row.section}
+              </div>
+            ) : null}
+            <div className="sticky left-0 z-[1] border-t border-neutral-100 bg-white px-2 py-2 text-[10px] uppercase tracking-[0.12em] text-neutral-400 sm:px-3 sm:text-[11px]">{row.label}</div>
+            {row.values.map((value, index) => (
+              <div
+                key={`${row.label}-${index}`}
+                className={`min-w-0 border-t border-neutral-100 px-2 py-2 text-sm whitespace-pre-line ${toneClass(row.tones?.[index], row.differs)}`}
+              >
+                {value}
+              </div>
+            ))}
+          </Fragment>
+        ))}
+      </div>
     </div>
   );
 }
@@ -214,7 +232,7 @@ function AgeFeePicker({
             <button
               type="button"
               onClick={() => onAge('adult')}
-              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${age === 'adult' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+              className={`min-h-8 rounded-full px-2.5 py-1 text-[11px] font-semibold ${age === 'adult' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
             >
               {copy.adult}
             </button>
@@ -223,7 +241,7 @@ function AgeFeePicker({
             <button
               type="button"
               onClick={() => onAge('youth')}
-              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${age === 'youth' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+              className={`min-h-8 rounded-full px-2.5 py-1 text-[11px] font-semibold ${age === 'youth' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
             >
               {copy.youth}
             </button>
@@ -236,7 +254,7 @@ function AgeFeePicker({
             key={level}
             type="button"
             onClick={() => onFee(level)}
-            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+            className={`min-h-8 min-w-8 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
               fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
             }`}
           >
@@ -267,17 +285,31 @@ function FilterSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [needle, setNeedle] = useState('');
+  const [mounted, setMounted] = useState(false);
+  const compact = useCompact();
   const root = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const searchable = options.length > 4;
+  useEffect(() => setMounted(true), []);
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (root.current?.contains(target) || panel.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
+  useEffect(() => {
+    if (!open || !compact) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open, compact]);
   useEffect(() => {
     if (!open) {
       setNeedle('');
@@ -299,6 +331,70 @@ function FilterSelect({
     const have = new Set(selected);
     onSet([...selected, ...visible.map((item) => item.value).filter((value) => !have.has(value))]);
   };
+  const menu = open ? (
+    <div
+      ref={panel}
+      className={compact
+        ? 'fixed inset-x-0 bottom-0 z-[71] flex max-h-[80vh] flex-col overflow-hidden rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-16px_40px_rgba(15,15,15,0.12)]'
+        : 'absolute left-0 top-full z-20 mt-1.5 w-64 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_16px_40px_rgba(15,15,15,0.08)]'}
+    >
+      {compact ? (
+        <div className="flex items-center justify-between px-4 pb-1 pt-3">
+          <p className="text-sm font-semibold">{label}</p>
+          <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      ) : null}
+      {searchable ? (
+        <div className="border-b border-neutral-100 p-2">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+            <input
+              ref={searchRef}
+              value={needle}
+              onChange={(event) => setNeedle(event.target.value)}
+              placeholder={copy.filterSearch}
+              className="h-11 w-full rounded-xl bg-neutral-50 pl-8 pr-3 text-neutral-800 outline-none placeholder:text-neutral-400 sm:h-9"
+            />
+          </label>
+        </div>
+      ) : null}
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <button
+          type="button"
+          onClick={toggleVisible}
+          disabled={visible.length === 0}
+          className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 disabled:opacity-40"
+        >
+          {allVisibleOn ? copy.clearSelection : copy.selectAll}
+        </button>
+        {selected.length > 0 && !allVisibleOn ? (
+          <button type="button" onClick={onClear} className="text-xs text-neutral-400 hover:text-neutral-700">
+            {copy.clearSelection}
+          </button>
+        ) : null}
+      </div>
+      <div className={`overflow-auto pb-1 ${compact ? 'max-h-[min(24rem,55vh)]' : 'max-h-64'}`}>
+        {visible.map((item) => {
+          const on = selected.includes(item.value);
+          return (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => onToggle(item.value)}
+              className={`flex w-full items-center gap-2.5 px-3 text-left text-sm hover:bg-neutral-50 ${compact ? 'min-h-12 py-3' : 'py-2'} ${on ? 'text-neutral-900' : 'text-neutral-600'}`}
+            >
+              <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border ${on ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300 bg-white'}`}>
+                {on ? <Check className="h-3 w-3 text-white" strokeWidth={3} /> : null}
+              </span>
+              <span className="min-w-0 flex-1 leading-snug">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
   return (
     <div ref={root} className={`relative shrink-0 ${open ? 'z-30' : ''}`}>
       <button
@@ -318,57 +414,16 @@ function FilterSelect({
         ) : null}
         <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-neutral-400 ${open ? 'rotate-180' : ''}`} />
       </button>
-      {open ? (
-        <div className="absolute left-0 top-full z-20 mt-1.5 w-64 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_16px_40px_rgba(15,15,15,0.08)]">
-          {searchable ? (
-            <div className="border-b border-neutral-100 p-2">
-              <label className="relative block">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
-                <input
-                  ref={searchRef}
-                  value={needle}
-                  onChange={(event) => setNeedle(event.target.value)}
-                  placeholder={copy.filterSearch}
-                  className="h-9 w-full rounded-xl bg-neutral-50 pl-8 pr-3 text-sm text-neutral-800 outline-none placeholder:text-neutral-400"
-                />
-              </label>
-            </div>
-          ) : null}
-          <div className="flex items-center justify-between gap-3 px-3 py-2">
-            <button
-              type="button"
-              onClick={toggleVisible}
-              disabled={visible.length === 0}
-              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 disabled:opacity-40"
-            >
-              {allVisibleOn ? copy.clearSelection : copy.selectAll}
-            </button>
-            {selected.length > 0 && !allVisibleOn ? (
-              <button type="button" onClick={onClear} className="text-xs text-neutral-400 hover:text-neutral-700">
-                {copy.clearSelection}
-              </button>
-            ) : null}
-          </div>
-          <div className="max-h-64 overflow-auto pb-1">
-            {visible.map((item) => {
-              const on = selected.includes(item.value);
-              return (
-                <button
-                  key={item.value}
-                  type="button"
-                  onClick={() => onToggle(item.value)}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-neutral-50 ${on ? 'text-neutral-900' : 'text-neutral-600'}`}
-                >
-                  <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border ${on ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300 bg-white'}`}>
-                    {on ? <Check className="h-3 w-3 text-white" strokeWidth={3} /> : null}
-                  </span>
-                  <span className="min-w-0 flex-1 leading-snug">{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+      {open && !compact ? menu : null}
+      {open && compact && mounted
+        ? createPortal(
+          <>
+            <button type="button" className="fixed inset-0 z-[70] bg-neutral-900/40" aria-label={copy.close} onClick={() => setOpen(false)} />
+            {menu}
+          </>,
+          document.body,
+        )
+        : null}
     </div>
   );
 }
@@ -436,8 +491,8 @@ function LangSwitch({
     fr: copy.langFr,
   };
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-2">
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.selectLanguage}</p>
+    <div className="rounded-2xl border border-neutral-200 bg-white px-2 py-1.5 sm:px-3 sm:py-2">
+      <p className="mb-1.5 hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400 sm:block">{copy.selectLanguage}</p>
       <div className="flex items-center gap-0.5">
         {TARIFAS_LOCALES.map((code) => (
           <button
@@ -677,6 +732,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     if (!admin && tab === 'maestro') setTab('catalogo');
   }, [admin, tab]);
+
+  useEffect(() => {
+    document.documentElement.classList.add('tarifas-open');
+    return () => document.documentElement.classList.remove('tarifas-open');
+  }, []);
+
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 767px)').matches) setPackLook('grid');
+  }, []);
 
   const copy = TARIFAS_COPY[locale];
   const localeTag = TARIFAS_LOCALE_TAG[locale];
@@ -1035,16 +1099,16 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
   if (!entry) {
     return (
-      <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-4 py-8 sm:px-6">
+      <div className="tarifas-shell min-h-dvh bg-white px-4 py-6 sm:-mx-6 sm:-mb-8 sm:min-h-[calc(100vh-4.5rem)] sm:px-6 sm:py-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
           <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
             <ArrowLeft className="h-4 w-4" /> {copy.tools}
           </button>
         </div>
-        <div className="mx-auto mt-16 max-w-2xl text-center">
+        <div className="mx-auto mt-8 max-w-2xl text-center sm:mt-16">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Tarifas 26/27</p>
-          <h2 className="mt-3 font-display text-5xl font-semibold tracking-tight">{copy.whichTariff}</h2>
+          <h2 className="mt-3 font-display text-3xl font-semibold tracking-tight sm:text-5xl">{copy.whichTariff}</h2>
           <p className="mx-auto mt-4 max-w-md text-sm leading-relaxed text-neutral-500">
             {copy.tariffHint}
           </p>
@@ -1053,7 +1117,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={() => pickEntry('b2c')}
-            className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
+            className="rounded-[28px] border border-neutral-200 bg-white p-6 text-left transition hover:border-neutral-900 sm:p-8"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.clubsWeb}</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2C</p>
@@ -1062,7 +1126,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={() => pickEntry('b2b')}
-            className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
+            className="rounded-[28px] border border-neutral-200 bg-white p-6 text-left transition hover:border-neutral-900 sm:p-8"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.distribution}</p>
             <p className="mt-2 font-display text-3xl font-semibold">B2B</p>
@@ -1071,7 +1135,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             onClick={() => pickEntry('outlet')}
-            className="rounded-[28px] border border-neutral-200 bg-white p-8 text-left transition hover:border-neutral-900"
+            className="rounded-[28px] border border-neutral-200 bg-white p-6 text-left transition hover:border-neutral-900 sm:p-8"
           >
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{copy.outletTitle}</p>
             <p className="mt-2 font-display text-3xl font-semibold">{copy.outlet}</p>
@@ -1083,9 +1147,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="tarifas-shell -mx-6 -mb-8 min-h-[calc(100vh-4.5rem)] bg-white px-5 pb-24 pt-4 sm:px-8">
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="tarifas-shell min-h-dvh bg-white px-4 pb-[calc(6.75rem+env(safe-area-inset-bottom))] pt-3 sm:-mx-6 sm:-mb-8 sm:min-h-[calc(100vh-4.5rem)] sm:px-8 sm:pb-24 sm:pt-4">
+      <div className="space-y-3 sm:space-y-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
             {admin ? (
@@ -1158,7 +1222,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-400">
               {inOutlet ? copy.outlet : channel.toUpperCase()}{tab === 'pack' ? ` · ${copy.pack}` : tab === 'maestro' ? ` · ${copy.master}` : tab === 'reservas' ? ` · ${copy.reservas}` : ''}
             </p>
-            <h2 className="font-display text-3xl font-semibold tracking-tight sm:text-4xl">
+            <h2 className="font-display text-2xl font-semibold tracking-tight sm:text-4xl">
               {tab === 'pack' ? copy.packBuilder : tab === 'maestro' ? copy.liveCatalog : tab === 'reservas' ? copy.reservasTitle : copy.outletTitle}
             </h2>
           </div>
@@ -1166,7 +1230,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
 
         {shopTab ? (
           <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.tariff}</p>
+            <p className="mb-2 hidden text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400 sm:block">{copy.tariff}</p>
             <div className="flex flex-wrap gap-2">
               {fees.map((level) => (
                 <Pill key={level} active={fee === level} onClick={() => setFee(level)}>Fee {level}</Pill>
@@ -1278,16 +1342,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             ) : null}
 
             <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="relative w-[18rem] max-w-full shrink-0">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <label className="relative w-full shrink-0 sm:w-[18rem] sm:max-w-full">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                   <input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={copy.search}
-                    className="h-10 w-full rounded-full border border-neutral-200 bg-white py-0 pl-9 pr-4 text-sm outline-none"
+                    className="h-11 w-full rounded-full border border-neutral-200 bg-white py-0 pl-9 pr-4 outline-none sm:h-10"
                   />
                 </label>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:contents [&::-webkit-scrollbar]:hidden">
                 <FilterSelect
                   label={copy.type}
                   options={facets.types.map((item) => ({ value: item, label: labelProductType(locale, item) }))}
@@ -1319,8 +1384,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
                 </div>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden">
                 <FilterSelect
                   label={copy.gender}
                   options={facets.genders.map((item) => ({ value: item, label: copy.genders[item] }))}
@@ -1404,10 +1470,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 {inOutlet && listing.length === 0 && !filtersOn ? copy.outletEmpty : copy.emptyFilters}
               </p>
             ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              <div className="grid grid-cols-1 gap-3 min-[520px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {filtered.map((item) => (
                   <article key={item.id} className={`group overflow-hidden rounded-2xl border bg-white ${compare.includes(item.id) ? 'border-neutral-900' : 'border-neutral-200'}`}>
-                    <div className="relative z-[1] aspect-square bg-neutral-50">
+                    <div className="relative z-[1] aspect-[4/3] bg-neutral-50 sm:aspect-square">
                       <TarifasPhoto
                         key={item.image || item.id}
                         src={item.image}
@@ -1443,11 +1509,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           event.stopPropagation();
                           openItem(item);
                         }}
-                        className="absolute -bottom-3 right-2 z-10 inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
+                        className="absolute -bottom-3 right-2 z-10 inline-flex h-9 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
                         aria-label={copy.viewSheet}
                       >
                         <Info className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">{copy.viewSheet}</span>
+                        <span>{copy.viewSheet}</span>
                       </button>
                     </div>
                     <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
@@ -1467,7 +1533,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           type="button"
                           onClick={() => toggleCompare(item.id)}
                           disabled={!compare.includes(item.id) && compare.length >= COMPARE_MAX}
-                          className={`inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
+                          className={`inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-full border text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
                             compare.includes(item.id)
                               ? 'border-neutral-900 bg-neutral-900 text-white'
                               : 'border-neutral-200 text-neutral-700 hover:bg-neutral-50'
@@ -1479,7 +1545,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           <button
                             type="button"
                             onClick={() => addToPack(item)}
-                            className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                            className="inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-full border border-neutral-200 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
                           >
                             <Plus className="h-3.5 w-3.5" /> {copy.addToPack}
                           </button>
@@ -1578,7 +1644,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                             type="button"
                             disabled={index === 0}
                             onClick={(event) => { event.stopPropagation(); movePackLine(index, -1); }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-neutral-700 shadow-sm ring-1 ring-black/10 disabled:opacity-30"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-700 shadow-sm ring-1 ring-black/10 disabled:opacity-30"
                             aria-label={copy.compareForward}
                           >
                             <ChevronLeft className="h-4 w-4" />
@@ -1590,7 +1656,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                             type="button"
                             disabled={index === pack.length - 1}
                             onClick={(event) => { event.stopPropagation(); movePackLine(index, 1); }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-neutral-700 shadow-sm ring-1 ring-black/10 disabled:opacity-30"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-700 shadow-sm ring-1 ring-black/10 disabled:opacity-30"
                             aria-label={copy.compareBack}
                           >
                             <ChevronRight className="h-4 w-4" />
@@ -1684,7 +1750,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                                 type="button"
                                 disabled={index === 0}
                                 onClick={() => movePackLine(index, -1)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
                                 aria-label={copy.compareForward}
                               >
                                 <ChevronUp className="h-3.5 w-3.5" />
@@ -1694,7 +1760,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                                 type="button"
                                 disabled={index === pack.length - 1}
                                 onClick={() => movePackLine(index, 1)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
                                 aria-label={copy.compareBack}
                               >
                                 <ChevronDown className="h-3.5 w-3.5" />
@@ -1821,46 +1887,49 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {shopTab && compare.length > 0 && !compareOpen && !packCompareOpen ? (
-        <div className="fixed bottom-5 left-5 z-40 flex max-w-[min(100%-2.5rem,42rem)] items-center gap-3 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg">
-          <Columns2 className="h-4 w-4 shrink-0 text-neutral-500" />
-          <div className="flex min-w-0 items-center gap-2">
-            {compareItems.map((item) => (
-              <span key={item.id} className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-neutral-50">
-                <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-0.5" />
-              </span>
-            ))}
-            {compare.length < 2 ? <span className="text-xs text-neutral-400">{copy.compareHint}</span> : (
-              <span className="hidden truncate text-xs font-semibold text-neutral-500 sm:block">{compare.length}/{COMPARE_MAX}</span>
-            )}
-          </div>
-          {compare.length >= 2 ? (
-            <button type="button" onClick={() => { setCompareOpen(true); setOpen(null); setDraft(null); }} className="h-8 shrink-0 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">
-              {copy.compareView}
+      {shopTab && !compareOpen && !packCompareOpen && (compare.length > 0 || !inOutlet) ? (
+        <div className="z-40 max-md:fixed max-md:inset-x-3 max-md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] max-md:flex max-md:items-end max-md:gap-2 md:contents">
+          {compare.length > 0 ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg md:fixed md:bottom-5 md:left-5 md:max-w-[min(100%-2.5rem,42rem)]">
+              <Columns2 className="h-4 w-4 shrink-0 text-neutral-500" />
+              <div className="flex min-w-0 items-center gap-2">
+                {compareItems.map((item) => (
+                  <span key={item.id} className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-neutral-50">
+                    <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-0.5" />
+                  </span>
+                ))}
+                {compare.length < 2 ? <span className="hidden text-xs text-neutral-400 min-[420px]:inline">{copy.compareHint}</span> : (
+                  <span className="hidden truncate text-xs font-semibold text-neutral-500 sm:block">{compare.length}/{COMPARE_MAX}</span>
+                )}
+              </div>
+              {compare.length >= 2 ? (
+                <button type="button" onClick={() => { setCompareOpen(true); setOpen(null); setDraft(null); }} className="h-9 shrink-0 rounded-full bg-neutral-900 px-3 text-[11px] font-semibold text-white">
+                  {copy.compareView}
+                </button>
+              ) : null}
+              <button type="button" onClick={() => { setCompare([]); setCompareOpen(false); }} className="shrink-0 text-[11px] font-semibold text-neutral-500">
+                {copy.compareClear}
+              </button>
+            </div>
+          ) : null}
+          {!inOutlet ? (
+            <button
+              type="button"
+              onClick={() => setCartOpen(true)}
+              className="inline-flex shrink-0 items-center gap-2 rounded-full bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-lg max-md:ml-auto md:fixed md:bottom-5 md:right-5"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              {copy.pack}
+              {pack.length > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{pack.length}</span> : null}
             </button>
           ) : null}
-          <button type="button" onClick={() => { setCompare([]); setCompareOpen(false); }} className="shrink-0 text-[11px] font-semibold text-neutral-500">
-            {copy.compareClear}
-          </button>
         </div>
-      ) : null}
-
-      {shopTab && !inOutlet && !compareOpen && !packCompareOpen ? (
-        <button
-          type="button"
-          onClick={() => setCartOpen(true)}
-          className="fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-lg"
-        >
-          <ShoppingBag className="h-4 w-4" />
-          {copy.pack}
-          {pack.length > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{pack.length}</span> : null}
-        </button>
       ) : null}
 
       {cartOpen ? (
         <div className="fixed inset-0 z-50">
           <button type="button" className="absolute inset-0 bg-neutral-900/30" aria-label={copy.close} onClick={() => setCartOpen(false)} />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+          <aside className="absolute inset-y-0 right-0 flex h-[100dvh] w-full max-w-md flex-col bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl">
             <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
@@ -1929,7 +1998,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                             type="button"
                             disabled={index === 0}
                             onClick={() => movePackLine(index, -1)}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
                             aria-label={copy.compareForward}
                           >
                             <ChevronUp className="h-3.5 w-3.5" />
@@ -1938,7 +2007,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                             type="button"
                             disabled={index === pack.length - 1}
                             onClick={() => movePackLine(index, 1)}
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
                             aria-label={copy.compareBack}
                           >
                             <ChevronDown className="h-3.5 w-3.5" />
@@ -1986,16 +2055,16 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="grid md:grid-cols-2">
-              <div className="bg-neutral-50 p-6">
+              <div className="bg-neutral-50 p-4 sm:p-6">
                 <TarifasPhoto
                   key={draft.image || draft.id}
                   src={draft.image}
                   alt={draft.name}
-                  className="mx-auto max-h-[520px] w-full"
+                  className="mx-auto max-h-[38vh] w-full md:max-h-[520px]"
                   onOpen={draft.image ? openPhoto : undefined}
                 />
               </div>
-              <div className="flex flex-col p-6">
+              <div className="flex flex-col p-4 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
@@ -2131,7 +2200,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     </div>
                   </>
                 ) : (
-                  <div className="mt-4 grid max-h-[70vh] grid-cols-2 gap-2 overflow-auto pr-1">
+                  <div className="mt-4 grid max-h-[70vh] grid-cols-1 gap-2 overflow-auto pr-1 sm:grid-cols-2">
                     <Field label={copy.fieldBrand}><input className={inputClass} value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} /></Field>
                     <Field label={copy.fieldType}><input className={inputClass} value={draft.productType} onChange={(e) => setDraft({ ...draft, productType: e.target.value })} /></Field>
                     <div className="col-span-2">
@@ -2218,10 +2287,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             aria-modal="true"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-6 py-4">
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-4 py-3 sm:px-6 sm:py-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{channel.toUpperCase()}</p>
-                <h3 className="font-display text-2xl font-semibold">{copy.comparePacksTitle}</h3>
+                <h3 className="font-display text-xl font-semibold sm:text-2xl">{copy.comparePacksTitle}</h3>
               </div>
               <button type="button" onClick={() => setPackCompareOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
                 <X className="h-5 w-5" />
@@ -2289,10 +2358,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             aria-modal="true"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-6 py-4">
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-4 py-3 sm:px-6 sm:py-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{channel.toUpperCase()}</p>
-                <h3 className="font-display text-2xl font-semibold">{copy.compareTitle}</h3>
+                <h3 className="font-display text-xl font-semibold sm:text-2xl">{copy.compareTitle}</h3>
               </div>
               <button type="button" onClick={() => setCompareOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
                 <X className="h-5 w-5" />

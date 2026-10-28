@@ -21,22 +21,22 @@ export default function WorkspaceChrome({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-2 rounded-md py-1.5 pl-3 pr-2 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
+        className="flex shrink-0 items-center gap-2 rounded-md py-1.5 pl-3 pr-2 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
       >
         <ArrowLeft className="h-4 w-4" />
         {backLabel}
       </button>
-      <div className="flex flex-wrap rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-1">
+      <div className="flex max-w-full overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-1">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => onSelect(tab.id)}
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+            className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold transition ${
               active === tab.id
                 ? 'bg-[var(--text-primary)] text-white'
                 : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'

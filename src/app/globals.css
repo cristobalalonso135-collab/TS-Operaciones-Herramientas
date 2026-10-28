@@ -135,6 +135,50 @@ textarea {
   --text-muted: #8a8a8a;
 }
 
+.tarifas-shell button,
+.tarifas-shell a {
+  touch-action: manipulation;
+}
+
+.tarifas-shell input,
+.tarifas-shell select,
+.tarifas-shell textarea {
+  font-size: 16px;
+}
+
+@media (max-width: 767px) {
+  html.tarifas-open nav {
+    display: none;
+  }
+
+  html.tarifas-open main {
+    max-width: none;
+    padding: 0;
+  }
+
+  html.tarifas-open body {
+    background: #fff;
+  }
+
+  html.tarifas-open body::before {
+    display: none;
+  }
+
+  .tarifas-shell .abonos-modal-backdrop {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .tarifas-shell .abonos-modal {
+    width: 100% !important;
+    min-height: 100%;
+    margin: 0;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+}
+
 .abonos-shell {
   --accent: #c4a035;
   --accent-hover: #a88820;
