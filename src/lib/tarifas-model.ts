@@ -323,6 +323,10 @@ export function formatRed(red: string | null): string {
   return `${day}/${month}/${year}`;
 }
 
+export function redYear(red: string | null): string {
+  return red && /^\d{4}/.test(red) ? red.slice(0, 4) : '';
+}
+
 export function sellPrice(
   item: TarifaProduct,
   channel: TarifaChannel,

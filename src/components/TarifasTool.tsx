@@ -26,6 +26,7 @@ import {
   lineMargin,
   newId,
   packTotals,
+  redYear,
   rrpPrice,
   sellPrice,
   uniqueSorted,
@@ -55,7 +56,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, LayoutGrid, Lock, LogOut, Plus, Search, ShoppingBag, Table2, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -106,6 +107,34 @@ function picked(list: string[], value: string) {
 function keepSelected(list: string[], selected: string[]) {
   const missing = selected.filter((item) => !list.includes(item));
   return missing.length ? [...missing, ...list] : list;
+}
+
+function yearOf(item: TarifaProduct) {
+  return redYear(item.red) || 'none';
+}
+
+function rankTone(nums: Array<number | null | undefined>, index: number): 'low' | 'high' | null {
+  const valid = nums.filter((value): value is number => value != null && Number.isFinite(value));
+  if (valid.length < 2) return null;
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  if (min === max) return null;
+  const value = nums[index];
+  if (value == null || !Number.isFinite(value)) return null;
+  if (value === min) return 'low';
+  if (value === max) return 'high';
+  return null;
+}
+
+function RankBadge({ tone, copy }: { tone: 'low' | 'high' | null; copy: TarifasCopy }) {
+  if (!tone) return null;
+  return (
+    <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+      tone === 'low' ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'
+    }`}>
+      {tone === 'low' ? copy.cheapest : copy.dearest}
+    </span>
+  );
 }
 
 function FilterSelect({
@@ -368,10 +397,12 @@ function compareRows(
   fees: FeeLevel[],
   copy: TarifasCopy,
   euro: (value: number | null | undefined) => string,
-): { section?: string; label: string; values: string[] }[] {
+): { section?: string; label: string; values: string[]; nums?: Array<number | null> }[] {
   const ageLabel = (item: TarifaProduct) => (
     ageKind(item) === 'both' ? copy.adultAndYouth : ageKind(item) === 'youthOnly' ? copy.youthOnly : copy.adultOnly
   );
+  const adultPvp = items.map((item) => rrpPrice(item, channel, 'adult'));
+  const youthPvp = items.map((item) => (hasYouth(item) ? rrpPrice(item, channel, 'youth') : null));
   return [
     {
       section: copy.lifecycle,
@@ -384,15 +415,16 @@ function compareRows(
       label: copy.validity,
       values: items.map((item) => (item.red ? `${formatRed(item.red)}${isExpired(item.red) ? ` · ${copy.expired}` : ''}` : '—')),
     },
-    { section: copy.comparePrices, label: `PVP ${copy.adult}`, values: items.map((item) => euro(rrpPrice(item, channel, 'adult'))) },
+    { section: copy.comparePrices, label: `PVP ${copy.adult}`, values: adultPvp.map(euro), nums: adultPvp },
     {
       label: `PVP ${copy.youth}`,
-      values: items.map((item) => (hasYouth(item) ? euro(rrpPrice(item, channel, 'youth')) : '—')),
+      values: youthPvp.map((value, index) => (hasYouth(items[index]) ? euro(value) : '—')),
+      nums: youthPvp,
     },
-    ...fees.map((level) => ({
-      label: `Fee ${level}`,
-      values: items.map((item) => euro(sellPrice(item, channel, level, 'adult'))),
-    })),
+    ...fees.map((level) => {
+      const nums = items.map((item) => sellPrice(item, channel, level, 'adult'));
+      return { label: `Fee ${level}`, values: nums.map(euro), nums };
+    }),
     { section: copy.fieldKind, label: copy.fieldKind, values: items.map((item) => copy.kinds[kindOf(item)]) },
     { label: copy.sport, values: items.map((item) => copy.sports[item.sport as TarifaSport] || item.sport) },
     { label: copy.gender, values: items.map((item) => copy.genders[item.gender]) },
@@ -464,6 +496,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [kinds, setKinds] = useState<TarifaKind[]>([]);
   const [novelties, setNovelties] = useState<TarifaNovelty[]>([]);
   const [ages, setAges] = useState<TarifaAgeKind[]>([]);
+  const [redYears, setRedYears] = useState<string[]>([]);
+  const [packLook, setPackLook] = useState<'table' | 'grid'>('table');
   const [sort, setSort] = useState<'nombre' | 'marca' | 'precio' | 'pvp'>('nombre');
   const [open, setOpen] = useState<TarifaProduct | null>(null);
   const [compare, setCompare] = useState<string[]>([]);
@@ -543,7 +577,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const channel: TarifaChannel = entry === 'b2b' ? 'b2b' : 'b2c';
   const inOutlet = entry === 'outlet';
   const fees = channelFees(channel);
-  const filtersOn = Boolean(query || brands.length || types.length || colours.length || sports.length || genders.length || kinds.length || novelties.length || ages.length);
+  const filtersOn = Boolean(query || brands.length || types.length || colours.length || sports.length || genders.length || kinds.length || novelties.length || ages.length || redYears.length);
 
   const listing = useMemo(
     () => products.filter((item) => (inOutlet ? item.outlet : !item.outlet)),
@@ -561,6 +595,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (skip !== 'kind' && !picked(kinds, kindOf(item))) return false;
       if (skip !== 'novelty' && !picked(novelties, item.novelty)) return false;
       if (skip !== 'age' && !picked(ages, ageKind(item))) return false;
+      if (skip !== 'redYear' && !picked(redYears, yearOf(item))) return false;
       if (skip !== 'query' && q) {
         const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
@@ -585,8 +620,12 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       ages: (['both', 'adult', 'youthOnly'] as TarifaAgeKind[]).filter(
         (item) => ages.includes(item) || pool('age').some((row) => ageKind(row) === item),
       ),
+      years: keepSelected(
+        Array.from(new Set(pool('redYear').map(yearOf))).sort((a, b) => a.localeCompare(b, 'es')),
+        redYears,
+      ),
     };
-  }, [ages, brands, colours, genders, kinds, listing, novelties, query, sports, types]);
+  }, [ages, brands, colours, genders, kinds, listing, novelties, query, redYears, sports, types]);
 
   const clearFilters = () => {
     setQuery('');
@@ -598,6 +637,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     setKinds([]);
     setNovelties([]);
     setAges([]);
+    setRedYears([]);
   };
 
   const filtered = useMemo(() => {
@@ -611,6 +651,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (!picked(kinds, kindOf(item))) return false;
       if (!picked(novelties, item.novelty)) return false;
       if (!picked(ages, ageKind(item))) return false;
+      if (!picked(redYears, yearOf(item))) return false;
       if (q) {
         const hay = `${item.brand} ${item.productType} ${item.name} ${item.colour} ${item.collection} ${item.adultRef} ${item.youthRef}`.toLocaleLowerCase('es');
         if (!hay.includes(q)) return false;
@@ -623,7 +664,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       if (sort === 'pvp') return (rrpPrice(a, channel) ?? 0) - (rrpPrice(b, channel) ?? 0);
       return a.name.localeCompare(b.name, 'es') || a.colour.localeCompare(b.colour, 'es');
     });
-  }, [ages, brands, channel, colours, fee, genders, kinds, listing, novelties, query, sort, sports, types]);
+  }, [ages, brands, channel, colours, fee, genders, kinds, listing, novelties, query, redYears, sort, sports, types]);
 
   const totals = useMemo(
     () => (channel ? packTotals(products, pack, channel) : { pieces: 0, club: 0, stamp: 0, sale: 0, rrp: 0, fuera: 0, margin: null }),
@@ -1198,6 +1239,15 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   onSet={setBrands}
                   copy={copy}
                 />
+                <FilterSelect
+                  label={copy.validity}
+                  options={facets.years.map((item) => ({ value: item, label: item === 'none' ? copy.noValidity : item }))}
+                  selected={redYears}
+                  onToggle={(value) => setRedYears(toggleItem(redYears, value))}
+                  onClear={() => setRedYears([])}
+                  onSet={setRedYears}
+                  copy={copy}
+                />
                 {facets.novelties.length > 0 ? (
                   <FilterSelect
                     label={copy.fieldNovelty}
@@ -1320,6 +1370,22 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   {item.lines.length ? ` · ${item.lines.length}` : ''}
                 </Pill>
               ))}
+              <div className="ml-auto flex items-center gap-1 rounded-full border border-neutral-200 p-1">
+                <button
+                  type="button"
+                  onClick={() => setPackLook('grid')}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${packLook === 'grid' ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:text-neutral-800'}`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" /> {copy.packViewGrid}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPackLook('table')}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${packLook === 'table' ? 'bg-neutral-900 text-white' : 'text-neutral-500 hover:text-neutral-800'}`}
+                >
+                  <Table2 className="h-3.5 w-3.5" /> {copy.packViewTable}
+                </button>
+              </div>
               {packs.length < COMPARE_MAX ? (
                 <button type="button" onClick={addPackSlot} className="inline-flex h-9 items-center gap-1 rounded-full border border-neutral-200 px-3 text-xs font-semibold text-neutral-600">
                   <Plus className="h-3.5 w-3.5" /> {copy.newPack}
@@ -1358,6 +1424,83 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               <p className="py-16 text-center text-sm text-neutral-400">
                 {copy.emptyPack}
               </p>
+            ) : packLook === 'grid' ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {pack.map((line, index) => {
+                  const item = byId.get(line.id);
+                  if (!item) return null;
+                  const price = sellPrice(item, channel, line.fee, 'adult');
+                  return (
+                    <article key={`${line.id}-${line.fee}-${index}`} className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+                      <div className="relative aspect-square bg-neutral-50">
+                        <TarifasPhoto
+                          src={item.image}
+                          alt={item.name}
+                          className="h-full w-full p-6 transition group-hover:scale-[1.02]"
+                          onOpen={item.image ? openPhoto : undefined}
+                        />
+                        {!item.image ? (
+                          <button type="button" onClick={() => openItem(item)} className="absolute inset-0" aria-label={item.name} />
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => openItem(item)}
+                          className="absolute -bottom-3 right-2 z-10 inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
+                          aria-label={copy.viewSheet}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                          <span>{copy.viewSheet}</span>
+                        </button>
+                      </div>
+                      <button type="button" onClick={() => openItem(item)} className="block w-full text-left">
+                        <div className="space-y-1 px-4 pb-3 pt-5">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                            {item.brand} · {labelProductType(locale, item.productType)}
+                          </p>
+                          <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
+                          <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                          <p className="pt-1 font-display text-2xl font-semibold tabular-nums">{euro(price)}</p>
+                        </div>
+                      </button>
+                      <div className="flex items-center justify-between gap-2 px-4 pb-3">
+                        <div className="flex flex-wrap gap-1">
+                          {fees.map((level) => (
+                            <button
+                              key={level}
+                              type="button"
+                              onClick={() => setPack((current) => current.map((row, i) => (i === index ? { ...row, fee: level } : row)))}
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                line.fee === level ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'
+                              }`}
+                            >
+                              {level}
+                            </button>
+                          ))}
+                        </div>
+                        <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 px-4 pb-4">
+                        <span className="text-[11px] text-neutral-400">{copy.colStamp}</span>
+                        <input
+                          inputMode="decimal"
+                          placeholder="0,00"
+                          value={line.stampInput}
+                          onChange={(event) => {
+                            const raw = event.target.value;
+                            setPack((current) => current.map((row, i) => (
+                              i === index ? { ...row, stampInput: raw, stamp: moneyFromInput(raw) ?? 0 } : row
+                            )));
+                          }}
+                          className="h-9 w-24 rounded-lg border border-neutral-200 px-2 text-right text-sm tabular-nums outline-none"
+                          aria-label={copy.stampAria}
+                        />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-neutral-200">
                 <table className="min-w-[980px] w-full text-left text-sm">
@@ -1389,7 +1532,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
-                                <p className="font-semibold leading-snug">{item.name}</p>
+                                <button type="button" onClick={() => openItem(item)} className="text-left font-semibold leading-snug hover:underline">
+                                  {item.name}
+                                </button>
                                 <p className="text-[11px] text-neutral-500">{item.colour}</p>
                                 {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
                                 {ageKind(item) === 'adult' ? <div className="mt-1"><AgeChip tone="adult">{copy.adultOnly}</AgeChip></div> : null}
@@ -1946,45 +2091,63 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                 style={{ gridTemplateColumns: `8rem repeat(${compareItems.length}, minmax(0, 1fr))` }}
               >
                 <div />
-                {compareItems.map((item, index) => (
-                  <div key={item.id} className="min-w-0">
-                    <div className="mb-2 flex items-center justify-between">
-                      <button
-                        type="button"
-                        disabled={index === 0}
-                        onClick={() => moveCompare(item.id, -1)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
-                        aria-label={copy.compareForward}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </button>
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{index + 1}</span>
-                      <button
-                        type="button"
-                        disabled={index === compareItems.length - 1}
-                        onClick={() => moveCompare(item.id, 1)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
-                        aria-label={copy.compareBack}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
+                {compareItems.map((item, index) => {
+                  const tone = rankTone(compareItems.map((row) => sellPrice(row, channel, fee, 'adult')), index);
+                  return (
+                    <div
+                      key={item.id}
+                      className={`min-w-0 rounded-2xl p-2 ${
+                        tone === 'low' ? 'bg-emerald-50/70 ring-1 ring-emerald-100' : tone === 'high' ? 'bg-rose-50/70 ring-1 ring-rose-100' : ''
+                      }`}
+                    >
+                      <div className="mb-2 flex items-center justify-between">
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={() => moveCompare(item.id, -1)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                          aria-label={copy.compareForward}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{index + 1}</span>
+                        <button
+                          type="button"
+                          disabled={index === compareItems.length - 1}
+                          onClick={() => moveCompare(item.id, 1)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                          aria-label={copy.compareBack}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="relative aspect-square overflow-hidden rounded-xl bg-white/80">
+                        <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-3" onOpen={item.image ? openPhoto : undefined} />
+                        <button
+                          type="button"
+                          onClick={() => { setCompareOpen(false); openItem(item); }}
+                          className="absolute bottom-2 right-2 inline-flex h-8 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-neutral-800 shadow-sm ring-1 ring-black/10"
+                          aria-label={copy.viewSheet}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                          <span>{copy.viewSheet}</span>
+                        </button>
+                      </div>
+                      <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
+                        {item.brand} · {labelProductType(locale, item.productType)}
+                      </p>
+                      <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
+                      <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                      <RankBadge tone={tone} copy={copy} />
+                      {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
                     </div>
-                    <div className="aspect-square overflow-hidden rounded-xl bg-neutral-50">
-                      <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-3" onOpen={item.image ? openPhoto : undefined} />
-                    </div>
-                    <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-                      {item.brand} · {labelProductType(locale, item.productType)}
-                    </p>
-                    <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
-                    <p className="text-[11px] text-neutral-500">{item.colour}</p>
-                    {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <table className="w-full text-sm">
                 <tbody>
                   {compareRows(compareItems, channel, fees, copy, euro).map((row) => {
-                    const differs = row.values.some((value) => value !== row.values[0]);
+                    const differs = !row.nums && row.values.some((value) => value !== row.values[0]);
                     return (
                       <Fragment key={`${row.section || ''}-${row.label}`}>
                         {row.section ? (
@@ -1996,9 +2159,25 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         ) : null}
                         <tr className="border-t border-neutral-100">
                           <td className="w-[10rem] px-6 py-2 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{row.label}</td>
-                          {row.values.map((value, index) => (
-                            <td key={compareItems[index].id} className={`px-4 py-2 ${differs ? 'bg-amber-50 font-semibold' : ''}`}>{value}</td>
-                          ))}
+                          {row.values.map((value, index) => {
+                            const tone = rankTone(row.nums || [], index);
+                            return (
+                              <td
+                                key={compareItems[index].id}
+                                className={`px-4 py-2 ${
+                                  tone === 'low'
+                                    ? 'bg-emerald-50 font-semibold text-emerald-950'
+                                    : tone === 'high'
+                                      ? 'bg-rose-50 font-semibold text-rose-950'
+                                      : differs
+                                        ? 'bg-amber-50 font-semibold'
+                                        : ''
+                                }`}
+                              >
+                                {value}
+                              </td>
+                            );
+                          })}
                         </tr>
                       </Fragment>
                     );
