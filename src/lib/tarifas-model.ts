@@ -394,7 +394,71 @@ export interface PackLine {
   stampInput: string;
 }
 
-export function lineAge(line: PackLine): TarifaAge {
+export interface OutletLine {
+  id: string;
+  age: TarifaAge;
+  price: number;
+  priceInput: string;
+}
+
+export function outletCost(item: TarifaProduct, age: TarifaAge = 'adult'): number | null {
+  return lineCost(item, 'b2c', age);
+}
+
+export function priceInputOf(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value < 0) return '';
+  return value.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function outletDefaultPrice(item: TarifaProduct, age: TarifaAge = 'adult'): number | null {
+  const pvp = rrpPrice(item, 'b2c', age);
+  if (pvp != null && pvp > 0) return pvp;
+  const cost = outletCost(item, age);
+  if (cost != null && cost > 0) return money(cost * 1.3);
+  return sellPrice(item, 'b2c', 1, age);
+}
+
+export function outletBounds(item: TarifaProduct, age: TarifaAge = 'adult'): { min: number; max: number } {
+  const cost = outletCost(item, age) ?? 0;
+  const pvp = rrpPrice(item, 'b2c', age) ?? 0;
+  const seed = outletDefaultPrice(item, age) ?? 0;
+  const max = Math.max(pvp, cost * 2.5, seed * 1.4, 10);
+  return { min: 0, max: Math.round(max * 100) / 100 };
+}
+
+export function emptyOutletLine(item: TarifaProduct, age?: TarifaAge): OutletLine {
+  const chosen = packAgeOf(item, age);
+  const price = outletDefaultPrice(item, chosen) ?? 0;
+  return { id: item.id, age: chosen, price, priceInput: priceInputOf(price) };
+}
+
+export function outletTotals(
+  products: TarifaProduct[],
+  lines: OutletLine[],
+): { pieces: number; cost: number; sale: number; margin: number | null } {
+  const byId = new Map(products.map((item) => [item.id, item]));
+  let cost = 0;
+  let sale = 0;
+  let hasCost = false;
+  lines.forEach((line) => {
+    const item = byId.get(line.id);
+    if (!item) return;
+    const unit = outletCost(item, lineAge(line));
+    if (unit != null) {
+      cost += unit;
+      hasCost = true;
+    }
+    if (Number.isFinite(line.price)) sale += line.price;
+  });
+  return {
+    pieces: lines.length,
+    cost: Math.round(cost * 100) / 100,
+    sale: Math.round(sale * 100) / 100,
+    margin: hasCost ? marginPct(sale || null, cost) : null,
+  };
+}
+
+export function lineAge(line: { age?: TarifaAge }): TarifaAge {
   return line.age === 'youth' ? 'youth' : 'adult';
 }
 

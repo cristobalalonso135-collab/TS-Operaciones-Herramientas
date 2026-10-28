@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import catalog from '@/data/tarifas-catalog.json';
-import { catalogExportRows, moneyFromInput, packExportRows, parseTarifasSheets } from '@/lib/tarifas-excel';
+import { catalogExportRows, moneyFromInput, outletQuoteExportRows, packExportRows, parseTarifasSheets } from '@/lib/tarifas-excel';
 import {
   GENDERS,
   KINDS,
@@ -26,16 +26,23 @@ import {
   hasYouth,
   isExpired,
   kindOf,
+  emptyOutletLine,
   lineAge,
   lineMargin,
+  marginPct,
   newId,
+  outletBounds,
+  outletCost,
+  outletTotals,
   packAgeOf,
   packTotals,
+  priceInputOf,
   redYear,
   rrpPrice,
   sellPrice,
   uniqueSorted,
   type FeeLevel,
+  type OutletLine,
   type PackLine,
   type TarifaAge,
   type TarifaAgeKind,
@@ -202,6 +209,91 @@ function CompareSheet({
             ))}
           </Fragment>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function marginTone(margin: number | null) {
+  if (margin == null) return 'text-neutral-400';
+  if (margin < 0) return 'text-rose-700';
+  if (margin < 12) return 'text-amber-800';
+  return 'text-emerald-800';
+}
+
+function OutletPriceControl({
+  item,
+  line,
+  copy,
+  euro,
+  pct,
+  onChange,
+}: {
+  item: TarifaProduct;
+  line: OutletLine;
+  copy: TarifasCopy;
+  euro: (value: number | null | undefined) => string;
+  pct: (value: number | null | undefined) => string;
+  onChange: (next: OutletLine) => void;
+}) {
+  const age = lineAge(line);
+  const cost = outletCost(item, age);
+  const bounds = outletBounds(item, age);
+  const price = Number.isFinite(line.price) ? line.price : 0;
+  const margin = marginPct(price, cost);
+  const setPrice = (value: number, input?: string) => {
+    const next = Math.round(Math.max(0, value) * 100) / 100;
+    onChange({ ...line, age, price: next, priceInput: input ?? priceInputOf(next) });
+  };
+  return (
+    <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
+      {hasAdult(item) && hasYouth(item) ? (
+        <div className="flex flex-wrap gap-1">
+          <button
+            type="button"
+            onClick={() => onChange(emptyOutletLine(item, 'adult'))}
+            className={`min-h-8 rounded-full px-2.5 py-1 text-[11px] font-semibold ${age === 'adult' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+          >
+            {copy.adult}
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange(emptyOutletLine(item, 'youth'))}
+            className={`min-h-8 rounded-full px-2.5 py-1 text-[11px] font-semibold ${age === 'youth' ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600'}`}
+          >
+            {copy.youth}
+          </button>
+        </div>
+      ) : null}
+      <div className="flex items-center justify-between gap-2 text-[11px]">
+        <span className="text-neutral-400">{copy.cost} {cost == null ? copy.noCost : euro(cost)}</span>
+        <span className={`font-semibold tabular-nums ${marginTone(margin)}`}>{copy.margin} {pct(margin)}</span>
+      </div>
+      <input
+        type="range"
+        min={bounds.min}
+        max={Math.max(bounds.max, price, 1)}
+        step={0.25}
+        value={Math.min(Math.max(bounds.max, price, 1), Math.max(bounds.min, price))}
+        onChange={(event) => setPrice(Number(event.target.value))}
+        className="h-2 w-full cursor-pointer accent-neutral-900"
+        aria-label={copy.outletPriceAria}
+      />
+      <div className="flex items-center gap-2">
+        <input
+          inputMode="decimal"
+          value={line.priceInput}
+          onChange={(event) => {
+            const raw = event.target.value;
+            setPrice(moneyFromInput(raw) ?? 0, raw);
+          }}
+          className="h-9 w-[5.75rem] rounded-lg border border-neutral-200 px-2 text-right text-sm tabular-nums outline-none"
+          aria-label={copy.outletPriceAria}
+        />
+        <p className="min-w-0 font-display text-lg font-semibold tabular-nums">
+          {euro(price)}
+          <span className="ml-1 text-[10px] font-medium text-neutral-400">{copy.vatIncluded}</span>
+        </p>
       </div>
     </div>
   );
@@ -563,12 +655,36 @@ function compareRows(
   fees: FeeLevel[],
   copy: TarifasCopy,
   euro: (value: number | null | undefined) => string,
+  asOutlet = false,
 ): { section?: string; label: string; values: string[]; nums?: Array<number | null> }[] {
   const ageLabel = (item: TarifaProduct) => (
     ageKind(item) === 'both' ? copy.adultAndYouth : ageKind(item) === 'youthOnly' ? copy.youthOnly : copy.adultOnly
   );
   const adultPvp = items.map((item) => rrpPrice(item, channel, 'adult'));
   const youthPvp = items.map((item) => (hasYouth(item) ? rrpPrice(item, channel, 'youth') : null));
+  const costs = items.map((item) => outletCost(item, ageKind(item) === 'youthOnly' ? 'youth' : 'adult'));
+  const priceRows = asOutlet
+    ? [
+      { section: copy.comparePrices, label: copy.cost, values: costs.map(euro), nums: costs },
+      { label: `PVP ${copy.adult}`, values: adultPvp.map(euro), nums: adultPvp },
+      {
+        label: `PVP ${copy.youth}`,
+        values: youthPvp.map((value, index) => (hasYouth(items[index]) ? euro(value) : '—')),
+        nums: youthPvp,
+      },
+    ]
+    : [
+      { section: copy.comparePrices, label: `PVP ${copy.adult}`, values: adultPvp.map(euro), nums: adultPvp },
+      {
+        label: `PVP ${copy.youth}`,
+        values: youthPvp.map((value, index) => (hasYouth(items[index]) ? euro(value) : '—')),
+        nums: youthPvp,
+      },
+      ...fees.map((level) => {
+        const nums = items.map((item) => sellPrice(item, channel, level, 'adult'));
+        return { label: `Fee ${level}`, values: nums.map(euro), nums };
+      }),
+    ];
   return [
     {
       section: copy.lifecycle,
@@ -581,16 +697,7 @@ function compareRows(
       label: copy.validity,
       values: items.map((item) => (item.red ? `${formatRed(item.red)}${isExpired(item.red) ? ` · ${copy.expired}` : ''}` : '—')),
     },
-    { section: copy.comparePrices, label: `PVP ${copy.adult}`, values: adultPvp.map(euro), nums: adultPvp },
-    {
-      label: `PVP ${copy.youth}`,
-      values: youthPvp.map((value, index) => (hasYouth(items[index]) ? euro(value) : '—')),
-      nums: youthPvp,
-    },
-    ...fees.map((level) => {
-      const nums = items.map((item) => sellPrice(item, channel, level, 'adult'));
-      return { label: `Fee ${level}`, values: nums.map(euro), nums };
-    }),
+    ...priceRows,
     { section: copy.fieldKind, label: copy.fieldKind, values: items.map((item) => copy.kinds[kindOf(item)]) },
     { label: copy.sport, values: items.map((item) => copy.sports[item.sport as TarifaSport] || item.sport) },
     { label: copy.gender, values: items.map((item) => copy.genders[item.gender]) },
@@ -681,6 +788,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [totpReady, setTotpReady] = useState(false);
   const [totpUri, setTotpUri] = useState<string | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
+  const [outletQuote, setOutletQuote] = useState<OutletLine[]>([]);
+  const [outletDrafts, setOutletDrafts] = useState<Record<string, OutletLine>>({});
+  const [quoteOpen, setQuoteOpen] = useState(false);
   const [sheetAge, setSheetAge] = useState<TarifaAge>('adult');
   const [reservas, setReservas] = useState<ReservasCatalog>(emptyReservasCatalog());
   const [reservasBackend, setReservasBackend] = useState<ReservasBackend>('local');
@@ -837,16 +947,20 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     });
     return rows.slice().sort((a, b) => {
       if (sort === 'marca') return a.brand.localeCompare(b.brand, 'es') || a.name.localeCompare(b.name, 'es');
-      if (sort === 'precio') return (sellPrice(a, channel, fee) ?? 0) - (sellPrice(b, channel, fee) ?? 0);
+      if (sort === 'precio') {
+        if (inOutlet) return (outletCost(a) ?? 0) - (outletCost(b) ?? 0);
+        return (sellPrice(a, channel, fee) ?? 0) - (sellPrice(b, channel, fee) ?? 0);
+      }
       if (sort === 'pvp') return (rrpPrice(a, channel) ?? 0) - (rrpPrice(b, channel) ?? 0);
       return a.name.localeCompare(b.name, 'es') || a.colour.localeCompare(b.colour, 'es');
     });
-  }, [ages, brands, channel, colours, fee, genders, kinds, listing, novelties, query, redYears, sort, sports, types]);
+  }, [ages, brands, channel, colours, fee, genders, inOutlet, kinds, listing, novelties, query, redYears, sort, sports, types]);
 
   const totals = useMemo(
     () => (channel ? packTotals(products, pack, channel) : { pieces: 0, club: 0, stamp: 0, sale: 0, rrp: 0, fuera: 0, margin: null }),
     [channel, pack, products],
   );
+  const quoteTotals = useMemo(() => outletTotals(products, outletQuote), [outletQuote, products]);
   const byId = useMemo(() => new Map(products.map((item) => [item.id, item])), [products]);
   const compareItems = useMemo(
     () => compare.map((id) => byId.get(id)).filter((item): item is TarifaProduct => Boolean(item)),
@@ -882,6 +996,27 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : copy.saveError);
     }
+  };
+
+  const outletLineOf = (item: TarifaProduct): OutletLine => {
+    const quoted = outletQuote.find((line) => line.id === item.id);
+    if (quoted) return quoted;
+    return outletDrafts[item.id] || emptyOutletLine(item);
+  };
+
+  const writeOutletLine = (item: TarifaProduct, next: OutletLine) => {
+    setOutletDrafts((current) => ({ ...current, [item.id]: next }));
+    setOutletQuote((current) => current.map((line) => (line.id === item.id ? next : line)));
+  };
+
+  const toggleOutlet = (item: TarifaProduct) => {
+    const next = outletLineOf(item);
+    setOutletDrafts((current) => ({ ...current, [item.id]: next }));
+    setOutletQuote((current) => (
+      current.some((line) => line.id === item.id)
+        ? current.filter((line) => line.id !== item.id)
+        : [...current, next]
+    ));
   };
 
   const addToPack = (item: TarifaProduct, chosenFee = fee, age?: TarifaAge) => {
@@ -1026,6 +1161,9 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     resetPacks();
     setCompare([]);
     setCompareOpen(false);
+    setOutletQuote([]);
+    setOutletDrafts({});
+    setQuoteOpen(false);
     clearFilters();
   };
 
@@ -1073,6 +1211,14 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       .filter(Boolean)
       .join('_');
     XLSX.writeFile(workbook, `Pack_${slug || channel.toUpperCase()}.xlsx`);
+  };
+
+  const downloadOutletQuote = async () => {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+    const table = outletQuoteExportRows(products, outletQuote, copy.outletHeaders, localeTag);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(table), 'Outlet');
+    XLSX.writeFile(workbook, 'Outlet_seleccion.xlsx');
   };
 
   const importSheets = async (sheets: Record<string, unknown[][]>, outlet = false) => {
@@ -1228,7 +1374,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
           </div>
         )}
 
-        {shopTab ? (
+        {shopTab && !inOutlet ? (
           <div>
             <p className="mb-2 hidden text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400 sm:block">{copy.tariff}</p>
             <div className="flex flex-wrap gap-2">
@@ -1523,10 +1669,26 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         </p>
                         <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{item.name}</p>
                         <p className="truncate text-[11px] text-neutral-500">{item.colour}</p>
-                        <p className="pt-1 font-display text-lg font-semibold tabular-nums">{euro(sellPrice(item, channel, fee, 'adult'))}</p>
-                        <PvpLines item={item} channel={channel} mode={ages} copy={copy} localeTag={localeTag} />
+                        {inOutlet ? null : (
+                          <>
+                            <p className="pt-1 font-display text-lg font-semibold tabular-nums">{euro(sellPrice(item, channel, fee, 'adult'))}</p>
+                            <PvpLines item={item} channel={channel} mode={ages} copy={copy} localeTag={localeTag} />
+                          </>
+                        )}
                       </div>
                     </button>
+                    {inOutlet && shopTab ? (
+                      <div className="px-3 pb-3">
+                        <OutletPriceControl
+                          item={item}
+                          line={outletLineOf(item)}
+                          copy={copy}
+                          euro={euro}
+                          pct={pct}
+                          onChange={(next) => writeOutletLine(item, next)}
+                        />
+                      </div>
+                    ) : null}
                     {shopTab ? (
                       <div className="flex gap-2 px-3 pb-3">
                         <button
@@ -1541,7 +1703,19 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         >
                           <Columns2 className="h-3.5 w-3.5" /> {compare.includes(item.id) ? copy.compareOn : copy.compare}
                         </button>
-                        {!inOutlet ? (
+                        {inOutlet ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleOutlet(item)}
+                            className={`inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-full border text-[11px] font-semibold ${
+                              outletQuote.some((line) => line.id === item.id)
+                                ? 'border-neutral-900 bg-neutral-900 text-white'
+                                : 'border-neutral-200 text-neutral-700 hover:bg-neutral-50'
+                            }`}
+                          >
+                            <Plus className="h-3.5 w-3.5" /> {outletQuote.some((line) => line.id === item.id) ? copy.chosenOutlet : copy.chooseOutlet}
+                          </button>
+                        ) : (
                           <button
                             type="button"
                             onClick={() => addToPack(item)}
@@ -1549,7 +1723,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           >
                             <Plus className="h-3.5 w-3.5" /> {copy.addToPack}
                           </button>
-                        ) : null}
+                        )}
                       </div>
                     ) : null}
                   </article>
@@ -1887,7 +2061,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         )}
       </div>
 
-      {shopTab && !compareOpen && !packCompareOpen && (compare.length > 0 || !inOutlet) ? (
+      {shopTab && !compareOpen && !packCompareOpen && !quoteOpen ? (
         <div className="z-40 max-md:fixed max-md:inset-x-3 max-md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] max-md:flex max-md:items-end max-md:gap-2 md:contents">
           {compare.length > 0 ? (
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-lg md:fixed md:bottom-5 md:left-5 md:max-w-[min(100%-2.5rem,42rem)]">
@@ -1912,7 +2086,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               </button>
             </div>
           ) : null}
-          {!inOutlet ? (
+          {inOutlet ? (
+            <button
+              type="button"
+              onClick={() => setQuoteOpen(true)}
+              className="inline-flex shrink-0 items-center gap-2 rounded-full bg-neutral-900 px-4 py-3 text-sm font-semibold text-white shadow-lg max-md:ml-auto md:fixed md:bottom-5 md:right-5"
+            >
+              <ShoppingBag className="h-4 w-4" />
+              {copy.outletPick}
+              {outletQuote.length > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{outletQuote.length}</span> : null}
+            </button>
+          ) : (
             <button
               type="button"
               onClick={() => setCartOpen(true)}
@@ -1922,7 +2106,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
               {copy.pack}
               {pack.length > 0 ? <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-900">{pack.length}</span> : null}
             </button>
-          ) : null}
+          )}
         </div>
       ) : null}
 
@@ -2045,6 +2229,84 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         </div>
       ) : null}
 
+      {quoteOpen ? (
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 bg-neutral-900/30" aria-label={copy.close} onClick={() => setQuoteOpen(false)} />
+          <aside className="absolute inset-y-0 right-0 flex h-[100dvh] w-full max-w-md flex-col bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.outlet}</p>
+                <h3 className="font-display text-2xl font-semibold">{copy.outletPickTitle}</h3>
+              </div>
+              <button type="button" onClick={() => setQuoteOpen(false)} className="rounded-md p-1 text-neutral-400" aria-label={copy.close}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto">
+              {outletQuote.length === 0 ? (
+                <p className="px-5 py-12 text-sm text-neutral-400">{copy.emptyOutletPick}</p>
+              ) : (
+                <ul className="divide-y divide-neutral-100">
+                  {outletQuote.map((line) => {
+                    const item = byId.get(line.id);
+                    if (!item) return null;
+                    return (
+                      <li key={line.id} className="space-y-3 px-5 py-4">
+                        <div className="flex gap-3">
+                          <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-neutral-50">
+                            <TarifasPhoto src={item.image} alt={item.name} className="h-full w-full p-1" onOpen={item.image ? openPhoto : undefined} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
+                            <p className="truncate text-sm font-semibold">{item.name}</p>
+                            <p className="text-[11px] text-neutral-500">{item.colour}</p>
+                            <p className="mt-1 font-mono text-[10px] text-neutral-500">{activeRef(item, lineAge(line)) || '—'}</p>
+                          </div>
+                          <button type="button" onClick={() => setOutletQuote((current) => current.filter((row) => row.id !== line.id))} className="p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <OutletPriceControl
+                          item={item}
+                          line={line}
+                          copy={copy}
+                          euro={euro}
+                          pct={pct}
+                          onChange={(next) => writeOutletLine(item, next)}
+                        />
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <div className="border-t border-neutral-100 px-5 py-4">
+              <p className="font-display text-3xl font-semibold tabular-nums">
+                {euro(quoteTotals.sale)}
+                <span className="ml-2 text-sm font-medium text-neutral-400">{copy.vatIncluded}</span>
+              </p>
+              <p className={`mt-1 text-[11px] ${marginTone(quoteTotals.margin)}`}>
+                {copy.cost} {euro(quoteTotals.cost)} · {copy.margin} {pct(quoteTotals.margin)}
+              </p>
+              <div className="mt-3 flex gap-2">
+                {outletQuote.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void downloadOutletQuote()}
+                    className="inline-flex h-11 flex-1 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                  >
+                    {copy.exportOutlet}
+                  </button>
+                ) : null}
+                {outletQuote.length > 0 ? (
+                  <button type="button" onClick={() => setOutletQuote([])} className="h-11 rounded-full px-3 text-xs font-semibold text-neutral-500">{copy.clearOutlet}</button>
+                ) : null}
+              </div>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {open && draft ? (
         <div className="abonos-modal-backdrop" onClick={() => { setOpen(null); setDraft(null); }}>
           <div
@@ -2111,7 +2373,20 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       </p>
                     ) : null}
 
-                    <p className="mt-4 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{copy.atPrice} · {channel.toUpperCase()}</p>
+                    <p className="mt-4 text-[11px] uppercase tracking-[0.12em] text-neutral-400">{inOutlet ? copy.yourPrice : `${copy.atPrice} · ${channel.toUpperCase()}`}</p>
+                    {inOutlet ? (
+                      <div className="mt-2 space-y-3 rounded-xl border border-neutral-200 p-3">
+                        <p className="text-[11px] text-neutral-400">PVP {euro(rrpPrice(draft, 'b2c', outletLineOf(draft).age))}</p>
+                        <OutletPriceControl
+                          item={draft}
+                          line={outletLineOf(draft)}
+                          copy={copy}
+                          euro={euro}
+                          pct={pct}
+                          onChange={(next) => writeOutletLine(draft, next)}
+                        />
+                      </div>
+                    ) : (
                     <div className="mt-2 overflow-hidden rounded-xl border border-neutral-200">
                       <table className="w-full text-sm">
                         <tbody>
@@ -2140,6 +2415,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         </tbody>
                       </table>
                     </div>
+                    )}
                     {colourways(products, draft).length > 1 ? (
                       <div className="mt-4">
                         <p className="text-[11px] uppercase tracking-[0.12em] text-neutral-400">{copy.colours}</p>
@@ -2187,7 +2463,23 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         >
                           <Columns2 className="h-4 w-4" /> {compare.includes(draft.id) ? copy.compareOn : copy.compare}
                         </button>
-                        {!inOutlet ? (
+                        {inOutlet ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = outletLineOf(draft);
+                              writeOutletLine(draft, next);
+                              setOutletQuote((current) => (
+                                current.some((line) => line.id === draft.id) ? current : [...current, next]
+                              ));
+                              setOpen(null);
+                              setDraft(null);
+                            }}
+                            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-neutral-900 text-sm font-semibold text-white"
+                          >
+                            <Plus className="h-4 w-4" /> {outletQuote.some((line) => line.id === draft.id) ? copy.chosenOutlet : copy.chooseOutlet}
+                          </button>
+                        ) : (
                           <button
                             type="button"
                             onClick={() => { addToPack(draft, fee, sheetAge); setOpen(null); setDraft(null); }}
@@ -2195,7 +2487,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                           >
                             <Plus className="h-4 w-4" /> {copy.addToPack}
                           </button>
-                        ) : null}
+                        )}
                       </div>
                     </div>
                   </>
@@ -2422,7 +2714,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     </div>
                   );
                 })}
-                rows={compareRows(compareItems, channel, fees, copy, euro).map((row) => ({
+                rows={compareRows(compareItems, channel, fees, copy, euro, inOutlet).map((row) => ({
                   section: row.section,
                   label: row.label,
                   values: row.values,

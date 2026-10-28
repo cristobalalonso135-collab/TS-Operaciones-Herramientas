@@ -5,8 +5,11 @@ import {
   fueraPackPrice,
   lineAge,
   lineMargin,
+  marginPct,
+  outletCost,
   rrpPrice,
   sellPrice,
+  type OutletLine,
   type PackLine,
   type TarifaChannel,
   type TarifaProduct,
@@ -336,6 +339,42 @@ export function packExportRows(
       formatEuro(fueraPackPrice(item, channel), locale),
       formatEuro(rrpPrice(item, channel, age), locale),
       formatPct(lineMargin(item, channel, line.fee, age), locale),
+    ];
+  });
+  return [header, ...body];
+}
+
+export function outletQuoteExportRows(
+  products: TarifaProduct[],
+  lines: OutletLine[],
+  headers?: string[],
+  locale = 'es-ES',
+): unknown[][] {
+  const byId = new Map(products.map((item) => [item.id, item]));
+  const header = headers || [
+    'Número',
+    'Referencia',
+    'Producto',
+    'Nombre',
+    'Color',
+    'Coste',
+    'Precio',
+    'Margen %',
+  ];
+  const body = lines.map((line, index) => {
+    const item = byId.get(line.id);
+    if (!item) return [index + 1, '', '', '', '', '', line.priceInput || line.price || 0, ''];
+    const age = lineAge(line);
+    const cost = outletCost(item, age);
+    return [
+      index + 1,
+      age === 'youth' ? item.youthRef || item.adultRef : item.adultRef || item.youthRef,
+      item.productType,
+      item.name,
+      item.colour,
+      formatEuro(cost, locale),
+      formatEuro(line.price, locale),
+      formatPct(marginPct(line.price, cost), locale),
     ];
   });
   return [header, ...body];
