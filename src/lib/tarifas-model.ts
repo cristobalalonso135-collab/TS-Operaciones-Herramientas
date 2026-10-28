@@ -166,38 +166,6 @@ function asNovelty(value: unknown): TarifaNovelty | '' {
   return '';
 }
 
-function inferSport(item: Pick<TarifaProduct, 'productType' | 'name'>): TarifaSport {
-  const text = `${item.productType} ${item.name}`.toLocaleLowerCase('es');
-  if (text.includes('basket') || text.includes('baloncesto')) return 'Baloncesto';
-  if (text.includes('balonmano') || text.includes('handball')) return 'Balonmano';
-  return 'Fútbol';
-}
-
-function inferGender(item: Pick<TarifaProduct, 'productType' | 'name'>): TarifaGender {
-  const text = `${item.productType} ${item.name}`.toLocaleLowerCase('es');
-  if (text.includes('falda') || text.includes('mujer') || text.includes('women')) return 'Mujer';
-  return 'Unisex';
-}
-
-function inferKind(item: Pick<TarifaProduct, 'productType'>): TarifaKind {
-  const type = item.productType.toLocaleLowerCase('es');
-  const kit = ['camiseta', 'pantalón corto', 'pantalon corto', 'medias', 'polo', 'peto', 'falda', 'top'];
-  if (type.includes('algodón') || type.includes('algodon') || type.includes('térmica') || type.includes('termica')) {
-    return 'Catálogo';
-  }
-  return kit.some((name) => type.includes(name)) ? 'Personalizable' : 'Catálogo';
-}
-
-function inferCollection(item: Pick<TarifaProduct, 'name' | 'productType' | 'collection'>): string {
-  if (item.collection) return item.collection;
-  const name = item.name.trim();
-  const type = item.productType.trim();
-  if (type && name.toLocaleLowerCase('es').startsWith(type.toLocaleLowerCase('es'))) {
-    return name.slice(type.length).trim();
-  }
-  return name;
-}
-
 export function emptyProduct(): TarifaProduct {
   const b2c = emptyFees();
   return {
@@ -259,30 +227,26 @@ export function asProduct(value: unknown): TarifaProduct {
     youthRef: String(row.youthRef || ''),
     colorHex: row.colorHex || null,
     image: row.image || null,
-    sport: String(row.sport || '').trim() ? asSport(row.sport, seed.sport) : inferSport({ productType: String(row.productType || ''), name: String(row.name || '') }),
-    gender: String(row.gender || '').trim() ? asGender(row.gender, seed.gender) : inferGender({ productType: String(row.productType || ''), name: String(row.name || '') }),
-    kind: String(row.kind || '').trim() ? asKind(row.kind, seed.kind) : inferKind({ productType: String(row.productType || '') }),
+    sport: String(row.sport || '').trim() ? asSport(row.sport, seed.sport) : seed.sport,
+    gender: String(row.gender || '').trim() ? asGender(row.gender, seed.gender) : seed.gender,
+    kind: String(row.kind || '').trim() ? asKind(row.kind, seed.kind) : seed.kind,
     collection: String(row.collection || ''),
-    season: String(row.season || seed.season),
+    season: row.season == null ? seed.season : String(row.season),
     novelty: asNovelty(row.novelty),
     outlet: Boolean(row.outlet),
     stock,
     b2c: { ...seed.b2c, ...(row.b2c || {}) },
     b2b: { ...seed.b2b, ...(row.b2b || {}) },
   };
-  return {
-    ...base,
-    collection: inferCollection(base),
-    season: base.season || '26/27',
-  };
+  return base;
 }
 
 export function sportOf(item: TarifaProduct): TarifaSport {
-  return item.sport || inferSport(item);
+  return item.sport;
 }
 
 export function kindOf(item: TarifaProduct): TarifaKind {
-  return item.kind || inferKind(item);
+  return item.kind;
 }
 
 export function familyKey(item: TarifaProduct): string {

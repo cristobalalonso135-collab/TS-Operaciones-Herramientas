@@ -5,7 +5,19 @@ import { createPortal } from 'react-dom';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import catalog from '@/data/tarifas-catalog.json';
-import { catalogExportRows, moneyFromInput, outletQuoteExportRows, packExportRows, parseTarifasSheets } from '@/lib/tarifas-excel';
+import {
+  b2bExportRows,
+  b2cExportRows,
+  mergeKeptPrices,
+  moneyFromInput,
+  outletExportRows,
+  outletQuoteExportRows,
+  overlayChannelPrices,
+  packExportRows,
+  parseTarifasWorkbook,
+  productExportRows,
+  type IngestZone,
+} from '@/lib/tarifas-excel';
 import {
   GENDERS,
   KINDS,
@@ -526,6 +538,46 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{label}</span>
       {children}
     </label>
+  );
+}
+
+function IngestCard({
+  kicker,
+  hint,
+  inputId,
+  label,
+  onWorkbook,
+  downloadLabel,
+  onDownload,
+  extra,
+}: {
+  kicker: string;
+  hint: string;
+  inputId: string;
+  label: string;
+  onWorkbook: (sheets: Record<string, unknown[][]>) => void;
+  downloadLabel: string;
+  onDownload: () => void;
+  extra?: ReactNode;
+}) {
+  return (
+    <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{kicker}</p>
+      <p className="text-sm text-neutral-500">{hint}</p>
+      <FileUpload
+        label={label}
+        inputId={inputId}
+        compact
+        onFileLoaded={() => undefined}
+        onWorkbookLoaded={(sheets) => onWorkbook(sheets)}
+      />
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={onDownload} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
+          <Download className="h-4 w-4" /> {downloadLabel}
+        </button>
+        {extra}
+      </div>
+    </div>
   );
 }
 
@@ -1184,15 +1236,19 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     setDraft(saved);
   };
 
-  const downloadZone = async (outlet: boolean) => {
-    const rows = products.filter((item) => (outlet ? item.outlet : !item.outlet));
+  const downloadSheet = async (rows: unknown[][], sheet: string, filename: string) => {
     const XLSX = await import('xlsx');
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(catalogExportRows(rows)), outlet ? 'Outlet' : 'Tarifas');
-    XLSX.writeFile(workbook, outlet ? 'Tarifas_outlet.xlsx' : 'Tarifas_maestro.xlsx');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), sheet);
+    XLSX.writeFile(workbook, filename);
   };
 
-  const downloadCatalog = () => downloadZone(false);
+  const liveProducts = () => products.filter((item) => !item.outlet);
+  const outletProducts = () => products.filter((item) => item.outlet);
+  const downloadCatalog = () => downloadSheet(productExportRows(liveProducts()), 'Productos', 'Tarifas_productos.xlsx');
+  const downloadB2c = () => downloadSheet(b2cExportRows(liveProducts()), 'B2C', 'Tarifas_B2C.xlsx');
+  const downloadB2b = () => downloadSheet(b2bExportRows(liveProducts()), 'B2B', 'Tarifas_B2B.xlsx');
+  const downloadOutletZone = () => downloadSheet(outletExportRows(outletProducts()), 'Outlet', 'Tarifas_outlet.xlsx');
 
   const downloadPack = async () => {
     const XLSX = await import('xlsx');
@@ -1221,25 +1277,64 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     XLSX.writeFile(workbook, 'Outlet_seleccion.xlsx');
   };
 
-  const importSheets = async (sheets: Record<string, unknown[][]>, outlet = false) => {
-    const parsed = parseTarifasSheets(sheets);
-    if (parsed.length === 0) {
-      setStatus(copy.emptyExcel);
-      return;
-    }
-    const keep = products.filter((item) => (outlet ? !item.outlet : item.outlet));
-    const source = products.filter((item) => (outlet ? item.outlet : !item.outlet));
+  const withPhotos = (incoming: TarifaProduct[], source: TarifaProduct[], markOutlet: boolean) => {
     const photos = new Map<string, string>();
     source.forEach((item) => {
       if (!item.image) return;
       if (item.adultRef) photos.set(item.adultRef, item.image);
       if (item.youthRef) photos.set(item.youthRef, item.image);
     });
-    const incoming = parsed.map((item) => {
+    return incoming.map((item) => {
       const withPhoto = item.image ? item : { ...item, image: photos.get(item.adultRef) || photos.get(item.youthRef) || null };
-      return outlet ? asOutletProduct(withPhoto) : { ...withPhoto, outlet: false };
+      return markOutlet ? asOutletProduct(withPhoto) : { ...withPhoto, outlet: false };
     });
-    await persist(outlet ? [...keep, ...incoming] : [...incoming, ...keep]);
+  };
+
+  const importZone = async (sheets: Record<string, unknown[][]>, zone: IngestZone) => {
+    const parsed = parseTarifasWorkbook(sheets);
+    const live = liveProducts();
+    const outletKeep = outletProducts();
+
+    if (zone === 'outlet') {
+      const source = parsed.outlet.length ? parsed.outlet : parsed.combined;
+      if (!source.length) {
+        setStatus(copy.emptyExcel);
+        return;
+      }
+      const incoming = withPhotos(source, outletKeep, true);
+      await persist([...live, ...incoming]);
+      setStatus(`${incoming.length.toLocaleString(localeTag)} ${copy.imported}`);
+      return;
+    }
+
+    if (zone === 'b2c' || zone === 'b2b') {
+      const rows = zone === 'b2c'
+        ? (parsed.b2c.length ? parsed.b2c : parsed.combined.map((item) => ({ adultRef: item.adultRef, youthRef: item.youthRef, b2c: item.b2c })))
+        : (parsed.b2b.length ? parsed.b2b : parsed.combined.map((item) => ({ adultRef: item.adultRef, youthRef: item.youthRef, b2b: item.b2b })));
+      if (!rows.length) {
+        setStatus(copy.emptyExcel);
+        return;
+      }
+      const result = overlayChannelPrices(live, rows, zone);
+      if (result.applied === 0) {
+        setStatus(copy.emptyExcel);
+        return;
+      }
+      await persist([...result.products, ...outletKeep]);
+      const missing = result.missing ? ` ${result.missing.toLocaleString(localeTag)} ${copy.importedMissing}` : '';
+      setStatus(`${result.applied.toLocaleString(localeTag)} ${copy.importedPrices}${missing}`);
+      return;
+    }
+
+    const source = parsed.productos.length ? parsed.productos : parsed.combined;
+    if (!source.length) {
+      setStatus(copy.emptyExcel);
+      return;
+    }
+    let incoming = withPhotos(mergeKeptPrices(source, live), live, false);
+    if (parsed.b2c.length) incoming = overlayChannelPrices(incoming, parsed.b2c, 'b2c').products;
+    if (parsed.b2b.length) incoming = overlayChannelPrices(incoming, parsed.b2b, 'b2b').products;
+    await persist([...incoming, ...outletKeep]);
     setStatus(`${incoming.length.toLocaleString(localeTag)} ${copy.imported}`);
   };
 
@@ -1396,71 +1491,75 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
         ) : tab === 'catalogo' || tab === 'maestro' ? (
           <>
             {tab === 'maestro' ? (
-              <div className="grid gap-3 lg:grid-cols-2">
-                <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
-                  <p className="text-sm text-neutral-500">
-                    {copy.masterHint}
-                  </p>
-                  <FileUpload
+              <div className="space-y-3">
+                <p className="text-sm text-neutral-500">{copy.masterHint}</p>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <IngestCard
+                    kicker={copy.sectionProduct}
+                    hint={copy.masterUploadHint}
+                    inputId="tarifas-productos"
                     label={copy.masterUpload}
-                    hint={copy.masterUploadHint}
-                    inputId="tarifas-maestro"
-                    compact
-                    onFileLoaded={() => undefined}
-                    onWorkbookLoaded={(sheets) => importSheets(sheets, false)}
+                    onWorkbook={(sheets) => void importZone(sheets, 'productos')}
+                    downloadLabel={copy.downloadMaster}
+                    onDownload={() => void downloadCatalog()}
+                    extra={(
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const created = emptyProduct();
+                          created.season = '26/27';
+                          created.outlet = false;
+                          openItem(created);
+                        }}
+                        className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
+                      >
+                        <Plus className="h-4 w-4" /> {copy.newReference}
+                      </button>
+                    )}
                   />
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={downloadCatalog} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
-                      <Download className="h-4 w-4" /> {copy.downloadMaster}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const created = emptyProduct();
-                        created.season = '26/27';
-                        created.outlet = false;
-                        openItem(created);
-                      }}
-                      className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
-                    >
-                      <Plus className="h-4 w-4" /> {copy.newReference}
-                    </button>
-                  </div>
-                  {status ? <p className="text-xs text-neutral-500">{status}</p> : null}
-                  {setupSql ? (
-                    <p className="text-xs text-amber-700">
-                      {copy.setupSql}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="space-y-3 rounded-2xl border border-neutral-200 p-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.outlet}</p>
-                  <p className="text-sm text-neutral-500">{copy.outletHint}</p>
-                  <FileUpload
-                    label={copy.outletUpload}
-                    hint={copy.masterUploadHint}
+                  <IngestCard
+                    kicker="B2C"
+                    hint={copy.b2cIngestHint}
+                    inputId="tarifas-b2c"
+                    label={copy.b2cUpload}
+                    onWorkbook={(sheets) => void importZone(sheets, 'b2c')}
+                    downloadLabel={copy.downloadB2c}
+                    onDownload={() => void downloadB2c()}
+                  />
+                  <IngestCard
+                    kicker="B2B"
+                    hint={copy.b2bIngestHint}
+                    inputId="tarifas-b2b"
+                    label={copy.b2bUpload}
+                    onWorkbook={(sheets) => void importZone(sheets, 'b2b')}
+                    downloadLabel={copy.downloadB2b}
+                    onDownload={() => void downloadB2b()}
+                  />
+                  <IngestCard
+                    kicker={copy.outlet}
+                    hint={copy.outletHint}
                     inputId="tarifas-outlet"
-                    compact
-                    onFileLoaded={() => undefined}
-                    onWorkbookLoaded={(sheets) => importSheets(sheets, true)}
+                    label={copy.outletUpload}
+                    onWorkbook={(sheets) => void importZone(sheets, 'outlet')}
+                    downloadLabel={copy.downloadOutlet}
+                    onDownload={() => void downloadOutletZone()}
+                    extra={(
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const created = asOutletProduct(emptyProduct());
+                          created.season = '';
+                          openItem(created);
+                        }}
+                        className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
+                      >
+                        <Plus className="h-4 w-4" /> {copy.newOutletRef}
+                      </button>
+                    )}
                   />
-                  <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => downloadZone(true)} className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold">
-                      <Download className="h-4 w-4" /> {copy.downloadOutlet}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const created = asOutletProduct(emptyProduct());
-                        created.season = '';
-                        openItem(created);
-                      }}
-                      className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white"
-                    >
-                      <Plus className="h-4 w-4" /> {copy.newOutletRef}
-                    </button>
-                  </div>
                 </div>
+                {status ? <p className="text-xs text-neutral-500">{status}</p> : null}
+                {setupSql ? <p className="text-xs text-amber-700">{copy.setupSql}</p> : null}
               </div>
             ) : null}
             {tab === 'maestro' && totpUri ? (
@@ -2493,9 +2592,10 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   </>
                 ) : (
                   <div className="mt-4 grid max-h-[70vh] grid-cols-1 gap-2 overflow-auto pr-1 sm:grid-cols-2">
+                    <p className="col-span-full mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.sectionProduct}</p>
                     <Field label={copy.fieldBrand}><input className={inputClass} value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} /></Field>
                     <Field label={copy.fieldType}><input className={inputClass} value={draft.productType} onChange={(e) => setDraft({ ...draft, productType: e.target.value })} /></Field>
-                    <div className="col-span-2">
+                    <div className="col-span-full">
                       <Field label={copy.fieldName}><input className={inputClass} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
                     </div>
                     <Field label={copy.fieldColour}><input className={inputClass} value={draft.colour} onChange={(e) => setDraft({ ...draft, colour: e.target.value })} /></Field>
@@ -2526,24 +2626,38 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     <Field label={copy.fieldCollection}><input className={inputClass} value={draft.collection} onChange={(e) => setDraft({ ...draft, collection: e.target.value })} /></Field>
                     <Field label={copy.fieldSeason}><input className={inputClass} value={draft.season} onChange={(e) => setDraft({ ...draft, season: e.target.value })} /></Field>
                     <Field label={copy.fieldRed}><input className={inputClass} type="date" value={draft.red || ''} onChange={(e) => setDraft({ ...draft, red: e.target.value || null })} /></Field>
-                    <Field label="B2C PVP adulto"><input className={inputClass} value={draft.b2c.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C PVP niño"><input className={inputClass} value={draft.b2c.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C Fee 1"><input className={inputClass} value={draft.b2c.fee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee1: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C Fee 2"><input className={inputClass} value={draft.b2c.fee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee2: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C Fee 3"><input className={inputClass} value={draft.b2c.fee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee3: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C Fee 4"><input className={inputClass} value={draft.b2c.fee4 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee4: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C Neto adulto"><input className={inputClass} value={draft.b2c.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultNet: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2C Neto niño"><input className={inputClass} value={draft.b2c.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthNet: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B PVP adulto"><input className={inputClass} value={draft.b2b.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B PVP niño"><input className={inputClass} value={draft.b2b.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Fee 1 adulto"><input className={inputClass} value={draft.b2b.adultFee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee1: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Fee 1 niño"><input className={inputClass} value={draft.b2b.youthFee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee1: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Fee 2 adulto"><input className={inputClass} value={draft.b2b.adultFee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee2: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Fee 2 niño"><input className={inputClass} value={draft.b2b.youthFee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee2: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Fee 3 adulto"><input className={inputClass} value={draft.b2b.adultFee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee3: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Fee 3 niño"><input className={inputClass} value={draft.b2b.youthFee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee3: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Neto adulto"><input className={inputClass} value={draft.b2b.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultNet: moneyFromInput(e.target.value) } })} /></Field>
-                    <Field label="B2B Neto niño"><input className={inputClass} value={draft.b2b.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthNet: moneyFromInput(e.target.value) } })} /></Field>
+                    {draft.outlet ? (
+                      <>
+                        <p className="col-span-full mt-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.outlet}</p>
+                        <Field label={copy.fieldCostAdult}><input className={inputClass} value={draft.b2c.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultNet: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label={copy.fieldCostYouth}><input className={inputClass} value={draft.b2c.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthNet: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label={copy.fieldPvpAdult}><input className={inputClass} value={draft.b2c.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label={copy.fieldPvpYouth}><input className={inputClass} value={draft.b2c.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
+                      </>
+                    ) : (
+                      <>
+                        <p className="col-span-full mt-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.sectionB2c}</p>
+                        <Field label="B2C PVP adulto"><input className={inputClass} value={draft.b2c.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C PVP niño"><input className={inputClass} value={draft.b2c.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C Fee 1"><input className={inputClass} value={draft.b2c.fee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee1: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C Fee 2"><input className={inputClass} value={draft.b2c.fee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee2: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C Fee 3"><input className={inputClass} value={draft.b2c.fee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee3: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C Fee 4"><input className={inputClass} value={draft.b2c.fee4 ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, fee4: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C Neto adulto"><input className={inputClass} value={draft.b2c.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, adultNet: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2C Neto niño"><input className={inputClass} value={draft.b2c.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2c: { ...draft.b2c, youthNet: moneyFromInput(e.target.value) } })} /></Field>
+                        <p className="col-span-full mt-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{copy.sectionB2b}</p>
+                        <Field label="B2B PVP adulto"><input className={inputClass} value={draft.b2b.adultRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultRrp: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B PVP niño"><input className={inputClass} value={draft.b2b.youthRrp ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthRrp: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Fee 1 adulto"><input className={inputClass} value={draft.b2b.adultFee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee1: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Fee 1 niño"><input className={inputClass} value={draft.b2b.youthFee1 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee1: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Fee 2 adulto"><input className={inputClass} value={draft.b2b.adultFee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee2: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Fee 2 niño"><input className={inputClass} value={draft.b2b.youthFee2 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee2: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Fee 3 adulto"><input className={inputClass} value={draft.b2b.adultFee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultFee3: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Fee 3 niño"><input className={inputClass} value={draft.b2b.youthFee3 ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthFee3: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Neto adulto"><input className={inputClass} value={draft.b2b.adultNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, adultNet: moneyFromInput(e.target.value) } })} /></Field>
+                        <Field label="B2B Neto niño"><input className={inputClass} value={draft.b2b.youthNet ?? ''} onChange={(e) => setDraft({ ...draft, b2b: { ...draft.b2b, youthNet: moneyFromInput(e.target.value) } })} /></Field>
+                      </>
+                    )}
                     <div className="col-span-2 mt-2 flex gap-2">
                       <button type="button" onClick={saveDraft} className="inline-flex h-11 flex-1 items-center justify-center rounded-full bg-neutral-900 text-sm font-semibold text-white">
                         {copy.saveRef}
