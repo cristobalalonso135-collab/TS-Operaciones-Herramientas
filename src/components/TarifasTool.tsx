@@ -61,7 +61,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, LayoutGrid, Lock, LogOut, Plus, Search, ShoppingBag, Table2, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Copy, Download, Info, LayoutGrid, Lock, LogOut, Plus, Search, ShoppingBag, Table2, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -833,6 +833,17 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
     setPack((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
 
+  const movePackLine = (index: number, dir: -1 | 1) => {
+    setPack((current) => {
+      const next = index + dir;
+      if (next < 0 || next >= current.length) return current;
+      const ordered = [...current];
+      const [line] = ordered.splice(index, 1);
+      ordered.splice(next, 0, line);
+      return ordered;
+    });
+  };
+
   const toggleCompare = (id: string) => {
     setCompare((current) => {
       if (current.includes(id)) {
@@ -1562,6 +1573,29 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                         {!item.image ? (
                           <button type="button" onClick={() => openItem(item)} className="absolute inset-0" aria-label={item.name} />
                         ) : null}
+                        <div className="absolute left-2 top-2 z-10 flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={(event) => { event.stopPropagation(); movePackLine(index, -1); }}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-neutral-700 shadow-sm ring-1 ring-black/10 disabled:opacity-30"
+                            aria-label={copy.compareForward}
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          <span className="inline-flex h-8 min-w-[2rem] items-center justify-center rounded-full bg-white px-2 text-[11px] font-semibold tabular-nums text-neutral-500 shadow-sm ring-1 ring-black/10">
+                            {index + 1}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={index === pack.length - 1}
+                            onClick={(event) => { event.stopPropagation(); movePackLine(index, 1); }}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-neutral-700 shadow-sm ring-1 ring-black/10 disabled:opacity-30"
+                            aria-label={copy.compareBack}
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </div>
                         <button
                           type="button"
                           onClick={() => openItem(item)}
@@ -1644,7 +1678,29 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                       const price = sellPrice(item, channel, line.fee, age);
                       return (
                         <tr key={`${line.id}-${line.fee}-${age}`} className="bg-white align-top">
-                          <td className="px-3 py-3 tabular-nums text-neutral-400">{index + 1}</td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-col items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={index === 0}
+                                onClick={() => movePackLine(index, -1)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                                aria-label={copy.compareForward}
+                              >
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              </button>
+                              <span className="text-[11px] tabular-nums text-neutral-400">{index + 1}</span>
+                              <button
+                                type="button"
+                                disabled={index === pack.length - 1}
+                                onClick={() => movePackLine(index, 1)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                                aria-label={copy.compareBack}
+                              >
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
                           <td className="px-3 py-3">
                             <div className="flex gap-3">
                               <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-neutral-100 bg-white sm:h-28 sm:w-28">
@@ -1868,9 +1924,29 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                             <span className="ml-1 text-[10px] font-medium text-neutral-400">{copy.vatIncluded}</span>
                           </p>
                         </div>
-                        <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="self-start p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        <div className="flex flex-col items-center gap-1 self-start">
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={() => movePackLine(index, -1)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                            aria-label={copy.compareForward}
+                          >
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === pack.length - 1}
+                            onClick={() => movePackLine(index, 1)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-30"
+                            aria-label={copy.compareBack}
+                          >
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          </button>
+                          <button type="button" onClick={() => setPack((current) => current.filter((_, i) => i !== index))} className="p-1 text-neutral-400 hover:text-red-600" aria-label={copy.removePack}>
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </li>
                     );
                   })}
