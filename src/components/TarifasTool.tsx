@@ -55,7 +55,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, Download, Info, Lock, LogOut, Plus, Search, ShoppingBag, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -114,15 +114,22 @@ function FilterSelect({
   selected,
   onToggle,
   onClear,
+  onSet,
+  copy,
 }: {
   label: string;
   options: { value: string; label: string }[];
   selected: string[];
   onToggle: (value: string) => void;
   onClear: () => void;
+  onSet: (values: string[]) => void;
+  copy: TarifasCopy;
 }) {
   const [open, setOpen] = useState(false);
+  const [needle, setNeedle] = useState('');
   const root = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchable = options.length > 4;
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (event: MouseEvent) => {
@@ -131,48 +138,95 @@ function FilterSelect({
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
-  const title = selected.length === 0
-    ? label
-    : selected.length === 1
-      ? (options.find((item) => item.value === selected[0])?.label || selected[0])
-      : `${label} · ${selected.length}`;
+  useEffect(() => {
+    if (!open) {
+      setNeedle('');
+      return;
+    }
+    if (searchable) searchRef.current?.focus();
+  }, [open, searchable]);
+  const q = needle.trim().toLocaleLowerCase('es');
+  const visible = q
+    ? options.filter((item) => item.label.toLocaleLowerCase('es').includes(q))
+    : options;
+  const allVisibleOn = visible.length > 0 && visible.every((item) => selected.includes(item.value));
+  const toggleVisible = () => {
+    if (allVisibleOn) {
+      const drop = new Set(visible.map((item) => item.value));
+      onSet(selected.filter((value) => !drop.has(value)));
+      return;
+    }
+    const have = new Set(selected);
+    onSet([...selected, ...visible.map((item) => item.value).filter((value) => !have.has(value))]);
+  };
   return (
-    <div ref={root} className={`relative min-w-[8.5rem] flex-1 ${open ? 'z-30' : ''}`}>
+    <div ref={root} className={`relative shrink-0 ${open ? 'z-30' : ''}`}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={`inline-flex h-10 w-full items-center justify-between gap-1.5 rounded-full border pl-3.5 pr-2.5 text-sm ${
-          selected.length ? 'border-neutral-900 bg-neutral-900 text-white' : 'border-neutral-200 bg-white text-neutral-700'
+        className={`inline-flex h-10 items-center gap-1.5 rounded-full border bg-white pl-3 pr-2 text-sm transition-colors ${
+          selected.length || open
+            ? 'border-neutral-900 text-neutral-900'
+            : 'border-neutral-200 text-neutral-600 hover:border-neutral-300'
         }`}
       >
-        <span className="min-w-0 truncate">{title}</span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 opacity-60 ${open ? 'rotate-180' : ''}`} />
+        <span className="whitespace-nowrap">{label}</span>
+        {selected.length > 0 ? (
+          <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-neutral-900 px-1.5 text-[10px] font-semibold tabular-nums text-white">
+            {selected.length}
+          </span>
+        ) : null}
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-neutral-400 ${open ? 'rotate-180' : ''}`} />
       </button>
       {open ? (
-        <div className="absolute left-0 top-full z-20 mt-1 max-h-72 min-w-[14rem] overflow-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-lg">
-          <button
-            type="button"
-            onClick={onClear}
-            className={`flex w-full px-3 py-1.5 text-left text-sm ${selected.length === 0 ? 'font-semibold text-neutral-900' : 'text-neutral-400'}`}
-          >
-            {label}
-          </button>
-          {options.map((item) => {
-            const on = selected.includes(item.value);
-            return (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => onToggle(item.value)}
-                className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-sm hover:bg-neutral-50"
-              >
-                <span>{item.label}</span>
-                <span className={`inline-flex h-4 w-4 items-center justify-center rounded border ${on ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300'}`}>
-                  {on ? <span className="h-1.5 w-1.5 rounded-sm bg-white" /> : null}
-                </span>
+        <div className="absolute left-0 top-full z-20 mt-1.5 w-64 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_16px_40px_rgba(15,15,15,0.08)]">
+          {searchable ? (
+            <div className="border-b border-neutral-100 p-2">
+              <label className="relative block">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
+                <input
+                  ref={searchRef}
+                  value={needle}
+                  onChange={(event) => setNeedle(event.target.value)}
+                  placeholder={copy.filterSearch}
+                  className="h-9 w-full rounded-xl bg-neutral-50 pl-8 pr-3 text-sm text-neutral-800 outline-none placeholder:text-neutral-400"
+                />
+              </label>
+            </div>
+          ) : null}
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <button
+              type="button"
+              onClick={toggleVisible}
+              disabled={visible.length === 0}
+              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 disabled:opacity-40"
+            >
+              {allVisibleOn ? copy.clearSelection : copy.selectAll}
+            </button>
+            {selected.length > 0 && !allVisibleOn ? (
+              <button type="button" onClick={onClear} className="text-xs text-neutral-400 hover:text-neutral-700">
+                {copy.clearSelection}
               </button>
-            );
-          })}
+            ) : null}
+          </div>
+          <div className="max-h-64 overflow-auto pb-1">
+            {visible.map((item) => {
+              const on = selected.includes(item.value);
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => onToggle(item.value)}
+                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm hover:bg-neutral-50 ${on ? 'text-neutral-900' : 'text-neutral-600'}`}
+                >
+                  <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border ${on ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300 bg-white'}`}>
+                    {on ? <Check className="h-3 w-3 text-white" strokeWidth={3} /> : null}
+                  </span>
+                  <span className="min-w-0 flex-1 leading-snug">{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
@@ -1053,7 +1107,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
             ) : null}
 
             <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+              <div className="flex flex-wrap items-center gap-2">
                 <label className="relative w-[18rem] max-w-full shrink-0">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                   <input
@@ -1069,6 +1123,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   selected={types}
                   onToggle={(value) => setTypes(toggleItem(types, value))}
                   onClear={() => setTypes([])}
+                  onSet={setTypes}
+                  copy={copy}
                 />
                 <FilterSelect
                   label={copy.colour}
@@ -1076,28 +1132,32 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   selected={colours}
                   onToggle={(value) => setColours(toggleItem(colours, value))}
                   onClear={() => setColours([])}
+                  onSet={setColours}
+                  copy={copy}
                 />
-                <div className="relative min-w-[8.5rem] flex-1">
+                <div className="relative shrink-0">
                   <select
                     value={sort}
                     onChange={(e) => setSort(e.target.value as typeof sort)}
-                    className="h-10 w-full appearance-none rounded-full border border-neutral-200 bg-white pl-3.5 pr-8 text-sm"
+                    className="h-10 appearance-none rounded-full border border-neutral-200 bg-white pl-3 pr-8 text-sm text-neutral-600"
                   >
                     <option value="nombre">{copy.sortName}</option>
                     <option value="marca">{copy.sortBrand}</option>
                     <option value="precio">{copy.sortPrice}</option>
                     <option value="pvp">{copy.sortPvp}</option>
                   </select>
-                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+              <div className="flex flex-wrap items-center gap-2">
                 <FilterSelect
                   label={copy.gender}
                   options={facets.genders.map((item) => ({ value: item, label: copy.genders[item] }))}
                   selected={genders}
                   onToggle={(value) => setGenders(toggleItem(genders, value as TarifaGender))}
                   onClear={() => setGenders([])}
+                  onSet={(values) => setGenders(values as TarifaGender[])}
+                  copy={copy}
                 />
                 <FilterSelect
                   label={copy.sport}
@@ -1105,6 +1165,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   selected={sports}
                   onToggle={(value) => setSports(toggleItem(sports, value as TarifaSport))}
                   onClear={() => setSports([])}
+                  onSet={(values) => setSports(values as TarifaSport[])}
+                  copy={copy}
                 />
                 <FilterSelect
                   label={copy.fieldKind}
@@ -1112,6 +1174,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   selected={kinds}
                   onToggle={(value) => setKinds(toggleItem(kinds, value as TarifaKind))}
                   onClear={() => setKinds([])}
+                  onSet={(values) => setKinds(values as TarifaKind[])}
+                  copy={copy}
                 />
                 <FilterSelect
                   label={copy.audience}
@@ -1122,6 +1186,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   selected={ages}
                   onToggle={(value) => setAges(toggleItem(ages, value as TarifaAgeKind))}
                   onClear={() => setAges([])}
+                  onSet={(values) => setAges(values as TarifaAgeKind[])}
+                  copy={copy}
                 />
                 <FilterSelect
                   label={copy.brands}
@@ -1129,6 +1195,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   selected={brands}
                   onToggle={(value) => setBrands(toggleItem(brands, value))}
                   onClear={() => setBrands([])}
+                  onSet={setBrands}
+                  copy={copy}
                 />
                 {facets.novelties.length > 0 ? (
                   <FilterSelect
@@ -1137,6 +1205,8 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                     selected={novelties}
                     onToggle={(value) => setNovelties(toggleItem(novelties, value as TarifaNovelty))}
                     onClear={() => setNovelties([])}
+                    onSet={(values) => setNovelties(values as TarifaNovelty[])}
+                    copy={copy}
                   />
                 ) : null}
                 {filtersOn ? (
