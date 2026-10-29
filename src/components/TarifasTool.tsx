@@ -13,7 +13,6 @@ import {
   outletExportRows,
   outletQuoteExportRows,
   overlayChannelPrices,
-  packExportRows,
   parseTarifasWorkbook,
   productExportRows,
   type IngestZone,
@@ -71,6 +70,7 @@ import { loadReservasCatalog, saveReservasCatalog, type ReservasBackend } from '
 import ReservasPanel from '@/components/ReservasPanel';
 import ReservasMaestro from '@/components/ReservasMaestro';
 import { PhotoLightbox, TarifasPhoto } from '@/components/TarifasPhoto';
+import { buildPackDeck, type PackDeckFormat } from '@/lib/tarifas-pack-payload';
 import {
   TARIFAS_COPY,
   TARIFAS_LOCALES,
@@ -81,7 +81,7 @@ import {
   type TarifasCopy,
   type TarifasLocale,
 } from '@/lib/tarifas-i18n';
-import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Copy, Download, Info, LayoutGrid, Lock, LogOut, Plus, Search, ShoppingBag, Table2, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Copy, Download, FileSpreadsheet, Info, LayoutGrid, Lock, LogOut, Plus, Presentation, Search, ShoppingBag, Table2, Trash2, X } from 'lucide-react';
 
 const ADMIN_KEY = '2627';
 const ADMIN_STORAGE = 'ts-tarifas-admin';
@@ -833,6 +833,7 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const [packs, setPacks] = useState<PackDraft[]>(() => [emptyPackDraft()]);
   const [activePack, setActivePack] = useState(0);
   const [packCompareOpen, setPackCompareOpen] = useState(false);
+  const [packExporting, setPackExporting] = useState<PackDeckFormat | null>(null);
   const [locale, setLocale] = useState<TarifasLocale>('es');
   const [admin, setAdmin] = useState(false);
   const [pin, setPin] = useState('');
@@ -1250,23 +1251,40 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
   const downloadB2b = () => downloadSheet(b2bExportRows(liveProducts()), 'B2B', 'Tarifas_B2B.xlsx');
   const downloadOutletZone = () => downloadSheet(outletExportRows(outletProducts()), 'Outlet', 'Tarifas_outlet.xlsx');
 
-  const downloadPack = async () => {
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    const table = packExportRows(products, pack, channel, copy.packHeaders, localeTag);
-    const sheet = [
-      [copy.packName, packName.trim() || copy.pack],
-      [copy.fieldSeason, packSeason.trim() || '—'],
-      [copy.tariff, channel.toUpperCase()],
-      [],
-      ...table,
-    ];
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheet), 'Pack');
-    const slug = [packName, packSeason, channel.toUpperCase()]
-      .map((part) => part.trim().replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, ''))
-      .filter(Boolean)
-      .join('_');
-    XLSX.writeFile(workbook, `Pack_${slug || channel.toUpperCase()}.xlsx`);
+  const downloadPack = async (format: PackDeckFormat) => {
+    if (!channel || pack.length === 0 || packExporting) return;
+    setPackExporting(format);
+    try {
+      const deck = buildPackDeck({
+        products,
+        lines: pack,
+        channel,
+        name: packName,
+        season: packSeason,
+        copy,
+        locale,
+        localeTag,
+      });
+      const response = await fetch('/api/tarifas-pack-export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format, deck }),
+      });
+      if (!response.ok) throw new Error('export');
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = `${deck.fileSlug}.${format === 'pptx' ? 'pptx' : 'xlsx'}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+    } catch {
+      setStatus(copy.saveError);
+    } finally {
+      setPackExporting(null);
+    }
   };
 
   const downloadOutletQuote = async () => {
@@ -2144,9 +2162,24 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
                   </button>
                 ) : null}
                 {pack.length > 0 ? (
-                  <button type="button" onClick={downloadPack} className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white">
-                    <Download className="h-4 w-4" /> {copy.exportPack}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={Boolean(packExporting)}
+                      onClick={() => void downloadPack('xlsx')}
+                      className="inline-flex h-10 items-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      <FileSpreadsheet className="h-4 w-4" /> {packExporting === 'xlsx' ? copy.exportingPack : copy.exportPackExcel}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(packExporting)}
+                      onClick={() => void downloadPack('pptx')}
+                      className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-200 px-4 text-xs font-semibold disabled:opacity-50"
+                    >
+                      <Presentation className="h-4 w-4" /> {packExporting === 'pptx' ? copy.exportingPack : copy.exportPackPpt}
+                    </button>
+                  </div>
                 ) : null}
                 {pack.length > 0 ? (
                   <button type="button" onClick={() => setPack([])} className="text-xs font-semibold text-neutral-500">{copy.clearPack}</button>
