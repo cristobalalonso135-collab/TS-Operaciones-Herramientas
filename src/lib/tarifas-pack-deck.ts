@@ -161,16 +161,16 @@ function addListadoSlide(
   const avail = 6.6 - startY - 0.3;
   const rowH = Math.min(1.88, avail / Math.max(page.length, 1));
   const photoH = Math.min(rowH - 0.1, 1.7);
-  const photoW = page.length <= 3 ? 1.62 : page.length <= 6 ? 1.32 : 1.14;
+  const photoW = page.length <= 3 ? 1.62 : 1.4;
   const cols = [
     { key: '#', w: 0.4 },
     { key: 'photo', w: photoW },
     { key: 'name', w: 0 },
-    { key: 'ref', w: 1.52 },
-    { key: 'fee', w: 1.48 },
-    { key: 'club', w: 1.38 },
-    { key: 'stamp', w: 1.26 },
-    { key: 'pvp', w: 1.46 },
+    { key: 'ref', w: 1.48 },
+    { key: 'fee', w: 1.38 },
+    { key: 'pvp', w: 1.42 },
+    { key: 'club', w: 1.62 },
+    { key: 'stamp', w: 1.22 },
   ] as const;
   const used = cols.reduce((sum, col) => sum + col.w, 0);
   const widths = cols.map((col) => (col.key === 'name' ? 12.4 - used : col.w));
@@ -182,12 +182,16 @@ function addListadoSlide(
       : col.key === 'name' ? deck.labels.product
       : col.key === 'ref' ? deck.labels.adultRef.replace('adulto', '').replace('niño', '').trim() || 'Ref.'
       : col.key === 'fee' ? deck.labels.fee
+      : col.key === 'pvp' ? 'PVP'
       : col.key === 'club' ? deck.labels.club
-      : col.key === 'stamp' ? deck.labels.stamp
-      : 'PVP';
+      : deck.labels.stamp;
     slide.addText(label.toUpperCase(), {
       x, y: headerY, w: widths[index], h: 0.26,
-      fontFace: 'Arial', fontSize: 9, color: MUTED, margin: 0,
+      fontFace: 'Arial',
+      fontSize: col.key === 'club' ? 10 : 9,
+      bold: col.key === 'club',
+      color: col.key === 'club' ? INK : MUTED,
+      margin: 0,
       align: col.key === 'club' || col.key === 'stamp' || col.key === 'pvp' ? 'right' : 'left',
     });
     x += widths[index];
@@ -195,7 +199,8 @@ function addListadoSlide(
   slide.addShape('rect', {
     x: 0.46, y: headerY + 0.28, w: 12.4, h: 0.01, fill: { color: LINE }, line: { color: LINE },
   });
-  const nameSize = page.length <= 4 ? 14 : page.length <= 8 ? 12 : 11;
+  const nameSize = page.length <= 3 ? 14 : 13;
+  const colX = (index: number) => 0.46 + widths.slice(0, index).reduce((sum, w) => sum + w, 0);
   page.forEach((line, index) => {
     const y = startY + 0.3 + index * rowH;
     slide.addShape('rect', {
@@ -212,9 +217,9 @@ function addListadoSlide(
       { text: '', w: widths[2] },
       { text: line.ref || '—', w: widths[3], color: MUTED, size: 11 },
       { text: `${line.feeLabel} · ${line.ageLabel}`, w: widths[4], size: 11 },
-      { text: euro(line.club, deck.locale), w: widths[5], align: 'right', bold: true },
-      { text: euro(line.stamp, deck.locale), w: widths[6], align: 'right' },
-      { text: euro(line.pvp, deck.locale), w: widths[7], align: 'right', color: MUTED },
+      { text: '', w: widths[5] },
+      { text: '', w: widths[6] },
+      { text: euro(line.stamp, deck.locale), w: widths[7], align: 'right' },
     ];
     cells.forEach((cell) => {
       if (cell.text) {
@@ -230,6 +235,16 @@ function addListadoSlide(
         });
       }
       cx += cell.w;
+    });
+    slide.addText(euro(line.pvp, deck.locale), {
+      x: colX(5), y, w: widths[5], h: rowH,
+      fontFace: 'Arial', fontSize: 12, color: MUTED, strike: true,
+      align: 'right', valign: 'middle', margin: 0.05,
+    });
+    slide.addText(euro(line.club, deck.locale), {
+      x: colX(6), y, w: widths[6], h: rowH,
+      fontFace: 'Arial', fontSize: page.length <= 3 ? 20 : 17, bold: true, color: INK,
+      align: 'right', valign: 'middle', margin: 0.05,
     });
     const nameParts = [
       { text: line.type, options: { fontFace: 'Arial', fontSize: 10, color: MUTED, bold: false, breakLine: true } },
@@ -271,7 +286,7 @@ export async function renderPackPptx(deck: PackDeck): Promise<Buffer> {
   pres.author = 'Teamsports';
   pres.subject = 'Pack Tarifas';
   let offset = 0;
-  chunk(deck.lines, 10).forEach((page) => {
+  chunk(deck.lines, 5).forEach((page) => {
     addListadoSlide(pres, deck, page, images, offset);
     offset += page.length;
   });
