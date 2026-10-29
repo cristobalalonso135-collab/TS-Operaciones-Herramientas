@@ -805,7 +805,7 @@ function packCompareRows(
   ];
 }
 
-export default function TarifasTool({ onBack }: { onBack: () => void }) {
+export default function TarifasTool({ onBack }: { onBack?: () => void }) {
   const [products, setProducts] = useState<TarifaProduct[]>(SEED);
   const [backend, setBackend] = useState<TarifasBackend>('local');
   const [setupSql, setSetupSql] = useState<string>();
@@ -1361,9 +1361,11 @@ export default function TarifasTool({ onBack }: { onBack: () => void }) {
       <div className="tarifas-shell min-h-dvh bg-white px-4 py-6 sm:-mx-6 sm:-mb-8 sm:min-h-[calc(100vh-4.5rem)] sm:px-6 sm:py-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <LangSwitch locale={locale} onChange={pickLocale} copy={copy} />
-          <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
-            <ArrowLeft className="h-4 w-4" /> {copy.tools}
-          </button>
+          {onBack ? (
+            <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm text-neutral-500">
+              <ArrowLeft className="h-4 w-4" /> {copy.tools}
+            </button>
+          ) : null}
         </div>
         <div className="mx-auto mt-8 max-w-2xl text-center sm:mt-16">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-400">Tarifas 26/27</p>

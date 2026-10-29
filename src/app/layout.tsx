@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Manrope, Outfit } from 'next/font/google';
-import { AccessGate, AccessProvider, AccessUserBar } from '@/components/AccessProvider';
+import { AccessProvider, AccessUserBar } from '@/components/AccessProvider';
 import './globals.css';
 
 const manrope = Manrope({
@@ -71,9 +71,7 @@ export default function RootLayout({
               <AccessUserBar />
             </div>
           </nav>
-          <AccessGate>
-            <main className="mx-auto max-w-[1680px] px-6 py-8">{children}</main>
-          </AccessGate>
+          <main className="mx-auto max-w-[1680px] px-6 py-8">{children}</main>
         </AccessProvider>
       </body>
     </html>

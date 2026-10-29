@@ -1,7 +1,10 @@
 import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { cookies } from 'next/headers';
 import { adminPin } from '@/lib/tarifas-totp';
+import { accessRequired } from '@/lib/access-flags';
 import { isAccessRole, normalizeEmail, type AccessRole, type AccessUser } from '@/lib/access-model';
+
+export { accessRequired };
 
 export const ACCESS_COOKIE = 'ts_access';
 export const ACCESS_TTL_SEC = 60 * 60 * 24 * 14;
@@ -90,11 +93,6 @@ export function isBootstrapPin(code: string): boolean {
 
 export function mailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
-}
-
-export function accessRequired(): boolean {
-  const raw = (process.env.ACCESS_REQUIRED || '').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
 export function requireAdminSession(): AccessSession | null {

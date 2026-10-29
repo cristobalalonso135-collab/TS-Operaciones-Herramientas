@@ -805,7 +805,7 @@ export default function Home() {
         id: 'gente' as const,
         number: '13',
         title: 'Gente',
-        description: 'Quién entra y con qué rol. El código les llega al correo.',
+        description: 'Quién entra a Tarifas y con qué rol. El código les llega al correo.',
         tone: 'bg-[#ece7e0] text-[#4a4038]',
         link: 'text-[#4a4038]',
       },

@@ -156,7 +156,7 @@ function AccessLogin() {
       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">TS Operaciones</p>
       <h2 className="mt-3 font-display text-4xl font-semibold tracking-tight">Entra con tu correo</h2>
       <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
-        Te mandamos un código. Solo entra quien esté en la lista.
+        Te mandamos un código para Tarifas. Solo entra quien esté en la lista.
       </p>
       {access.empty ? (
         <p className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-3 text-sm text-[var(--text-secondary)]">

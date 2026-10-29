@@ -116,7 +116,7 @@ export default function UsersTool({ onBack }: { onBack: () => void }) {
         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Acceso</p>
         <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight">Gente</h2>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-[var(--text-secondary)]">
-          Tú eliges el rol. Ellos entran con un código al correo. Si el correo no está configurado en Vercel, te enseño el código y se lo pasas tú.
+          Tú eliges el rol para Tarifas. Ellos entran con un código al correo. El resto de herramientas no las ven. Si el correo no está configurado en Vercel, te enseño el código y se lo pasas tú.
         </p>
       </div>
 
