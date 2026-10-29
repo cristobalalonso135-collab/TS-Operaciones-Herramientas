@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
 import { asUser, type AccessUser } from '@/lib/access-model';
-import { currentSession } from '@/lib/access-session';
+import { requireAdminSession } from '@/lib/access-session';
 import { loadAccessDirectory, saveAccessDirectory } from '@/lib/access-store';
 
 function requireAdmin() {
-  const session = currentSession();
-  if (!session || session.role !== 'admin') return null;
-  return session;
+  return requireAdminSession();
 }
 
 export async function GET() {

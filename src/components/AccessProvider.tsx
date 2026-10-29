@@ -12,6 +12,7 @@ export type AccessMe = {
 type AccessContextValue = {
   user: AccessMe | null;
   loading: boolean;
+  required: boolean;
   mail: boolean;
   empty: boolean;
   setupSql?: string;
@@ -30,6 +31,7 @@ export function useAccess() {
 export function AccessProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AccessMe | null>(null);
   const [loading, setLoading] = useState(true);
+  const [required, setRequired] = useState(false);
   const [mail, setMail] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [setupSql, setSetupSql] = useState<string>();
@@ -38,11 +40,13 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     const response = await fetch('/api/access/me', { cache: 'no-store' });
     const data = await response.json().catch(() => ({})) as {
       user?: AccessMe | null;
+      required?: boolean;
       mail?: boolean;
       empty?: boolean;
       setupSql?: string;
     };
     setUser(data.user || null);
+    setRequired(Boolean(data.required));
     setMail(Boolean(data.mail));
     setEmpty(Boolean(data.empty));
     setSetupSql(data.setupSql);
@@ -58,14 +62,15 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   };
 
   const value = useMemo<AccessContextValue>(() => ({
-    user, loading, mail, empty, setupSql, refresh, logout,
-  }), [user, loading, mail, empty, setupSql]);
+    user, loading, required, mail, empty, setupSql, refresh, logout,
+  }), [user, loading, required, mail, empty, setupSql]);
 
   return <AccessContext.Provider value={value}>{children}</AccessContext.Provider>;
 }
 
 export function AccessGate({ children }: { children: ReactNode }) {
   const access = useAccess();
+  if (!access.required) return <>{children}</>;
   if (access.loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">

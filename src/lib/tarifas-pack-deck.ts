@@ -236,7 +236,7 @@ function addListadoSlide(
       { text: line.name, options: { fontFace: 'Arial', fontSize: nameSize, color: INK, bold: true, breakLine: Boolean(line.colour) } },
     ];
     if (line.colour) {
-      nameParts.push({ text: line.colour, options: { fontFace: 'Arial', fontSize: 11, color: MUTED, bold: false } });
+      nameParts.push({ text: line.colour, options: { fontFace: 'Arial', fontSize: 11, color: MUTED, bold: false, breakLine: false } });
     }
     slide.addText(nameParts, {
       x: 0.46 + widths[0] + widths[1],

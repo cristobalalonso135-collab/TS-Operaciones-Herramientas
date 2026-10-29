@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { sendAccessCode } from '@/lib/access-mail';
-import { currentSession, hashOtp, makeOtpCode, OTP_COOLDOWN_MS } from '@/lib/access-session';
+import { hashOtp, makeOtpCode, OTP_COOLDOWN_MS, requireAdminSession } from '@/lib/access-session';
 import { loadAccessDirectory, saveAccessDirectory } from '@/lib/access-store';
 import { putOtp, resolveUser } from '@/lib/access-auth';
 import { normalizeEmail } from '@/lib/access-model';
 
 export async function POST(request: Request) {
-  const session = currentSession();
-  if (!session || session.role !== 'admin') return NextResponse.json({ error: 'No.' }, { status: 401 });
+  if (!requireAdminSession()) return NextResponse.json({ error: 'No.' }, { status: 401 });
 
   const body = await request.json().catch(() => ({})) as { email?: string };
   const email = normalizeEmail(String(body.email || ''));

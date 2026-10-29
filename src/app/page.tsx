@@ -810,7 +810,7 @@ export default function Home() {
         link: 'text-[#4a4038]',
       },
     ];
-    const visibleHubs = hubs.filter((hub) => canUseTool(user?.role || 'comercial', hub.id));
+    const visibleHubs = hubs.filter((hub) => !user || canUseTool(user.role, hub.id));
 
     return (
       <div className="mx-auto max-w-3xl space-y-8">

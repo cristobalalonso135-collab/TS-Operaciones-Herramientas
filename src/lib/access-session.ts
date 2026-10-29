@@ -91,3 +91,17 @@ export function isBootstrapPin(code: string): boolean {
 export function mailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
 }
+
+export function accessRequired(): boolean {
+  const raw = (process.env.ACCESS_REQUIRED || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
+export function requireAdminSession(): AccessSession | null {
+  if (!accessRequired()) {
+    return { email: 'operaciones@local', name: 'Operaciones', role: 'admin', exp: 0 };
+  }
+  const session = currentSession();
+  if (!session || session.role !== 'admin') return null;
+  return session;
+}
