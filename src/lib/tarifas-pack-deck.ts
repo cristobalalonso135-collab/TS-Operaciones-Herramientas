@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import ExcelJS from 'exceljs';
 import PptxGenJS from 'pptxgenjs';
 import { formatEuro, formatPct } from '@/lib/tarifas-model';
@@ -9,8 +11,20 @@ const LINE = 'E5E5E5';
 const SOFT = 'FAFAFA';
 const WHITE = 'FFFFFF';
 const PVP_RED = 'B42318';
-const PAGE = 'F3F2EE';
 const CARD_LINE = 'E8E6E1';
+
+let sportsEmotionMark: string | null | undefined;
+
+function sportsEmotionLogo(): string | null {
+  if (sportsEmotionMark !== undefined) return sportsEmotionMark;
+  try {
+    const file = readFileSync(join(process.cwd(), 'public', 'sports-emotion.svg'));
+    sportsEmotionMark = `image/svg+xml;base64,${file.toString('base64')}`;
+  } catch {
+    sportsEmotionMark = null;
+  }
+  return sportsEmotionMark;
+}
 
 interface PackedImage {
   buffer: Buffer;
@@ -107,7 +121,6 @@ function offerMeta(deck: PackDeck): string {
   return [
     deck.season || null,
     `${deck.totals.pieces} ${deck.labels.pieces}`,
-    deck.labels.vat,
   ].filter(Boolean).join('   ·   ');
 }
 
@@ -127,27 +140,29 @@ function addEscaparateSlide(
   offset: number,
 ) {
   const slide = pres.addSlide();
-  slide.background = { color: PAGE };
-  slide.addShape('rect', {
-    x: 0, y: 0, w: 13.333, h: 0.58,
-    fill: { color: INK }, line: { color: INK },
-  });
-  slide.addText('TEAMSPORTS', {
-    x: 0.4, y: 0.16, w: 2.6, h: 0.26,
-    fontFace: 'Arial', fontSize: 10, color: 'D4D4D4', charSpacing: 2.6, valign: 'middle', margin: 0,
+  slide.background = { color: WHITE };
+  const mark = sportsEmotionLogo();
+  if (mark) {
+    slide.addImage({
+      data: mark,
+      x: 0.4, y: 0.22, w: 1.72, h: 0.56,
+    });
+  }
+  slide.addText(deck.title, {
+    x: 2.28, y: 0.26, w: 6.6, h: 0.44,
+    fontFace: 'Arial', fontSize: 24, bold: true, color: INK, valign: 'middle', margin: 0,
   });
   slide.addText(offerMeta(deck), {
-    x: 3.1, y: 0.16, w: 6.2, h: 0.26,
-    fontFace: 'Arial', fontSize: 12, color: WHITE, valign: 'middle', margin: 0,
+    x: 8.9, y: 0.3, w: 4.02, h: 0.36,
+    fontFace: 'Arial', fontSize: 14, color: MUTED, align: 'right', valign: 'middle', margin: 0,
   });
-  slide.addText(euro(deck.totals.sale, deck.locale), {
-    x: 9.3, y: 0.12, w: 3.62, h: 0.34,
-    fontFace: 'Arial', fontSize: 18, bold: true, color: WHITE, align: 'right', valign: 'middle', margin: 0,
+  slide.addShape('rect', {
+    x: 0.4, y: 0.9, w: 12.52, h: 0.012, fill: { color: INK }, line: { color: INK },
   });
 
   const count = page.length;
   const { cols, rows } = showcaseGrid(count);
-  const area = { x: 0.32, y: 0.74, w: 12.68, h: 6.22 };
+  const area = { x: 0.32, y: 1.08, w: 12.68, h: 5.88 };
   const gap = 0.12;
   const cardW = (area.w - gap * (cols - 1)) / cols;
   const cardH = (area.h - gap * (rows - 1)) / rows;
@@ -204,9 +219,9 @@ function addEscaparateSlide(
     x: 0, y: 7.08, w: 13.333, h: 0.42,
     fill: { color: INK }, line: { color: INK },
   });
-  slide.addText(deck.title, {
+  slide.addText(deck.labels.vat, {
     x: 0.4, y: 7.14, w: 8.2, h: 0.3,
-    fontFace: 'Arial', fontSize: 13, color: WHITE, valign: 'middle', margin: 0,
+    fontFace: 'Arial', fontSize: 12, color: 'D4D4D4', valign: 'middle', margin: 0,
   });
   slide.addText(euro(deck.totals.sale, deck.locale), {
     x: 8.8, y: 7.14, w: 4.12, h: 0.3,
