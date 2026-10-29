@@ -91,14 +91,6 @@ function metaLine(deck: PackDeck): string {
     .join('  ·  ');
 }
 
-function galleryGrid(count: number): { cols: number; rows: number } {
-  if (count <= 3) return { cols: Math.max(count, 1), rows: 1 };
-  if (count === 4) return { cols: 2, rows: 2 };
-  if (count <= 6) return { cols: 3, rows: 2 };
-  if (count <= 8) return { cols: 4, rows: 2 };
-  return { cols: 5, rows: 2 };
-}
-
 function chunk<T>(items: T[], size: number): T[][] {
   if (items.length <= size) return [items];
   const out: T[][] = [];
@@ -155,69 +147,6 @@ function addFooter(slide: DeckSlide, deck: PackDeck) {
   });
 }
 
-function addGallerySlide(
-  pres: PptxGenJS,
-  deck: PackDeck,
-  page: PackDeckLine[],
-  images: Array<PackedImage | null>,
-  offset: number,
-) {
-  const slide = pres.addSlide();
-  slide.background = { color: WHITE };
-  addHeader(slide, deck, deck.labels.kicker);
-  const { cols, rows } = galleryGrid(page.length);
-  const area = { x: 0.46, y: 1.38, w: 12.4, h: 5.16 };
-  const gap = page.length <= 4 ? 0.18 : 0.12;
-  const cardW = (area.w - gap * (cols - 1)) / cols;
-  const cardH = (area.h - gap * (rows - 1)) / rows;
-  page.forEach((line, index) => {
-    const row = Math.floor(index / cols);
-    const col = index % cols;
-    const inRow = Math.min(cols, page.length - row * cols);
-    const rowWidth = inRow * cardW + (inRow - 1) * gap;
-    const startX = area.x + (area.w - rowWidth) / 2;
-    const x = startX + col * (cardW + gap);
-    const y = area.y + row * (cardH + gap);
-    const photoH = Math.min(cardH * 0.62, cardW * 0.92);
-    slide.addShape('roundRect', {
-      x, y, w: cardW, h: cardH,
-      fill: { color: SOFT }, line: { color: LINE }, rectRadius: 0.08,
-    });
-    const image = images[offset + index];
-    const ix = x + 0.1;
-    const iy = y + 0.1;
-    const iw = cardW - 0.2;
-    if (image) {
-      slide.addImage({
-        data: image.base64,
-        x: ix, y: iy, w: iw, h: photoH,
-        sizing: { type: 'contain', w: iw, h: photoH },
-      });
-    } else {
-      slide.addText((line.type || line.name || '?').slice(0, 1).toUpperCase(), {
-        x: ix, y: iy, w: iw, h: photoH,
-        fontFace: 'Arial', fontSize: Math.max(18, Math.min(36, cardW * 14)),
-        color: 'D4D4D4', align: 'center', valign: 'middle', margin: 0,
-      });
-    }
-    const textY = iy + photoH + 0.06;
-    slide.addText(line.type.toUpperCase(), {
-      x: x + 0.12, y: textY, w: cardW - 0.24, h: 0.18,
-      fontFace: 'Arial', fontSize: 8, color: MUTED, margin: 0,
-    });
-    slide.addText(line.name, {
-      x: x + 0.12, y: textY + 0.16, w: cardW - 0.24, h: 0.36,
-      fontFace: 'Arial', fontSize: page.length > 8 ? 10 : 12, bold: true, color: INK,
-      margin: 0, wrap: true, valign: 'top',
-    });
-    slide.addText(euro(line.lineTotal ?? line.club, deck.locale), {
-      x: x + 0.12, y: y + cardH - 0.34, w: cardW - 0.24, h: 0.26,
-      fontFace: 'Arial', fontSize: page.length > 8 ? 12 : 14, bold: true, color: INK, margin: 0,
-    });
-  });
-  addFooter(slide, deck);
-}
-
 function addListadoSlide(
   pres: PptxGenJS,
   deck: PackDeck,
@@ -227,22 +156,27 @@ function addListadoSlide(
 ) {
   const slide = pres.addSlide();
   slide.background = { color: WHITE };
-  addHeader(slide, deck, deck.labels.listado);
-  const startY = 1.38;
-  const rowH = page.length > 10 ? 0.42 : page.length > 8 ? 0.46 : 0.5;
+  addHeader(slide, deck, deck.labels.kicker);
+  const startY = 1.32;
+  const avail = 6.6 - startY - 0.3;
+  const rowH = Math.min(1.88, avail / Math.max(page.length, 1));
+  const photoH = Math.min(rowH - 0.1, 1.7);
+  const photoW = page.length <= 3 ? 1.62 : page.length <= 6 ? 1.32 : 1.14;
   const cols = [
-    { key: '#', w: 0.42 },
-    { key: 'photo', w: 0.62 },
-    { key: 'name', w: 3.7 },
-    { key: 'ref', w: 1.7 },
-    { key: 'fee', w: 1.55 },
-    { key: 'club', w: 1.45 },
-    { key: 'stamp', w: 1.35 },
-    { key: 'pvp', w: 1.61 },
+    { key: '#', w: 0.4 },
+    { key: 'photo', w: photoW },
+    { key: 'name', w: 0 },
+    { key: 'ref', w: 1.52 },
+    { key: 'fee', w: 1.48 },
+    { key: 'club', w: 1.38 },
+    { key: 'stamp', w: 1.26 },
+    { key: 'pvp', w: 1.46 },
   ] as const;
+  const used = cols.reduce((sum, col) => sum + col.w, 0);
+  const widths = cols.map((col) => (col.key === 'name' ? 12.4 - used : col.w));
   let x = 0.46;
   const headerY = startY;
-  cols.forEach((col) => {
+  cols.forEach((col, index) => {
     const label = col.key === '#' ? '#'
       : col.key === 'photo' ? ''
       : col.key === 'name' ? deck.labels.product
@@ -252,57 +186,76 @@ function addListadoSlide(
       : col.key === 'stamp' ? deck.labels.stamp
       : 'PVP';
     slide.addText(label.toUpperCase(), {
-      x, y: headerY, w: col.w, h: 0.28,
+      x, y: headerY, w: widths[index], h: 0.26,
       fontFace: 'Arial', fontSize: 9, color: MUTED, margin: 0,
       align: col.key === 'club' || col.key === 'stamp' || col.key === 'pvp' ? 'right' : 'left',
     });
-    x += col.w;
+    x += widths[index];
   });
   slide.addShape('rect', {
-    x: 0.46, y: headerY + 0.3, w: 12.4, h: 0.01, fill: { color: LINE }, line: { color: LINE },
+    x: 0.46, y: headerY + 0.28, w: 12.4, h: 0.01, fill: { color: LINE }, line: { color: LINE },
   });
+  const nameSize = page.length <= 4 ? 14 : page.length <= 8 ? 12 : 11;
   page.forEach((line, index) => {
-    const y = startY + 0.36 + index * rowH;
-    if (index % 2 === 1) {
-      slide.addShape('rect', {
-        x: 0.46, y, w: 12.4, h: rowH,
-        fill: { color: SOFT }, line: { color: SOFT },
-      });
-    }
+    const y = startY + 0.3 + index * rowH;
+    slide.addShape('rect', {
+      x: 0.46, y, w: 12.4, h: rowH,
+      fill: { color: WHITE }, line: { color: WHITE },
+    });
+    slide.addShape('rect', {
+      x: 0.46, y: y + rowH - 0.01, w: 12.4, h: 0.01, fill: { color: LINE }, line: { color: LINE },
+    });
     let cx = 0.46;
     const cells: Array<{ text: string; w: number; align?: 'left' | 'right'; bold?: boolean; color?: string; size?: number }> = [
-      { text: String(line.index), w: cols[0].w, color: MUTED, size: 10 },
-      { text: '', w: cols[1].w },
-      { text: `${line.type}\n${line.name}${line.colour ? `  ·  ${line.colour}` : ''}`, w: cols[2].w, bold: true, size: 11 },
-      { text: line.ref || '—', w: cols[3].w, color: MUTED, size: 10 },
-      { text: `${line.feeLabel} · ${line.ageLabel}`, w: cols[4].w, size: 10 },
-      { text: euro(line.club, deck.locale), w: cols[5].w, align: 'right', bold: true },
-      { text: euro(line.stamp, deck.locale), w: cols[6].w, align: 'right' },
-      { text: euro(line.pvp, deck.locale), w: cols[7].w, align: 'right', color: MUTED },
+      { text: String(line.index), w: widths[0], color: MUTED, size: 10 },
+      { text: '', w: widths[1] },
+      { text: '', w: widths[2] },
+      { text: line.ref || '—', w: widths[3], color: MUTED, size: 11 },
+      { text: `${line.feeLabel} · ${line.ageLabel}`, w: widths[4], size: 11 },
+      { text: euro(line.club, deck.locale), w: widths[5], align: 'right', bold: true },
+      { text: euro(line.stamp, deck.locale), w: widths[6], align: 'right' },
+      { text: euro(line.pvp, deck.locale), w: widths[7], align: 'right', color: MUTED },
     ];
     cells.forEach((cell) => {
       if (cell.text) {
         slide.addText(cell.text, {
           x: cx, y, w: cell.w, h: rowH,
           fontFace: 'Arial',
-          fontSize: cell.size || 11,
+          fontSize: cell.size || 12,
           bold: Boolean(cell.bold),
           color: cell.color || INK,
           align: cell.align || 'left',
           valign: 'middle',
-          margin: 0.04,
+          margin: 0.05,
         });
       }
       cx += cell.w;
     });
+    const nameParts = [
+      { text: line.type, options: { fontFace: 'Arial', fontSize: 10, color: MUTED, bold: false, breakLine: true } },
+      { text: line.name, options: { fontFace: 'Arial', fontSize: nameSize, color: INK, bold: true, breakLine: Boolean(line.colour) } },
+    ];
+    if (line.colour) {
+      nameParts.push({ text: line.colour, options: { fontFace: 'Arial', fontSize: 11, color: MUTED, bold: false } });
+    }
+    slide.addText(nameParts, {
+      x: 0.46 + widths[0] + widths[1],
+      y,
+      w: widths[2] - 0.08,
+      h: rowH,
+      valign: 'middle',
+      wrap: true,
+      margin: 0.06,
+    });
     const image = images[offset + index];
-    const photoX = 0.46 + cols[0].w + 0.04;
-    const photoS = Math.min(rowH - 0.08, 0.42);
+    const imgW = widths[1] - 0.12;
+    const imgH = photoH;
+    const photoX = 0.46 + widths[0] + (widths[1] - imgW) / 2;
     if (image) {
       slide.addImage({
         data: image.base64,
-        x: photoX, y: y + (rowH - photoS) / 2, w: photoS, h: photoS,
-        sizing: { type: 'contain', w: photoS, h: photoS },
+        x: photoX, y: y + (rowH - imgH) / 2, w: imgW, h: imgH,
+        sizing: { type: 'contain', w: imgW, h: imgH },
       });
     }
   });
@@ -317,14 +270,8 @@ export async function renderPackPptx(deck: PackDeck): Promise<Buffer> {
   pres.title = deck.title;
   pres.author = 'Teamsports';
   pres.subject = 'Pack Tarifas';
-  const galleryPages = chunk(deck.lines, 10);
   let offset = 0;
-  galleryPages.forEach((page) => {
-    addGallerySlide(pres, deck, page, images, offset);
-    offset += page.length;
-  });
-  offset = 0;
-  chunk(deck.lines, 12).forEach((page) => {
+  chunk(deck.lines, 10).forEach((page) => {
     addListadoSlide(pres, deck, page, images, offset);
     offset += page.length;
   });
