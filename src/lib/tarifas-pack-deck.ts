@@ -8,6 +8,7 @@ const MUTED = '737373';
 const LINE = 'E5E5E5';
 const SOFT = 'FAFAFA';
 const WHITE = 'FFFFFF';
+const PVP_RED = 'B42318';
 
 interface PackedImage {
   buffer: Buffer;
@@ -100,54 +101,15 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 type DeckSlide = ReturnType<PptxGenJS['addSlide']>;
 
-function addHeader(slide: DeckSlide, deck: PackDeck, kicker: string) {
-  slide.addText(kicker.toUpperCase(), {
-    x: 0.46, y: 0.26, w: 8.4, h: 0.24,
-    fontFace: 'Arial', fontSize: 10, color: MUTED, charSpacing: 2.4, margin: 0,
-  });
-  slide.addText(deck.title, {
-    x: 0.46, y: 0.48, w: 8.6, h: 0.42,
-    fontFace: 'Arial', fontSize: 24, bold: true, color: INK, margin: 0,
-  });
-  slide.addText(metaLine(deck), {
-    x: 0.46, y: 0.9, w: 8.6, h: 0.24,
-    fontFace: 'Arial', fontSize: 11, color: MUTED, margin: 0,
-  });
-  slide.addText(euro(deck.totals.sale, deck.locale), {
-    x: 9.2, y: 0.42, w: 3.66, h: 0.4,
-    fontFace: 'Arial', fontSize: 22, bold: true, color: INK, align: 'right', margin: 0,
-  });
-  slide.addText(deck.labels.total, {
-    x: 9.2, y: 0.82, w: 3.66, h: 0.22,
-    fontFace: 'Arial', fontSize: 10, color: MUTED, align: 'right', margin: 0,
-  });
-  slide.addShape('rect', {
-    x: 0.46, y: 1.2, w: 12.4, h: 0.015, fill: { color: INK }, line: { color: INK },
-  });
+function offerMeta(deck: PackDeck): string {
+  return [
+    deck.season || null,
+    `${deck.totals.pieces} ${deck.labels.pieces}`,
+    deck.labels.vat,
+  ].filter(Boolean).join('   ·   ');
 }
 
-function addFooter(slide: DeckSlide, deck: PackDeck) {
-  slide.addShape('roundRect', {
-    x: 0.46, y: 6.72, w: 12.4, h: 0.52,
-    fill: { color: INK }, line: { color: INK }, rectRadius: 0.08,
-  });
-  const bits = [
-    `${deck.labels.club} ${euro(deck.totals.club, deck.locale)}`,
-    `${deck.labels.stamp} ${euro(deck.totals.stamp, deck.locale)}`,
-    `${deck.labels.fuera} ${euro(deck.totals.fuera, deck.locale)}`,
-    `PVP ${euro(deck.totals.rrp, deck.locale)}`,
-  ];
-  slide.addText(bits.join('    ·    '), {
-    x: 0.62, y: 6.82, w: 8.4, h: 0.32,
-    fontFace: 'Arial', fontSize: 11, color: 'D4D4D4', valign: 'middle', margin: 0,
-  });
-  slide.addText(euro(deck.totals.sale, deck.locale), {
-    x: 9.1, y: 6.82, w: 3.5, h: 0.32,
-    fontFace: 'Arial', fontSize: 16, bold: true, color: WHITE, align: 'right', valign: 'middle', margin: 0,
-  });
-}
-
-function addListadoSlide(
+function addEscaparateSlide(
   pres: PptxGenJS,
   deck: PackDeck,
   page: PackDeckLine[],
@@ -156,125 +118,92 @@ function addListadoSlide(
 ) {
   const slide = pres.addSlide();
   slide.background = { color: WHITE };
-  addHeader(slide, deck, deck.labels.kicker);
-  const startY = 1.32;
-  const avail = 6.6 - startY - 0.3;
-  const rowH = Math.min(1.88, avail / Math.max(page.length, 1));
-  const photoH = Math.min(rowH - 0.1, 1.7);
-  const photoW = page.length <= 3 ? 1.62 : 1.4;
-  const cols = [
-    { key: '#', w: 0.4 },
-    { key: 'photo', w: photoW },
-    { key: 'name', w: 0 },
-    { key: 'ref', w: 1.48 },
-    { key: 'fee', w: 1.38 },
-    { key: 'pvp', w: 1.42 },
-    { key: 'club', w: 1.62 },
-    { key: 'stamp', w: 1.22 },
-  ] as const;
-  const used = cols.reduce((sum, col) => sum + col.w, 0);
-  const widths = cols.map((col) => (col.key === 'name' ? 12.4 - used : col.w));
-  let x = 0.46;
-  const headerY = startY;
-  cols.forEach((col, index) => {
-    const label = col.key === '#' ? '#'
-      : col.key === 'photo' ? ''
-      : col.key === 'name' ? deck.labels.product
-      : col.key === 'ref' ? deck.labels.adultRef.replace('adulto', '').replace('niño', '').trim() || 'Ref.'
-      : col.key === 'fee' ? deck.labels.fee
-      : col.key === 'pvp' ? 'PVP'
-      : col.key === 'club' ? deck.labels.club
-      : deck.labels.stamp;
-    slide.addText(label.toUpperCase(), {
-      x, y: headerY, w: widths[index], h: 0.26,
-      fontFace: 'Arial',
-      fontSize: col.key === 'club' ? 10 : 9,
-      bold: col.key === 'club',
-      color: col.key === 'club' ? INK : MUTED,
-      margin: 0,
-      align: col.key === 'club' || col.key === 'stamp' || col.key === 'pvp' ? 'right' : 'left',
-    });
-    x += widths[index];
+  slide.addText('TEAMSPORTS', {
+    x: 0.5, y: 0.28, w: 8.4, h: 0.2,
+    fontFace: 'Arial', fontSize: 9, color: MUTED, charSpacing: 3.2, margin: 0,
+  });
+  slide.addText(deck.title, {
+    x: 0.5, y: 0.48, w: 8.6, h: 0.46,
+    fontFace: 'Arial', fontSize: 28, bold: true, color: INK, margin: 0,
+  });
+  slide.addText(offerMeta(deck), {
+    x: 0.5, y: 0.96, w: 8.6, h: 0.22,
+    fontFace: 'Arial', fontSize: 12, color: MUTED, margin: 0,
+  });
+  slide.addText(euro(deck.totals.sale, deck.locale), {
+    x: 9.1, y: 0.48, w: 3.72, h: 0.42,
+    fontFace: 'Arial', fontSize: 26, bold: true, color: INK, align: 'right', margin: 0,
+  });
+  slide.addText(deck.labels.total, {
+    x: 9.1, y: 0.92, w: 3.72, h: 0.2,
+    fontFace: 'Arial', fontSize: 10, color: MUTED, align: 'right', margin: 0,
   });
   slide.addShape('rect', {
-    x: 0.46, y: headerY + 0.28, w: 12.4, h: 0.01, fill: { color: LINE }, line: { color: LINE },
+    x: 0.5, y: 1.26, w: 12.32, h: 0.012, fill: { color: INK }, line: { color: INK },
   });
-  const nameSize = page.length <= 3 ? 14 : 13;
-  const colX = (index: number) => 0.46 + widths.slice(0, index).reduce((sum, w) => sum + w, 0);
+
+  const count = page.length;
+  const area = { x: 0.5, y: 1.48, w: 12.32, h: 5.12 };
+  const gap = count <= 3 ? 0.32 : 0.2;
+  const maxW = count <= 2 ? 4.4 : count === 3 ? 3.7 : count === 4 ? 2.86 : 2.34;
+  const cardW = Math.min(maxW, (area.w - gap * (count - 1)) / count);
+  const rowW = count * cardW + (count - 1) * gap;
+  const startX = area.x + (area.w - rowW) / 2;
+  const photoH = count <= 3 ? 3.35 : 3.15;
+  const nameSize = count <= 2 ? 16 : count === 3 ? 14 : 12;
+  const clubSize = count <= 2 ? 24 : count === 3 ? 20 : 18;
+
   page.forEach((line, index) => {
-    const y = startY + 0.3 + index * rowH;
-    slide.addShape('rect', {
-      x: 0.46, y, w: 12.4, h: rowH,
-      fill: { color: WHITE }, line: { color: WHITE },
-    });
-    slide.addShape('rect', {
-      x: 0.46, y: y + rowH - 0.01, w: 12.4, h: 0.01, fill: { color: LINE }, line: { color: LINE },
-    });
-    let cx = 0.46;
-    const cells: Array<{ text: string; w: number; align?: 'left' | 'right'; bold?: boolean; color?: string; size?: number }> = [
-      { text: String(line.index), w: widths[0], color: MUTED, size: 10 },
-      { text: '', w: widths[1] },
-      { text: '', w: widths[2] },
-      { text: line.ref || '—', w: widths[3], color: MUTED, size: 11 },
-      { text: `${line.feeLabel} · ${line.ageLabel}`, w: widths[4], size: 11 },
-      { text: '', w: widths[5] },
-      { text: '', w: widths[6] },
-      { text: euro(line.stamp, deck.locale), w: widths[7], align: 'right' },
-    ];
-    cells.forEach((cell) => {
-      if (cell.text) {
-        slide.addText(cell.text, {
-          x: cx, y, w: cell.w, h: rowH,
-          fontFace: 'Arial',
-          fontSize: cell.size || 12,
-          bold: Boolean(cell.bold),
-          color: cell.color || INK,
-          align: cell.align || 'left',
-          valign: 'middle',
-          margin: 0.05,
-        });
-      }
-      cx += cell.w;
-    });
-    slide.addText(euro(line.pvp, deck.locale), {
-      x: colX(5), y, w: widths[5], h: rowH,
-      fontFace: 'Arial', fontSize: 12, color: MUTED, strike: true,
-      align: 'right', valign: 'middle', margin: 0.05,
-    });
-    slide.addText(euro(line.club, deck.locale), {
-      x: colX(6), y, w: widths[6], h: rowH,
-      fontFace: 'Arial', fontSize: page.length <= 3 ? 20 : 17, bold: true, color: INK,
-      align: 'right', valign: 'middle', margin: 0.05,
-    });
-    const nameParts = [
-      { text: line.type, options: { fontFace: 'Arial', fontSize: 10, color: MUTED, bold: false, breakLine: true } },
-      { text: line.name, options: { fontFace: 'Arial', fontSize: nameSize, color: INK, bold: true, breakLine: Boolean(line.colour) } },
-    ];
-    if (line.colour) {
-      nameParts.push({ text: line.colour, options: { fontFace: 'Arial', fontSize: 11, color: MUTED, bold: false, breakLine: false } });
-    }
-    slide.addText(nameParts, {
-      x: 0.46 + widths[0] + widths[1],
-      y,
-      w: widths[2] - 0.08,
-      h: rowH,
-      valign: 'middle',
-      wrap: true,
-      margin: 0.06,
-    });
+    const x = startX + index * (cardW + gap);
+    const y = area.y;
     const image = images[offset + index];
-    const imgW = widths[1] - 0.12;
-    const imgH = photoH;
-    const photoX = 0.46 + widths[0] + (widths[1] - imgW) / 2;
     if (image) {
       slide.addImage({
         data: image.base64,
-        x: photoX, y: y + (rowH - imgH) / 2, w: imgW, h: imgH,
-        sizing: { type: 'contain', w: imgW, h: imgH },
+        x, y, w: cardW, h: photoH,
+        sizing: { type: 'contain', w: cardW, h: photoH },
+      });
+    } else {
+      slide.addText((line.name || '?').slice(0, 1).toUpperCase(), {
+        x, y, w: cardW, h: photoH,
+        fontFace: 'Arial', fontSize: 28, color: LINE, align: 'center', valign: 'middle', margin: 0,
       });
     }
+    const textY = y + photoH + 0.1;
+    slide.addText(line.name, {
+      x, y: textY, w: cardW, h: 0.42,
+      fontFace: 'Arial', fontSize: nameSize, bold: true, color: INK,
+      align: 'center', valign: 'top', wrap: true, margin: 0,
+    });
+    slide.addText(line.colour || ' ', {
+      x, y: textY + 0.4, w: cardW, h: 0.18,
+      fontFace: 'Arial', fontSize: 10, color: MUTED,
+      align: 'center', valign: 'middle', margin: 0,
+    });
+    slide.addText(euro(line.pvp, deck.locale), {
+      x, y: textY + 0.58, w: cardW, h: 0.24,
+      fontFace: 'Arial', fontSize: 13, color: PVP_RED, strike: true,
+      align: 'center', valign: 'middle', margin: 0,
+    });
+    slide.addText(euro(line.lineTotal ?? line.club, deck.locale), {
+      x, y: textY + 0.8, w: cardW, h: 0.4,
+      fontFace: 'Arial', fontSize: clubSize, bold: true, color: INK,
+      align: 'center', valign: 'middle', margin: 0,
+    });
   });
-  addFooter(slide, deck);
+
+  slide.addShape('roundRect', {
+    x: 0.5, y: 6.78, w: 12.32, h: 0.46,
+    fill: { color: INK }, line: { color: INK }, rectRadius: 0.08,
+  });
+  slide.addText(deck.title, {
+    x: 0.7, y: 6.86, w: 6.4, h: 0.3,
+    fontFace: 'Arial', fontSize: 12, color: 'D4D4D4', valign: 'middle', margin: 0,
+  });
+  slide.addText(euro(deck.totals.sale, deck.locale), {
+    x: 7.2, y: 6.86, w: 5.4, h: 0.3,
+    fontFace: 'Arial', fontSize: 16, bold: true, color: WHITE, align: 'right', valign: 'middle', margin: 0,
+  });
 }
 
 export async function renderPackPptx(deck: PackDeck): Promise<Buffer> {
@@ -287,7 +216,7 @@ export async function renderPackPptx(deck: PackDeck): Promise<Buffer> {
   pres.subject = 'Pack Tarifas';
   let offset = 0;
   chunk(deck.lines, 5).forEach((page) => {
-    addListadoSlide(pres, deck, page, images, offset);
+    addEscaparateSlide(pres, deck, page, images, offset);
     offset += page.length;
   });
   const output = await pres.write({ outputType: 'nodebuffer' });
