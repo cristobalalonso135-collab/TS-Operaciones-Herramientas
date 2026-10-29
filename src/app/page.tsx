@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import FileUpload from '@/components/FileUpload';
 import BudgetTable from '@/components/BudgetTable';
 import NegativosForm from '@/components/NegativosForm';
@@ -20,7 +20,10 @@ import EstadoTool from '@/components/EstadoTool';
 import MejorasTool from '@/components/MejorasTool';
 import FraccionarTool from '@/components/FraccionarTool';
 import TarifasTool from '@/components/TarifasTool';
+import UsersTool from '@/components/UsersTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
+import { useAccess } from '@/components/AccessProvider';
+import { canUseTool } from '@/lib/access-model';
 import {
   parseExcelData,
   processFullBudget,
@@ -420,7 +423,11 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 }
 
 export default function Home() {
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos' | 'estado' | 'fraccionar' | 'tarifas'>('tools');
+  const { user } = useAccess();
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos' | 'estado' | 'fraccionar' | 'tarifas' | 'gente'>('tools');
+  useEffect(() => {
+    if (view !== 'tools' && user && !canUseTool(user.role, view)) setView('tools');
+  }, [view, user]);
   const [budgetTab, setBudgetTab] = useState<BudgetTabId>('generate');
   const [trackingView, setTrackingView] = useState<TrackingViewMode>('ytd');
   const [currentStep, setCurrentStep] = useState(0);
@@ -692,6 +699,10 @@ export default function Home() {
     return <TarifasTool onBack={() => setView('tools')} />;
   }
 
+  if (view === 'gente') {
+    return <UsersTool onBack={() => setView('tools')} />;
+  }
+
   if (view === 'tools') {
     const hubs = [
       {
@@ -790,7 +801,16 @@ export default function Home() {
         tone: 'bg-[#f3eee6] text-[#6a4a2a]',
         link: 'text-[#6a4a2a]',
       },
+      {
+        id: 'gente' as const,
+        number: '13',
+        title: 'Gente',
+        description: 'Quién entra y con qué rol. El código les llega al correo.',
+        tone: 'bg-[#ece7e0] text-[#4a4038]',
+        link: 'text-[#4a4038]',
+      },
     ];
+    const visibleHubs = hubs.filter((hub) => canUseTool(user?.role || 'comercial', hub.id));
 
     return (
       <div className="mx-auto max-w-3xl space-y-8">
@@ -805,13 +825,13 @@ export default function Home() {
               Herramientas
             </h2>
             <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Doce entradas: comercial, almacén, abonos, mejoras IT, albaranes, checklist, objetivos, cuentas, fraccionar y tarifas. El resto vive en pestañas dentro de cada herramienta.
+              Las que te tocan según el rol. El resto vive en pestañas dentro de cada herramienta.
             </p>
           </div>
         </section>
 
         <section className="grid gap-3">
-          {hubs.map((hub) => (
+          {visibleHubs.map((hub) => (
             <button
               key={hub.id}
               type="button"
