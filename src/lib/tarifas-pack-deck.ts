@@ -109,6 +109,14 @@ function offerMeta(deck: PackDeck): string {
   ].filter(Boolean).join('   ·   ');
 }
 
+function showcaseGrid(count: number): { cols: number; rows: number } {
+  if (count <= 4) return { cols: Math.max(count, 1), rows: 1 };
+  if (count === 5) return { cols: 3, rows: 2 };
+  if (count === 6) return { cols: 3, rows: 2 };
+  if (count <= 8) return { cols: 4, rows: 2 };
+  return { cols: 4, rows: 3 };
+}
+
 function addEscaparateSlide(
   pres: PptxGenJS,
   deck: PackDeck,
@@ -119,74 +127,71 @@ function addEscaparateSlide(
   const slide = pres.addSlide();
   slide.background = { color: WHITE };
   slide.addText('TEAMSPORTS', {
-    x: 0.5, y: 0.28, w: 8.4, h: 0.2,
+    x: 0.5, y: 0.2, w: 8.2, h: 0.18,
     fontFace: 'Arial', fontSize: 9, color: MUTED, charSpacing: 3.2, margin: 0,
   });
-  slide.addText(deck.title, {
-    x: 0.5, y: 0.48, w: 8.6, h: 0.46,
-    fontFace: 'Arial', fontSize: 28, bold: true, color: INK, margin: 0,
-  });
   slide.addText(offerMeta(deck), {
-    x: 0.5, y: 0.96, w: 8.6, h: 0.22,
-    fontFace: 'Arial', fontSize: 12, color: MUTED, margin: 0,
+    x: 0.5, y: 0.4, w: 8.2, h: 0.28,
+    fontFace: 'Arial', fontSize: 14, color: INK, margin: 0,
   });
   slide.addText(euro(deck.totals.sale, deck.locale), {
-    x: 9.1, y: 0.48, w: 3.72, h: 0.42,
-    fontFace: 'Arial', fontSize: 26, bold: true, color: INK, align: 'right', margin: 0,
+    x: 8.8, y: 0.28, w: 4.02, h: 0.36,
+    fontFace: 'Arial', fontSize: 22, bold: true, color: INK, align: 'right', margin: 0,
   });
   slide.addText(deck.labels.total, {
-    x: 9.1, y: 0.92, w: 3.72, h: 0.2,
-    fontFace: 'Arial', fontSize: 10, color: MUTED, align: 'right', margin: 0,
+    x: 8.8, y: 0.62, w: 4.02, h: 0.16,
+    fontFace: 'Arial', fontSize: 9, color: MUTED, align: 'right', margin: 0,
   });
   slide.addShape('rect', {
-    x: 0.5, y: 1.26, w: 12.32, h: 0.012, fill: { color: INK }, line: { color: INK },
+    x: 0.5, y: 0.86, w: 12.32, h: 0.012, fill: { color: INK }, line: { color: INK },
   });
 
   const count = page.length;
-  const area = { x: 0.5, y: 1.48, w: 12.32, h: 5.12 };
-  const gap = count <= 3 ? 0.32 : 0.2;
-  const maxW = count <= 2 ? 4.4 : count === 3 ? 3.7 : count === 4 ? 2.86 : 2.34;
-  const cardW = Math.min(maxW, (area.w - gap * (count - 1)) / count);
-  const rowW = count * cardW + (count - 1) * gap;
-  const startX = area.x + (area.w - rowW) / 2;
-  const photoH = count <= 3 ? 3.35 : 3.15;
-  const nameSize = count <= 2 ? 16 : count === 3 ? 14 : 12;
-  const clubSize = count <= 2 ? 24 : count === 3 ? 20 : 18;
+  const { cols, rows } = showcaseGrid(count);
+  const area = { x: 0.5, y: 1.04, w: 12.32, h: 5.58 };
+  const gap = rows === 1 ? 0.28 : 0.16;
+  const cardW = (area.w - gap * (cols - 1)) / cols;
+  const cardH = (area.h - gap * (rows - 1)) / rows;
+  const textH = rows === 3 ? 0.92 : 1.08;
+  const photoS = Math.min(cardW, cardH - textH);
+  const nameSize = rows === 1 ? 14 : rows === 2 ? 11 : 10;
+  const clubSize = rows === 1 ? 20 : rows === 2 ? 16 : 14;
 
   page.forEach((line, index) => {
-    const x = startX + index * (cardW + gap);
-    const y = area.y;
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    const inRow = Math.min(cols, count - row * cols);
+    const rowW = inRow * cardW + (inRow - 1) * gap;
+    const rowX = area.x + (area.w - rowW) / 2;
+    const x = rowX + col * (cardW + gap);
+    const y = area.y + row * (cardH + gap);
+    const photoX = x + (cardW - photoS) / 2;
     const image = images[offset + index];
     if (image) {
       slide.addImage({
         data: image.base64,
-        x, y, w: cardW, h: photoH,
-        sizing: { type: 'contain', w: cardW, h: photoH },
-      });
-    } else {
-      slide.addText((line.name || '?').slice(0, 1).toUpperCase(), {
-        x, y, w: cardW, h: photoH,
-        fontFace: 'Arial', fontSize: 28, color: LINE, align: 'center', valign: 'middle', margin: 0,
+        x: photoX, y, w: photoS, h: photoS,
+        sizing: { type: 'contain', w: photoS, h: photoS },
       });
     }
-    const textY = y + photoH + 0.1;
+    const textY = y + photoS + 0.06;
     slide.addText(line.name, {
-      x, y: textY, w: cardW, h: 0.42,
+      x, y: textY, w: cardW, h: rows === 3 ? 0.28 : 0.34,
       fontFace: 'Arial', fontSize: nameSize, bold: true, color: INK,
       align: 'center', valign: 'top', wrap: true, margin: 0,
     });
     slide.addText(line.colour || ' ', {
-      x, y: textY + 0.4, w: cardW, h: 0.18,
-      fontFace: 'Arial', fontSize: 10, color: MUTED,
+      x, y: textY + (rows === 3 ? 0.26 : 0.32), w: cardW, h: 0.16,
+      fontFace: 'Arial', fontSize: 9, color: MUTED,
       align: 'center', valign: 'middle', margin: 0,
     });
     slide.addText(euro(line.pvp, deck.locale), {
-      x, y: textY + 0.58, w: cardW, h: 0.24,
-      fontFace: 'Arial', fontSize: 13, color: PVP_RED, strike: true,
+      x, y: textY + (rows === 3 ? 0.42 : 0.48), w: cardW, h: 0.18,
+      fontFace: 'Arial', fontSize: 11, color: PVP_RED, strike: true,
       align: 'center', valign: 'middle', margin: 0,
     });
     slide.addText(euro(line.lineTotal ?? line.club, deck.locale), {
-      x, y: textY + 0.8, w: cardW, h: 0.4,
+      x, y: textY + (rows === 3 ? 0.58 : 0.66), w: cardW, h: 0.32,
       fontFace: 'Arial', fontSize: clubSize, bold: true, color: INK,
       align: 'center', valign: 'middle', margin: 0,
     });
@@ -198,7 +203,7 @@ function addEscaparateSlide(
   });
   slide.addText(deck.title, {
     x: 0.7, y: 6.86, w: 6.4, h: 0.3,
-    fontFace: 'Arial', fontSize: 12, color: 'D4D4D4', valign: 'middle', margin: 0,
+    fontFace: 'Arial', fontSize: 13, color: WHITE, valign: 'middle', margin: 0,
   });
   slide.addText(euro(deck.totals.sale, deck.locale), {
     x: 7.2, y: 6.86, w: 5.4, h: 0.3,
@@ -215,7 +220,7 @@ export async function renderPackPptx(deck: PackDeck): Promise<Buffer> {
   pres.author = 'Teamsports';
   pres.subject = 'Pack Tarifas';
   let offset = 0;
-  chunk(deck.lines, 5).forEach((page) => {
+  chunk(deck.lines, 12).forEach((page) => {
     addEscaparateSlide(pres, deck, page, images, offset);
     offset += page.length;
   });
