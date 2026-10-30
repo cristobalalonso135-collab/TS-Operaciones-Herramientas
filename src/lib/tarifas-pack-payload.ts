@@ -11,7 +11,7 @@ import {
   type TarifaChannel,
   type TarifaProduct,
 } from '@/lib/tarifas-model';
-import { labelProductType, type TarifasCopy, type TarifasLocale } from '@/lib/tarifas-i18n';
+import { labelProductName, labelProductType, type TarifasCopy, type TarifasLocale } from '@/lib/tarifas-i18n';
 
 export type PackDeckFormat = 'xlsx' | 'pptx';
 
@@ -114,7 +114,7 @@ export function buildPackDeck(input: {
       index: index + 1,
       brand: item.brand,
       type: labelProductType(input.locale, item.productType),
-      name: item.name,
+      name: labelProductName(input.locale, item.name),
       colour: item.colour,
       adultRef: item.adultRef,
       youthRef: item.youthRef || '',

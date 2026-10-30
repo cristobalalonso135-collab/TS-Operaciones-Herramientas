@@ -75,6 +75,7 @@ import {
   TARIFAS_COPY,
   TARIFAS_LOCALES,
   TARIFAS_LOCALE_TAG,
+  labelProductName,
   labelProductType,
   readTarifasLocale,
   writeTarifasLocale,
@@ -788,7 +789,7 @@ function packCompareRows(
         if (!item) return '—';
         const extra = line.stamp ? ` + ${euro(line.stamp)}` : '';
         const age = lineAge(line);
-        return `${item.name}${item.colour ? ` · ${item.colour}` : ''} · ${age === 'youth' ? copy.youth : copy.adult} · Fee ${line.fee} · ${euro(sellPrice(item, channel, line.fee, age))}${extra}`;
+        return `${labelProductName(locale, item.name)}${item.colour ? ` · ${item.colour}` : ''} · ${age === 'youth' ? copy.youth : copy.adult} · Fee ${line.fee} · ${euro(sellPrice(item, channel, line.fee, age))}${extra}`;
       }).join('\n');
     }),
   }));
@@ -835,6 +836,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
   const [packCompareOpen, setPackCompareOpen] = useState(false);
   const [packExporting, setPackExporting] = useState<PackDeckFormat | null>(null);
   const [locale, setLocale] = useState<TarifasLocale>('es');
+  const productName = (name: string) => labelProductName(locale, name);
   const [admin, setAdmin] = useState(false);
   const [pin, setPin] = useState('');
   const [askPin, setAskPin] = useState(false);
@@ -1786,7 +1788,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                           {item.brand} · {labelProductType(locale, item.productType)}
                         </p>
-                        <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{item.name}</p>
+                        <p className="line-clamp-2 font-display text-[15px] font-semibold leading-snug">{productName(item.name)}</p>
                         <p className="truncate text-[11px] text-neutral-500">{item.colour}</p>
                         {inOutlet ? null : (
                           <>
@@ -1970,7 +1972,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                             {item.brand} · {labelProductType(locale, item.productType)}
                           </p>
-                          <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
+                          <p className="font-display text-lg font-semibold leading-snug">{productName(item.name)}</p>
                           <p className="text-[11px] text-neutral-500">{item.colour}</p>
                           <p className="font-mono text-[10px] text-neutral-400">{activeRef(item, age) || '—'}</p>
                           <p className="pt-1 font-display text-2xl font-semibold tabular-nums">
@@ -2068,7 +2070,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                               <div className="min-w-0">
                                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
                                 <button type="button" onClick={() => openItem(item)} className="text-left font-semibold leading-snug hover:underline">
-                                  {item.name}
+                                  {productName(item.name)}
                                 </button>
                                 <p className="text-[11px] text-neutral-500">{item.colour}</p>
                                 {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
@@ -2292,7 +2294,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
-                          <p className="truncate text-sm font-semibold">{item.name}</p>
+                          <p className="truncate text-sm font-semibold">{productName(item.name)}</p>
                           <p className="text-[11px] text-neutral-500">{item.colour}{item.outlet ? ` · ${copy.outletBadge}` : ''}</p>
                           <p className="mt-1 font-mono text-[10px] text-neutral-500">{activeRef(item, age) || '—'}</p>
                           <div className="mt-2">
@@ -2392,7 +2394,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">{labelProductType(locale, item.productType)}</p>
-                            <p className="truncate text-sm font-semibold">{item.name}</p>
+                            <p className="truncate text-sm font-semibold">{productName(item.name)}</p>
                             <p className="text-[11px] text-neutral-500">{item.colour}</p>
                             <p className="mt-1 font-mono text-[10px] text-neutral-500">{activeRef(item, lineAge(line)) || '—'}</p>
                           </div>
@@ -2466,7 +2468,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                       {draft.brand} · {labelProductType(locale, draft.productType)} · {copy.kinds[kindOf(draft)]}
                     </p>
-                    <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{draft.name || copy.newRef}</h3>
+                    <h3 className="mt-1 font-display text-2xl font-semibold tracking-tight">{draft.name ? productName(draft.name) : copy.newRef}</h3>
                     <p className="mt-1 text-sm text-neutral-500">{draft.colour}</p>
                     {draft.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}
                   </div>
@@ -2856,7 +2858,7 @@ export default function TarifasTool({ onBack }: { onBack?: () => void }) {
                       <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
                         {item.brand} · {labelProductType(locale, item.productType)}
                       </p>
-                      <p className="font-display text-lg font-semibold leading-snug">{item.name}</p>
+                      <p className="font-display text-lg font-semibold leading-snug">{productName(item.name)}</p>
                       <p className="text-[11px] text-neutral-500">{item.colour}</p>
                       <RankBadge tone={tone} copy={copy} />
                       {item.outlet ? <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">{copy.outletBadge}</p> : null}

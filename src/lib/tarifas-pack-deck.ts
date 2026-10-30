@@ -17,11 +17,17 @@ let sportsEmotionMark: string | null | undefined;
 
 function sportsEmotionLogo(): string | null {
   if (sportsEmotionMark !== undefined) return sportsEmotionMark;
+  const publicDir = join(process.cwd(), 'public');
   try {
-    const file = readFileSync(join(process.cwd(), 'public', 'sports-emotion.svg'));
-    sportsEmotionMark = `image/svg+xml;base64,${file.toString('base64')}`;
+    const file = readFileSync(join(publicDir, 'sports-emotion.png'));
+    sportsEmotionMark = `image/png;base64,${file.toString('base64')}`;
   } catch {
-    sportsEmotionMark = null;
+    try {
+      const file = readFileSync(join(publicDir, 'sports-emotion.svg'));
+      sportsEmotionMark = `image/svg+xml;base64,${file.toString('base64')}`;
+    } catch {
+      sportsEmotionMark = null;
+    }
   }
   return sportsEmotionMark;
 }
@@ -118,10 +124,8 @@ function chunk<T>(items: T[], size: number): T[][] {
 type DeckSlide = ReturnType<PptxGenJS['addSlide']>;
 
 function offerMeta(deck: PackDeck): string {
-  return [
-    deck.season || null,
-    `${deck.totals.pieces} ${deck.labels.pieces}`,
-  ].filter(Boolean).join('   ·   ');
+  const season = deck.season ? `${deck.labels.season} ${deck.season}` : null;
+  return [season, `${deck.totals.pieces} ${deck.labels.pieces}`].filter(Boolean).join('   ·   ');
 }
 
 function showcaseGrid(count: number): { cols: number; rows: number } {
@@ -142,19 +146,21 @@ function addEscaparateSlide(
   const slide = pres.addSlide();
   slide.background = { color: WHITE };
   const mark = sportsEmotionLogo();
+  const logo = { x: 0.4, y: 0.24, w: 1.58, h: 0.52 };
   if (mark) {
     slide.addImage({
       data: mark,
-      x: 0.4, y: 0.22, w: 1.72, h: 0.56,
+      x: logo.x, y: logo.y, w: logo.w, h: logo.h,
+      sizing: { type: 'contain', w: logo.w, h: logo.h },
     });
   }
   slide.addText(deck.title, {
-    x: 2.28, y: 0.26, w: 6.6, h: 0.44,
-    fontFace: 'Arial', fontSize: 24, bold: true, color: INK, valign: 'middle', margin: 0,
+    x: 2.12, y: 0.24, w: 6.55, h: 0.5,
+    fontFace: 'Arial', fontSize: 22, bold: true, color: INK, align: 'center', valign: 'middle', margin: 0,
   });
   slide.addText(offerMeta(deck), {
-    x: 8.9, y: 0.3, w: 4.02, h: 0.36,
-    fontFace: 'Arial', fontSize: 14, color: MUTED, align: 'right', valign: 'middle', margin: 0,
+    x: 8.72, y: 0.28, w: 4.2, h: 0.42,
+    fontFace: 'Arial', fontSize: 13, color: MUTED, align: 'right', valign: 'middle', margin: 0,
   });
   slide.addShape('rect', {
     x: 0.4, y: 0.9, w: 12.52, h: 0.012, fill: { color: INK }, line: { color: INK },

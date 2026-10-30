@@ -1020,20 +1020,128 @@ const TYPE_LABELS: Record<string, Record<TarifasLocale, string>> = {
   Brazalete: { es: 'Brazalete', pt: 'Braçadeira', it: 'Fascia', fr: 'Brassard' },
   Calcetines: { es: 'Calcetines', pt: 'Meias', it: 'Calzini', fr: 'Chaussettes' },
   Camiseta: { es: 'Camiseta', pt: 'Camisola', it: 'Maglia', fr: 'Maillot' },
+  'Camiseta Algodón': { es: 'Camiseta Algodón', pt: 'Camisola algodão', it: 'Maglia cotone', fr: 'Maillot coton' },
+  'Camiseta Basket': { es: 'Camiseta Basket', pt: 'Camisola de basquetebol', it: 'Maglia basket', fr: 'Maillot basket' },
+  'Camiseta Portero': { es: 'Camiseta Portero', pt: 'Camisola de guarda-redes', it: 'Maglia portiere', fr: 'Maillot gardien' },
+  'Camiseta Reversible Basket': { es: 'Camiseta Reversible Basket', pt: 'Camisola reversível de basquetebol', it: 'Maglia basket reversibile', fr: 'Maillot basket réversible' },
+  'Camiseta sin mangas': { es: 'Camiseta sin mangas', pt: 'Camisola sem mangas', it: 'Canotta', fr: 'Maillot sans manches' },
   'Camiseta Térmica': { es: 'Camiseta Térmica', pt: 'Camisola térmica', it: 'Maglia termica', fr: 'Maillot thermique' },
+  Chaqueta: { es: 'Chaqueta', pt: 'Casaco', it: 'Giacca', fr: 'Veste' },
   Chándal: { es: 'Chándal', pt: 'Fato de treino', it: 'Tuta', fr: 'Survêtement' },
+  Chubasquero: { es: 'Chubasquero', pt: 'Capa de chuva', it: 'K-way', fr: 'Coupe-vent' },
   Falda: { es: 'Falda', pt: 'Saia', it: 'Gonna', fr: 'Jupe' },
+  Gorra: { es: 'Gorra', pt: 'Boné', it: 'Cappellino', fr: 'Casquette' },
+  Gorro: { es: 'Gorro', pt: 'Gorro', it: 'Berretto', fr: 'Bonnet' },
   Guantes: { es: 'Guantes', pt: 'Luvas', it: 'Guanti', fr: 'Gants' },
+  Gymsack: { es: 'Gymsack', pt: 'Gymsack', it: 'Gymsack', fr: 'Gymsack' },
+  Hoody: { es: 'Hoody', pt: 'Hoody', it: 'Felpa con cappuccio', fr: 'Hoodie' },
+  Malla: { es: 'Malla', pt: 'Legging', it: 'Collant', fr: 'Collant' },
   Medias: { es: 'Medias', pt: 'Meias', it: 'Calzettoni', fr: 'Chaussettes' },
   Mochila: { es: 'Mochila', pt: 'Mochila', it: 'Zaino', fr: 'Sac à dos' },
+  Neceser: { es: 'Neceser', pt: 'Nécessaire', it: 'Nécessaire', fr: 'Trousse' },
   Pantalón: { es: 'Pantalón', pt: 'Calças', it: 'Pantaloni', fr: 'Pantalon' },
   'Pantalón corto': { es: 'Pantalón corto', pt: 'Calções', it: 'Pantaloncini', fr: 'Short' },
+  'Pantalón Corto': { es: 'Pantalón Corto', pt: 'Calções', it: 'Pantaloncini', fr: 'Short' },
+  'Pantalón Largo': { es: 'Pantalón Largo', pt: 'Calças', it: 'Pantaloni', fr: 'Pantalon' },
+  'Pantalón Largo Algodón': { es: 'Pantalón Largo Algodón', pt: 'Calças de algodão', it: 'Pantaloni in cotone', fr: 'Pantalon coton' },
   Peto: { es: 'Peto', pt: 'Colete', it: 'Casacca', fr: 'Chasuble' },
   Polo: { es: 'Polo', pt: 'Polo', it: 'Polo', fr: 'Polo' },
+  Saco: { es: 'Saco', pt: 'Saco', it: 'Sacco', fr: 'Sac' },
   Sudadera: { es: 'Sudadera', pt: 'Sweatshirt', it: 'Felpa', fr: 'Sweat' },
   Top: { es: 'Top', pt: 'Top', it: 'Top', fr: 'Top' },
+  Zapatillero: { es: 'Zapatillero', pt: 'Saco de sapatos', it: 'Portascarpe', fr: 'Sac à chaussures' },
 };
 
+const NAME_PREFIXES: Record<TarifasLocale, string>[] = [
+  ...Object.values(TYPE_LABELS),
+  { es: 'Chaquetón', pt: 'Parka', it: 'Parka', fr: 'Parka' },
+  { es: 'Cazadora', pt: 'Blusão', it: 'Giacca', fr: 'Blouson' },
+  { es: 'Botella', pt: 'Garrafa', it: 'Borraccia', fr: 'Bouteille' },
+  { es: 'Pantalón largo', pt: 'Calças', it: 'Pantaloni', fr: 'Pantalon' },
+  { es: 'Camiseta Sin Mangas', pt: 'Camisola sem mangas', it: 'Canotta', fr: 'Maillot sans manches' },
+  { es: 'Braga de cuello', pt: 'Gola', it: 'Scaldacollo', fr: 'Tour de cou' },
+  { es: 'Bolsa de deporte', pt: 'Saco de desporto', it: 'Borsa sportiva', fr: 'Sac de sport' },
+  { es: 'Saco Portabalones', pt: 'Saco porta-bolas', it: 'Sacco portapalloni', fr: 'Sac à ballons' },
+];
+
+const NAME_PHRASES: Record<TarifasLocale, string>[] = [
+  { es: 'de deporte', pt: 'de desporto', it: 'sportiva', fr: 'de sport' },
+  { es: 'de cuello', pt: 'de pescoço', it: 'da collo', fr: 'de cou' },
+  { es: 'con capucha', pt: 'com capuz', it: 'con cappuccio', fr: 'à capuche' },
+  { es: 'con cremallera', pt: 'com fecho', it: 'con zip', fr: 'avec zip' },
+  { es: 'sin mangas', pt: 'sem mangas', it: 'smanicata', fr: 'sans manches' },
+  { es: 'sin lineas', pt: 'sem riscas', it: 'senza righe', fr: 'sans bandes' },
+  { es: 'sin líneas', pt: 'sem riscas', it: 'senza righe', fr: 'sans bandes' },
+  { es: 'primera capa', pt: 'primeira camada', it: 'primo strato', fr: 'première couche' },
+  { es: 'portabalones', pt: 'porta-bolas', it: 'portapalloni', fr: 'à ballons' },
+  { es: '3 pares', pt: '3 pares', it: '3 paia', fr: '3 paires' },
+  { es: 'algodón', pt: 'algodão', it: 'cotone', fr: 'coton' },
+  { es: 'térmica', pt: 'térmica', it: 'termica', fr: 'thermique' },
+  { es: 'mujer', pt: 'mulher', it: 'donna', fr: 'femme' },
+];
+
+function foldLabel(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+}
+
+const TYPE_BY_FOLD = new Map(
+  Object.entries(TYPE_LABELS).map(([key, labels]) => [foldLabel(key), labels]),
+);
+
+const PREFIXES_BY_LENGTH = [...NAME_PREFIXES].sort((a, b) => b.es.length - a.es.length);
+const PHRASES_BY_LENGTH = [...NAME_PHRASES].sort((a, b) => b.es.length - a.es.length);
+
+function originalPrefixLength(name: string, foldedPrefix: string): number {
+  let index = 0;
+  let folded = 0;
+  while (index < name.length && folded < foldedPrefix.length) {
+    folded += foldLabel(name[index]).length;
+    index += 1;
+  }
+  return index;
+}
+
+function stripLeadingPrefix(name: string, spanish: string): string {
+  const foldedName = foldLabel(name);
+  const foldedPrefix = foldLabel(spanish);
+  if (foldedName === foldedPrefix) return '';
+  if (!foldedName.startsWith(foldedPrefix)) return name;
+  const next = foldedName[foldedPrefix.length];
+  if (next && next !== ' ' && next !== '(' && next !== '-') return name;
+  return name.slice(originalPrefixLength(name, foldedPrefix)).trimStart();
+}
+
+function applyPhrases(name: string, locale: TarifasLocale): string {
+  if (locale === 'es') return name;
+  let out = name;
+  PHRASES_BY_LENGTH.forEach((phrase) => {
+    const source = phrase.es.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(?<![\\p{L}])${source}(?![\\p{L}])`, 'giu'), phrase[locale]);
+  });
+  return out;
+}
+
 export function labelProductType(locale: TarifasLocale, type: string): string {
-  return TYPE_LABELS[type]?.[locale] || type;
+  return TYPE_LABELS[type]?.[locale] || TYPE_BY_FOLD.get(foldLabel(type))?.[locale] || type;
+}
+
+export function labelProductName(locale: TarifasLocale, name: string): string {
+  const raw = name.trim();
+  if (!raw) return raw;
+  const folded = foldLabel(raw);
+  const prefix = PREFIXES_BY_LENGTH.find((item) => {
+    const needle = foldLabel(item.es);
+    if (folded === needle) return true;
+    if (!folded.startsWith(needle)) return false;
+    const next = folded[needle.length];
+    return !next || next === ' ' || next === '(' || next === '-';
+  });
+  if (!prefix) return applyPhrases(raw, locale);
+  const needle = foldLabel(prefix.es);
+  const head = raw.slice(0, originalPrefixLength(raw, needle)).trimEnd();
+  let rest = stripLeadingPrefix(raw, prefix.es);
+  if (foldLabel(rest).startsWith(needle)) rest = stripLeadingPrefix(rest, prefix.es);
+  if (locale === 'es') return rest ? `${head} ${rest}` : head;
+  const translatedRest = applyPhrases(rest, locale);
+  return translatedRest ? `${prefix[locale]} ${translatedRest}` : prefix[locale];
 }
