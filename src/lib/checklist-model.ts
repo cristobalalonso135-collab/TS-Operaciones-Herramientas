@@ -237,6 +237,7 @@ export const CHECKLIST_TABLE_WIDTHS: Record<string, { width: number; min: number
   grip: { width: 52, min: 52, max: 52 },
   area: { width: 120, min: 72, max: 360 },
   titulo: { width: 280, min: 140, max: 720 },
+  pasos: { width: 92, min: 72, max: 180 },
   deadline: { width: 128, min: 88, max: 240 },
   prioridad: { width: 96, min: 72, max: 180 },
   responsable: { width: 140, min: 88, max: 280 },
@@ -340,12 +341,30 @@ export function uniqueValues(tasks: ChecklistTask[], key: 'area' | 'responsable'
   return out.sort((a, b) => a.localeCompare(b, 'es'));
 }
 
+export type TaskRhythm = 'hecho' | 'tarde' | 'hoy' | 'ok';
+
+export function taskRhythm(task: ChecklistTask, today = todayIso()): TaskRhythm {
+  if (isClosed(task)) return 'hecho';
+  if (isTaskOverdue(task, today)) return 'tarde';
+  const days = daysUntil(effectiveDeadline(task), today);
+  if (days === 0) return 'hoy';
+  return 'ok';
+}
+
 export function checklistKpis(tasks: ChecklistTask[], today = todayIso()) {
   const done = tasks.filter((item) => item.estado === 'Completado').length;
   const blocked = tasks.filter((item) => item.estado === 'Bloqueado').length;
   const expired = tasks.filter((item) => item.estado === 'Caducada').length;
   const overdue = tasks.filter((item) => isTaskOverdue(item, today)).length;
   const open = tasks.length - done - expired;
+  const dueToday = tasks.filter((item) => !isClosed(item) && daysUntil(effectiveDeadline(item), today) === 0).length;
+  let stepDone = 0;
+  let stepTotal = 0;
+  tasks.forEach((item) => {
+    const progress = subtaskProgress(item);
+    stepDone += progress.done;
+    stepTotal += progress.total;
+  });
   return {
     total: tasks.length,
     done,
@@ -353,7 +372,12 @@ export function checklistKpis(tasks: ChecklistTask[], today = todayIso()) {
     blocked,
     overdue,
     expired,
+    dueToday,
+    stepDone,
+    stepTotal,
     share: tasks.length ? done / tasks.length : 0,
+    stepShare: stepTotal ? stepDone / stepTotal : 0,
+    rhythm: overdue > 0 ? 'tarde' as const : dueToday > 0 ? 'hoy' as const : 'ok' as const,
   };
 }
 

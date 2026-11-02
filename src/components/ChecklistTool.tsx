@@ -22,6 +22,7 @@ import {
   sortByDeadline,
   sortByPriority,
   subtaskProgress,
+  taskRhythm,
   todayIso,
   toggleSubtask,
   toggleTask,
@@ -100,12 +101,79 @@ function Countdown({ iso }: { iso: string }) {
   );
 }
 
-function Kpi({ label, value, hint, danger }: { label: string; value: string | number; hint?: string; danger?: boolean }) {
+function Kpi({ label, value, hint, danger, warn }: { label: string; value: string | number; hint?: string; danger?: boolean; warn?: boolean }) {
+  const tone = danger
+    ? 'border-red-200 bg-red-50'
+    : warn
+      ? 'border-amber-200 bg-amber-50'
+      : 'border-[var(--border)] bg-[var(--bg-card)]';
+  const labelTone = danger ? 'text-red-800' : warn ? 'text-amber-900' : 'text-[var(--text-secondary)]';
+  const valueTone = danger ? 'text-red-800' : warn ? 'text-amber-900' : '';
   return (
-    <div className={`min-w-0 rounded-lg border p-3 ${danger ? 'border-red-200 bg-red-50' : 'border-[var(--border)] bg-[var(--bg-card)]'}`}>
-      <p className={`text-xs ${danger ? 'text-red-800' : 'text-[var(--text-secondary)]'}`}>{label}</p>
-      <p className={`mt-1 font-display text-lg font-semibold tabular-nums ${danger ? 'text-red-800' : ''}`}>{value}</p>
+    <div className={`min-w-0 rounded-lg border p-3 ${tone}`}>
+      <p className={`text-xs ${labelTone}`}>{label}</p>
+      <p className={`mt-1 font-display text-lg font-semibold tabular-nums ${valueTone}`}>{value}</p>
       {hint ? <p className="mt-1 text-[11px] text-[var(--text-muted)]">{hint}</p> : null}
+    </div>
+  );
+}
+
+function PulseStrip({
+  rhythm,
+  overdue,
+  dueToday,
+  done,
+  total,
+  stepDone,
+  stepTotal,
+}: {
+  rhythm: 'ok' | 'hoy' | 'tarde';
+  overdue: number;
+  dueToday: number;
+  done: number;
+  total: number;
+  stepDone: number;
+  stepTotal: number;
+}) {
+  const tone = rhythm === 'tarde'
+    ? 'border-red-200 bg-red-50 text-red-900'
+    : rhythm === 'hoy'
+      ? 'border-amber-200 bg-amber-50 text-amber-950'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-900';
+  const title = rhythm === 'tarde' ? 'Vas tarde' : rhythm === 'hoy' ? 'Hoy toca' : 'Vas bien';
+  const detail = rhythm === 'tarde'
+    ? `${overdue} vencida${overdue === 1 ? '' : 's'}`
+    : rhythm === 'hoy'
+      ? `${dueToday} tarea${dueToday === 1 ? '' : 's'} para hoy`
+      : 'Ninguna vencida';
+  return (
+    <div className={`rounded-lg border px-4 py-3 ${tone}`}>
+      <p className="font-display text-lg font-semibold tracking-tight">{title}</p>
+      <p className="mt-1 text-sm">
+        {detail}
+        {' · '}{done}/{total || 0} tareas
+        {stepTotal > 0 ? ` · ${stepDone}/${stepTotal} pasos` : ''}
+      </p>
+    </div>
+  );
+}
+
+function PasosMark({ done, total, closed, late }: { done: number; total: number; closed?: boolean; late?: boolean }) {
+  if (!total) return <span className="text-[var(--text-muted)]">—</span>;
+  const pct = Math.round((done / total) * 100);
+  const bar = closed || done === total
+    ? 'bg-[var(--success)]'
+    : late
+      ? 'bg-[var(--danger)]'
+      : 'bg-[var(--text-primary)]';
+  return (
+    <div className="min-w-[4.5rem]">
+      <p className={`text-xs font-semibold tabular-nums ${late && !closed ? 'text-[var(--danger)]' : ''}`}>
+        {done}/{total}
+      </p>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }
@@ -682,7 +750,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     <p className="font-display text-lg font-semibold tracking-tight">{board.nombre}</p>
                     <p className="mt-1 text-xs text-[var(--text-secondary)]">
                       {board.fechaEvento ? `Evento ${formatIsoDate(board.fechaEvento)}` : 'Sin fecha de evento'}
-                      {' · '}{kpis.done}/{kpis.total || 0} hechas
+                      {' · '}{kpis.done}/{kpis.total || 0} tareas
+                      {kpis.stepTotal > 0 ? ` · ${kpis.stepDone}/${kpis.stepTotal} pasos` : ''}
                       {kpis.overdue > 0 ? ` · ${kpis.overdue} vencidas` : ''}
                     </p>
                     <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--bg-soft)]">
@@ -775,11 +844,24 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               </div>
               <Countdown iso={state.fechaEvento} />
             </div>
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--bg-soft)]">
-              <div className="h-full rounded-full bg-[var(--success)]" style={{ width: `${Math.round(kpis.share * 100)}%` }} />
+            <div className="mt-4">
+              <PulseStrip
+                rhythm={kpis.rhythm}
+                overdue={kpis.overdue}
+                dueToday={kpis.dueToday}
+                done={kpis.done}
+                total={kpis.total}
+                stepDone={kpis.stepDone}
+                stepTotal={kpis.stepTotal}
+              />
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--bg-soft)]">
+              <div className="h-full rounded-full bg-[var(--success)]" style={{ width: `${Math.round((kpis.stepTotal ? kpis.stepShare : kpis.share) * 100)}%` }} />
             </div>
             <p className="mt-2 text-xs text-[var(--text-muted)]">
-              {formatShare(kpis.done, kpis.total)} completado
+              {kpis.stepTotal > 0
+                ? `${kpis.stepDone}/${kpis.stepTotal} pasos · ${formatShare(kpis.stepDone, kpis.stepTotal)}`
+                : `${formatShare(kpis.done, kpis.total)} tareas`}
               {kpis.expired > 0 ? ` · ${kpis.expired} caducada${kpis.expired === 1 ? '' : 's'}` : ''}
             </p>
             {upcoming.length > 0 && (
@@ -807,9 +889,13 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           </section>
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <Kpi label="Tareas" value={kpis.total} />
-            <Kpi label="Hechas" value={kpis.done} hint={formatShare(kpis.done, kpis.total)} />
-            <Kpi label="Abiertas" value={kpis.open} />
+            <Kpi label="Tareas" value={`${kpis.done}/${kpis.total}`} hint="hechas / total" />
+            <Kpi
+              label="Pasos"
+              value={kpis.stepTotal ? `${kpis.stepDone}/${kpis.stepTotal}` : '—'}
+              hint={kpis.stepTotal ? formatShare(kpis.stepDone, kpis.stepTotal) : 'Sin pasos'}
+            />
+            <Kpi label="Hoy" value={kpis.dueToday} warn={kpis.dueToday > 0} />
             <button type="button" onClick={() => setOnlyOverdue((value) => !value)} className="text-left">
               <Kpi label="Vencidas" value={kpis.overdue} danger={kpis.overdue > 0} hint={onlyOverdue ? 'Filtro activo' : 'Pincha para filtrar'} />
             </button>
@@ -922,7 +1008,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                               {task.responsable ? <span>{task.responsable}</span> : null}
                               <PriorityMark value={task.prioridad} muted={closed} />
                               <span>{task.estado}</span>
-                              {progress.total > 0 ? <span>{progress.done}/{progress.total} pasos</span> : null}
+                              {progress.total > 0 ? (
+                                <PasosMark done={progress.done} total={progress.total} closed={closed} late={taskRhythm(task, today) === 'tarde'} />
+                              ) : null}
                             </div>
                             {task.comentarios ? <p className="text-xs text-[var(--text-muted)]">{task.comentarios}</p> : null}
                           </button>
@@ -991,6 +1079,10 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                         Tarea
                         <ColResize onMouseDown={(event) => resizeColumn('titulo', event)} />
                       </th>
+                      <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.pasos }}>
+                        Pasos
+                        <ColResize onMouseDown={(event) => resizeColumn('pasos', event)} />
+                      </th>
                       <th className="relative px-3 py-2 font-semibold" style={{ width: colWidths.deadline }}>
                         <button
                           type="button"
@@ -1043,6 +1135,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     {tableRows.map((task) => {
                       const closed = task.estado === 'Completado' || task.estado === 'Caducada';
                       const done = task.estado === 'Completado';
+                      const progress = subtaskProgress(task);
+                      const late = taskRhythm(task, today) === 'tarde';
                       return (
                         <tr
                           key={task.id}
@@ -1085,18 +1179,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                           <td className="break-words px-3 py-2.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
                           <td className={`break-words px-3 py-2.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
                             {task.titulo}
-                            {(task.subtasks || []).length > 0 ? (
-                              <ul className="mt-1.5 space-y-1 font-normal no-underline">
-                                {task.subtasks.map((step) => (
-                                  <li key={step.id} className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                    <span className={`break-words ${step.done ? 'text-[var(--text-muted)] line-through' : 'text-[var(--text-secondary)]'}`}>
-                                      {step.done ? '✓ ' : '· '}{step.titulo}
-                                    </span>
-                                    <DeadlineMark iso={step.deadline} today={today} closed={step.done || closed} />
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : null}
+                          </td>
+                          <td className="px-3 py-2.5 align-top">
+                            <PasosMark done={progress.done} total={progress.total} closed={closed} late={late} />
                           </td>
                           <td className="break-words px-3 py-2.5 align-top">
                             <DeadlineMark iso={task.deadline || effectiveDeadline(task)} today={today} closed={closed} />
@@ -1129,6 +1214,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             <p className="font-display text-base font-semibold tracking-tight">{state.nombre}</p>
             <p className="text-xs text-[var(--text-secondary)]">
               {weeklyDone} hecha{weeklyDone === 1 ? '' : 's'} · {weeklyOpen} pendiente{weeklyOpen === 1 ? '' : 's'}
+              {kpis.stepTotal > 0 ? ` · ${kpis.stepDone}/${kpis.stepTotal} pasos` : ''}
               {state.fechaEvento ? ` · evento ${formatIsoDate(state.fechaEvento)}` : ''}
             </p>
           </div>
@@ -1181,6 +1267,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   const closed = isClosed(task);
                   const done = task.estado === 'Completado';
                   const overdue = !closed && !!task.deadline && task.deadline < today;
+                  const progress = subtaskProgress(task);
                   return (
                     <tr
                       key={task.id}
@@ -1188,7 +1275,12 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                       onClick={() => openTask(task)}
                     >
                       <td className="break-words px-2.5 py-1.5 align-top text-[var(--text-secondary)]">{task.area || '—'}</td>
-                      <td className={`break-words px-2.5 py-1.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>{task.titulo}</td>
+                      <td className={`break-words px-2.5 py-1.5 align-top ${done ? 'text-[var(--text-secondary)] line-through' : closed ? 'text-[var(--text-muted)] line-through' : 'font-medium'}`}>
+                        {task.titulo}
+                        {progress.total > 0 ? (
+                          <p className="mt-0.5 text-[11px] font-normal tabular-nums text-[var(--text-secondary)]">{progress.done}/{progress.total} pasos</p>
+                        ) : null}
+                      </td>
                       <td className="break-words px-2.5 py-1.5 align-top">
                         <DeadlineMark iso={task.deadline} today={today} closed={closed} />
                       </td>
