@@ -37,7 +37,7 @@ import {
   type ChecklistSubtask,
   type ChecklistTask,
 } from '@/lib/checklist-model';
-import { checklistToAoa, parseChecklistSheet, pickChecklistRows } from '@/lib/checklist-excel';
+import { checklistToSheets, parseChecklistWorkbook } from '@/lib/checklist-excel';
 import { loadChecklistLibrary, saveChecklistLibrary, type ChecklistBackend } from '@/lib/checklist-store';
 import { Check, ChevronDown, ChevronUp, Clock, Copy, Download, GripVertical, Plus, Search, Trash2, X } from 'lucide-react';
 
@@ -49,10 +49,20 @@ const TABS = [
 ] as const;
 type TabId = (typeof TABS)[number]['id'];
 
-function downloadAoa(rows: unknown[][], fileName: string) {
+function sheetCols(widths: number[]) {
+  return widths.map((width) => ({ wch: width }));
+}
+
+function downloadChecklist(nombre: string, fechaEvento: string, tasks: ChecklistTask[], fileName: string) {
   void import('xlsx').then((XLSX) => {
+    const sheets = checklistToSheets(nombre, fechaEvento, tasks);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Checklist');
+    const checklist = XLSX.utils.aoa_to_sheet(sheets.Checklist);
+    const pasos = XLSX.utils.aoa_to_sheet(sheets.Pasos);
+    checklist['!cols'] = sheetCols([38, 18, 56, 12, 10, 24, 12, 42, 12, 12, 48]);
+    pasos['!cols'] = sheetCols([38, 16, 42, 58, 12, 8]);
+    XLSX.utils.book_append_sheet(wb, checklist, 'Checklist');
+    XLSX.utils.book_append_sheet(wb, pasos, 'Pasos');
     XLSX.writeFile(wb, fileName);
   });
 }
@@ -287,6 +297,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   const [ack, setAck] = useState<string | null>(null);
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [replaceAll, setReplaceAll] = useState(false);
+  const [addOnly, setAddOnly] = useState(true);
   const [sort, setSort] = useState<{ key: 'deadline' | 'prioridad' | null; dir: 'asc' | 'desc' }>({ key: 'deadline', dir: 'asc' });
   const [colWidths, setColWidths] = useState<Record<string, number>>(defaultChecklistColumnWidths);
   const colWidthsRef = useRef(colWidths);
@@ -821,7 +832,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               <button
                 type="button"
                 className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-                onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
+                onClick={() => downloadChecklist(state.nombre, state.fechaEvento, state.tasks, `${state.nombre || 'checklist'}.xlsx`)}
               >
                 <Download className="h-3.5 w-3.5" /> Excel
               </button>
@@ -1199,15 +1210,19 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       {tab === 'importar' && (
         <div className="space-y-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Exporta o importa el checklist entero: tareas, prioridad, pasos, fechas, estados y responsables. Si la tarea ya existe, se actualiza.
+            La descarga sale en dos hojas: Checklist (una fila por tarea) y Pasos (una fila por paso). Al importar, los pasos se leen de esa segunda hoja. Los Excel antiguos con la columna Pasos siguen valiendo.
           </p>
           <button
             type="button"
             className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-            onClick={() => downloadAoa(checklistToAoa(state.nombre, state.fechaEvento, state.tasks), `${state.nombre || 'checklist'}.xlsx`)}
+            onClick={() => downloadChecklist(state.nombre, state.fechaEvento, state.tasks, `${state.nombre || 'checklist'}.xlsx`)}
           >
             <Download className="h-3.5 w-3.5" /> Descargar Excel
           </button>
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+            <input type="checkbox" checked={addOnly} onChange={(e) => setAddOnly(e.target.checked)} disabled={replaceAll} />
+            Solo añadir tareas nuevas (no tocar las que ya están)
+          </label>
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
             <input type="checkbox" checked={replaceAll} onChange={(e) => setReplaceAll(e.target.checked)} />
             Sustituir el checklist actual (no fusionar)
@@ -1215,12 +1230,12 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           <FileUpload
             inputId="checklist-import"
             label="Importar Excel"
-            hint="Usa el Excel que descargas aquí. Conserva Id, pasos y fechas."
+            hint="Hoja Checklist + hoja Pasos. Si el Id ya existe y desmarcas ‘solo añadir’, se actualiza."
             keepDropzone
             compact
             onFileLoaded={() => {}}
             onWorkbookLoaded={(sheets) => {
-              const parsed = parseChecklistSheet(pickChecklistRows(sheets));
+              const parsed = parseChecklistWorkbook(sheets);
               if (parsed.tasks.length === 0) {
                 setAck('No he encontrado tareas. Revisa que haya una columna Tarea.');
                 return;
@@ -1229,15 +1244,17 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               if (!current) return;
               const result = replaceAll
                 ? { state: { ...current, tasks: parsed.tasks }, added: parsed.tasks.length, updated: 0 }
-                : mergeImportedTasks(current, parsed.tasks);
+                : mergeImportedTasks(current, parsed.tasks, { addOnly });
               void persist({
                 ...result.state,
-                nombre: parsed.nombre || result.state.nombre,
-                fechaEvento: parsed.fechaEvento || result.state.fechaEvento,
+                nombre: addOnly && !replaceAll ? result.state.nombre : (parsed.nombre || result.state.nombre),
+                fechaEvento: addOnly && !replaceAll ? result.state.fechaEvento : (parsed.fechaEvento || result.state.fechaEvento),
               }, backend);
               setAck(replaceAll
                 ? `Checklist sustituido: ${parsed.tasks.length} tareas.`
-                : `${result.added} nuevas y ${result.updated} actualizadas.`);
+                : addOnly
+                  ? `${result.added} nuevas. Las que ya estaban no se han tocado.`
+                  : `${result.added} nuevas y ${result.updated} actualizadas.`);
               setTab('tabla');
             }}
           />

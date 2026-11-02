@@ -456,7 +456,11 @@ export function completeChecklistTask(
   return { tasks: tasks.map((item) => (item.id === task.id ? done : item)) };
 }
 
-export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTask[]): { state: ChecklistState; added: number; updated: number } {
+export function mergeImportedTasks(
+  state: ChecklistState,
+  incoming: ChecklistTask[],
+  options: { addOnly?: boolean } = {},
+): { state: ChecklistState; added: number; updated: number } {
   let tasks = [...state.tasks];
   let added = 0;
   let updated = 0;
@@ -467,6 +471,7 @@ export function mergeImportedTasks(state: ChecklistState, incoming: ChecklistTas
         && row.titulo.toLocaleLowerCase('es') === item.titulo.toLocaleLowerCase('es'))
     ));
     if (hit) {
+      if (options.addOnly) return;
       updated += 1;
       tasks = tasks.map((row) => (row.id === hit.id ? {
         ...row,

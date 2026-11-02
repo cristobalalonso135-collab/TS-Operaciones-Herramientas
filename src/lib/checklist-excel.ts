@@ -80,17 +80,76 @@ function parseDate(value: unknown): string | null {
   return null;
 }
 
+function sheetName(value: string): string {
+  return value.toLocaleLowerCase('es');
+}
+
+function isPasosSheetName(name: string): boolean {
+  const text = sheetName(name);
+  return text.includes('paso') || text.includes('subtarea');
+}
+
 export function pickChecklistRows(sheets: Record<string, unknown[][]>): unknown[][] {
   const entries = Object.entries(sheets);
   if (!entries.length) return [];
-  const named = entries.find(([name]) => name.toLocaleLowerCase('es').includes('checklist'));
+  const named = entries.find(([name]) => sheetName(name).includes('checklist') && !isPasosSheetName(name));
   if (named) return named[1];
-  const withTarea = entries.find(([, rows]) =>
-    (rows || []).some((row) =>
+  const withTarea = entries.find(([name, rows]) => {
+    if (isPasosSheetName(name)) return false;
+    return (rows || []).some((row) =>
       (row || []).some((cell) => String(cell ?? '').toLocaleLowerCase('es').includes('tarea'))
-    )
-  );
+    );
+  });
   return (withTarea || entries[0])[1] || [];
+}
+
+export function pickPasosRows(sheets: Record<string, unknown[][]>): unknown[][] {
+  const named = Object.entries(sheets).find(([name]) => isPasosSheetName(name));
+  return named?.[1] || [];
+}
+
+function parseHecho(value: unknown): boolean {
+  const text = cellText(value).toLocaleLowerCase('es');
+  return ['sí', 'si', '✓', 'hecho', 'done', 'true', '1', 'x'].includes(text);
+}
+
+function parsePasosSheet(rows: unknown[][]): Map<string, ChecklistSubtask[]> {
+  const grouped = new Map<string, ChecklistSubtask[]>();
+  if (!rows.length) return grouped;
+  const headerIndex = rows.findIndex((row) => {
+    const joined = (row || []).map(normalizeHeader).join(' | ');
+    return joined.includes('paso') || joined.includes('subtarea');
+  });
+  const start = headerIndex >= 0 ? headerIndex : 0;
+  const header = (rows[start] || []).map(normalizeHeader);
+  const col = {
+    id: findCol(header, ['id tarea', 'idtarea', 'id']),
+    paso: findCol(header, ['paso', 'subtarea', 'titulo', 'título']),
+    deadline: findCol(header, ['deadline', 'fecha', 'vencimiento', 'plazo']),
+    hecho: findCol(header, ['hecho', 'done', 'completado', 'estado']),
+  };
+  if (col.paso == null) return grouped;
+  rows.slice(start + 1).forEach((row) => {
+    const titulo = cellText(col.paso == null ? '' : row[col.paso]);
+    const id = cellText(col.id == null ? '' : row[col.id]);
+    if (!titulo || !id) return;
+    const done = parseHecho(col.hecho == null ? '' : row[col.hecho]);
+    const next: ChecklistSubtask = {
+      id: newId('st'),
+      titulo,
+      deadline: parseDate(col.deadline == null ? '' : row[col.deadline]),
+      done,
+      completedAt: done ? nowIso() : null,
+    };
+    grouped.set(id, [...(grouped.get(id) || []), next]);
+  });
+  return grouped;
+}
+
+function attachPasosFromSheet(tasks: ChecklistTask[], sheets: Record<string, unknown[][]>): ChecklistTask[] {
+  const grouped = parsePasosSheet(pickPasosRows(sheets));
+  if (!grouped.size) return tasks;
+  return tasks.map((task) => (grouped.has(task.id) ? { ...task, subtasks: grouped.get(task.id) || [] } : task));
 }
 
 export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fechaEvento?: string; tasks: ChecklistTask[] } {
@@ -145,24 +204,46 @@ export function parseChecklistSheet(rows: unknown[][]): { nombre?: string; fecha
   return { nombre: nombre || undefined, fechaEvento: fechaEvento || undefined, tasks };
 }
 
+export function parseChecklistWorkbook(sheets: Record<string, unknown[][]>): { nombre?: string; fechaEvento?: string; tasks: ChecklistTask[] } {
+  const parsed = parseChecklistSheet(pickChecklistRows(sheets));
+  return { ...parsed, tasks: attachPasosFromSheet(parsed.tasks, sheets) };
+}
+
+export function checklistToSheets(nombre: string, fechaEvento: string, tasks: ChecklistTask[]): Record<string, unknown[][]> {
+  return {
+    Checklist: [
+      [nombre],
+      ['Fecha evento', fechaEvento || ''],
+      [],
+      ['Id', 'Área', 'Tarea', 'Deadline', 'Prioridad', 'Responsable', 'Estado', 'Comentarios', 'Completada', 'Creada', 'Pasos'],
+      ...tasks.map((item) => [
+        item.id,
+        item.area,
+        item.titulo,
+        item.deadline || '',
+        item.prioridad || '',
+        item.responsable,
+        item.estado,
+        item.comentarios,
+        item.completedAt ? item.completedAt.slice(0, 10) : '',
+        item.createdAt ? item.createdAt.slice(0, 10) : '',
+        formatPasos(item.subtasks || []),
+      ]),
+    ],
+    Pasos: [
+      ['Id tarea', 'Área', 'Tarea', 'Paso', 'Deadline', 'Hecho'],
+      ...tasks.flatMap((item) => (item.subtasks || []).map((step) => [
+        item.id,
+        item.area,
+        item.titulo,
+        step.titulo,
+        step.deadline || '',
+        step.done ? 'Sí' : '',
+      ])),
+    ],
+  };
+}
+
 export function checklistToAoa(nombre: string, fechaEvento: string, tasks: ChecklistTask[]): unknown[][] {
-  return [
-    [nombre],
-    ['Fecha evento', fechaEvento || ''],
-    [],
-    ['Id', 'Área', 'Tarea', 'Deadline', 'Prioridad', 'Responsable', 'Estado', 'Comentarios', 'Completada', 'Creada', 'Pasos'],
-    ...tasks.map((item) => [
-      item.id,
-      item.area,
-      item.titulo,
-      item.deadline || '',
-      item.prioridad || '',
-      item.responsable,
-      item.estado,
-      item.comentarios,
-      item.completedAt ? item.completedAt.slice(0, 10) : '',
-      item.createdAt ? item.createdAt.slice(0, 10) : '',
-      formatPasos(item.subtasks || []),
-    ]),
-  ];
+  return checklistToSheets(nombre, fechaEvento, tasks).Checklist;
 }
