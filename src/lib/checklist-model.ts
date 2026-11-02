@@ -32,6 +32,7 @@ export interface ChecklistState {
   nombre: string;
   fechaEvento: string;
   tasks: ChecklistTask[];
+  archivedTasks?: ChecklistTask[];
   columnWidths?: Record<string, number>;
 }
 
@@ -204,31 +205,51 @@ export function seedChecklistState(): ChecklistState {
   };
 }
 
+function normalizeTask(item: Partial<ChecklistTask> | null | undefined): ChecklistTask | null {
+  if (!item) return null;
+  const titulo = String(item.titulo || '').trim();
+  if (!titulo) return null;
+  const estado = asStatus(item.estado || 'Pendiente');
+  return {
+    id: item.id || newId('ck'),
+    area: String(item.area || '').trim(),
+    titulo,
+    deadline: item.deadline || null,
+    responsable: String(item.responsable || '').trim(),
+    estado,
+    prioridad: asPriority(item.prioridad),
+    comentarios: String(item.comentarios || '').trim(),
+    completedAt: item.completedAt || (estado === 'Completado' ? nowIso() : null),
+    createdAt: item.createdAt || nowIso(),
+    subtasks: normalizeSubtasks(item.subtasks),
+  };
+}
+
+export function activeChecklistTasks(tasks: ChecklistTask[] | null | undefined): ChecklistTask[] {
+  return (tasks || []).filter((item) => item.estado !== 'Caducada');
+}
+
 export function normalizeChecklist(state: Partial<ChecklistState> | null | undefined): ChecklistState {
   const seeded = seedChecklistState();
-  const tasks = Array.isArray(state?.tasks)
-    ? state.tasks.map((item) => {
-      const id = item.id || newId('ck');
-      return {
-        id,
-        area: String(item.area || '').trim(),
-        titulo: String(item.titulo || '').trim(),
-        deadline: item.deadline || null,
-        responsable: String(item.responsable || '').trim(),
-        estado: asStatus(item.estado || 'Pendiente'),
-        prioridad: asPriority(item.prioridad),
-        comentarios: String(item.comentarios || '').trim(),
-        completedAt: item.completedAt || (asStatus(item.estado || '') === 'Completado' ? nowIso() : null),
-        createdAt: item.createdAt || nowIso(),
-        subtasks: normalizeSubtasks(item.subtasks),
-      };
-    }).filter((item) => item.titulo)
+  const incoming = Array.isArray(state?.tasks)
+    ? state.tasks.map((item) => normalizeTask(item)).filter((item): item is ChecklistTask => Boolean(item))
     : seeded.tasks;
+  const previousArchived = Array.isArray(state?.archivedTasks)
+    ? state.archivedTasks.map((item) => normalizeTask(item)).filter((item): item is ChecklistTask => Boolean(item))
+    : [];
+  const tasks = incoming.filter((item) => item.estado !== 'Caducada');
+  const archivedById = new Map<string, ChecklistTask>();
+  [...previousArchived, ...incoming.filter((item) => item.estado === 'Caducada')].forEach((item) => {
+    archivedById.set(item.id, item);
+  });
+  tasks.forEach((item) => archivedById.delete(item.id));
+  const archivedTasks = [...archivedById.values()];
   return {
     id: String(state?.id || '').trim() || newId('cl'),
     nombre: canonicalChecklistName(String(state?.nombre || '').trim() || seeded.nombre),
     fechaEvento: String(state?.fechaEvento || '').slice(0, 10) || seeded.fechaEvento,
     tasks,
+    archivedTasks: archivedTasks.length ? archivedTasks : undefined,
     columnWidths: normalizeColumnWidths(state?.columnWidths),
   };
 }

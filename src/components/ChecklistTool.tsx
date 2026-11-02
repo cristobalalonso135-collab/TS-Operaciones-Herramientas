@@ -19,6 +19,7 @@ import {
   isTaskOverdue,
   mergeImportedTasks,
   moveById,
+  normalizeChecklist,
   sortByDeadline,
   sortByPriority,
   subtaskProgress,
@@ -400,7 +401,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
   }, [state?.id]);
 
   const persist = useCallback(async (next: ChecklistState, currentBackend: ChecklistBackend) => {
-    const withCols = { ...next, columnWidths: colWidthsRef.current };
+    const withCols = normalizeChecklist({ ...next, columnWidths: colWidthsRef.current });
     const lib = libraryRef.current;
     const lists = lib
       ? (lib.lists.some((item) => item.id === withCols.id)
@@ -463,7 +464,10 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
     window.addEventListener('mouseup', up);
   };
 
-  const tasks = state?.tasks || [];
+  const tasks = useMemo(
+    () => (state?.tasks || []).filter((item) => item.estado !== 'Caducada'),
+    [state],
+  );
   const kpis = useMemo(() => checklistKpis(tasks, today), [tasks, today]);
   const areas = useMemo(() => uniqueValues(tasks, 'area'), [tasks]);
   const owners = useMemo(() => uniqueValues(tasks, 'responsable'), [tasks]);
@@ -909,7 +913,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             </div>
             <FilterSelect value={filterArea} onChange={setFilterArea} label="Área" options={areas} />
             <FilterSelect value={filterOwner} onChange={setFilterOwner} label="Responsable" options={owners} />
-            <FilterSelect value={filterStatus} onChange={(value) => setFilterStatus(value as ChecklistStatus | '')} label="Estado" options={[...CHECKLIST_STATUSES]} />
+            <FilterSelect value={filterStatus} onChange={(value) => setFilterStatus(value as ChecklistStatus | '')} label="Estado" options={CHECKLIST_STATUSES.filter((item) => item !== 'Caducada')} />
             <FilterSelect value={filterPriority} onChange={(value) => setFilterPriority(value as ChecklistPriority | '')} label="Prioridad" options={[...CHECKLIST_PRIORITIES]} />
             {(query || filterArea || filterOwner || filterStatus || filterPriority || onlyOverdue) ? (
               <button type="button" className="h-9 rounded-md border border-[var(--border)] px-3 text-xs" onClick={() => { setQuery(''); setFilterArea(''); setFilterOwner(''); setFilterStatus(''); setFilterPriority(''); setOnlyOverdue(false); }}>Quitar filtros</button>
@@ -918,7 +922,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
               <button
                 type="button"
                 className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-                onClick={() => downloadChecklist(state.nombre, state.fechaEvento, state.tasks, `${state.nombre || 'checklist'}.xlsx`)}
+                onClick={() => downloadChecklist(state.nombre, state.fechaEvento, tasks, `${state.nombre || 'checklist'}.xlsx`)}
               >
                 <Download className="h-3.5 w-3.5" /> Excel
               </button>
@@ -1307,7 +1311,7 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
           <button
             type="button"
             className="flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-xs font-semibold"
-            onClick={() => downloadChecklist(state.nombre, state.fechaEvento, state.tasks, `${state.nombre || 'checklist'}.xlsx`)}
+            onClick={() => downloadChecklist(state.nombre, state.fechaEvento, tasks, `${state.nombre || 'checklist'}.xlsx`)}
           >
             <Download className="h-3.5 w-3.5" /> Descargar Excel
           </button>

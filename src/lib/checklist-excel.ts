@@ -1,4 +1,4 @@
-import { asPriority, asStatus, newId, nowIso, type ChecklistSubtask, type ChecklistTask } from '@/lib/checklist-model';
+import { activeChecklistTasks, asPriority, asStatus, newId, nowIso, type ChecklistSubtask, type ChecklistTask } from '@/lib/checklist-model';
 
 function cellText(value: unknown): string {
   return String(value ?? '').replace(/\u00a0/g, ' ').trim();
@@ -210,13 +210,14 @@ export function parseChecklistWorkbook(sheets: Record<string, unknown[][]>): { n
 }
 
 export function checklistToSheets(nombre: string, fechaEvento: string, tasks: ChecklistTask[]): Record<string, unknown[][]> {
+  const active = activeChecklistTasks(tasks);
   return {
     Checklist: [
       [nombre],
       ['Fecha evento', fechaEvento || ''],
       [],
       ['Id', 'Área', 'Tarea', 'Deadline', 'Prioridad', 'Responsable', 'Estado', 'Comentarios', 'Completada', 'Creada', 'Pasos'],
-      ...tasks.map((item) => [
+      ...active.map((item) => [
         item.id,
         item.area,
         item.titulo,
@@ -232,7 +233,7 @@ export function checklistToSheets(nombre: string, fechaEvento: string, tasks: Ch
     ],
     Pasos: [
       ['Id tarea', 'Área', 'Tarea', 'Paso', 'Deadline', 'Hecho'],
-      ...tasks.flatMap((item) => (item.subtasks || []).map((step) => [
+      ...active.flatMap((item) => (item.subtasks || []).map((step) => [
         item.id,
         item.area,
         item.titulo,
