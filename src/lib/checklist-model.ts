@@ -243,7 +243,7 @@ export function normalizeChecklist(state: Partial<ChecklistState> | null | undef
     archivedById.set(item.id, item);
   });
   tasks.forEach((item) => archivedById.delete(item.id));
-  const archivedTasks = [...archivedById.values()];
+  const archivedTasks = Array.from(archivedById.values());
   return {
     id: String(state?.id || '').trim() || newId('cl'),
     nombre: canonicalChecklistName(String(state?.nombre || '').trim() || seeded.nombre),
