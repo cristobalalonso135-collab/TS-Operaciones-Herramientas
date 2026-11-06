@@ -257,6 +257,10 @@ function doneRowClass(estado: ChecklistStatus): string {
   return '';
 }
 
+function areaGroupComplete(tasks: ChecklistTask[]): boolean {
+  return tasks.length > 0 && tasks.every((item) => item.estado === 'Completado');
+}
+
 function PriorityMark({ value, muted }: { value?: ChecklistPriority | null; muted?: boolean }) {
   const prioridad = value || 'Media';
   const tone = muted
@@ -941,12 +945,30 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             {groups.length === 0 && (
               <p className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] px-4 py-6 text-sm text-[var(--text-muted)]">No hay tareas con este filtro.</p>
             )}
-            {groups.map((group) => (
-              <section key={group.area} className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-                <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-soft)] px-4 py-2">
-                  <p className="text-sm font-semibold">{group.area}</p>
-                  <p className="text-xs text-[var(--text-muted)]">
-                    {group.tasks.filter((item) => item.estado === 'Completado').length}/{group.tasks.length}
+            {groups.map((group) => {
+              const doneCount = group.tasks.filter((item) => item.estado === 'Completado').length;
+              const groupDone = areaGroupComplete(group.tasks);
+              return (
+              <section
+                key={group.area}
+                className={`overflow-hidden rounded-xl border ${
+                  groupDone
+                    ? 'border-emerald-200 bg-[var(--success-soft)]'
+                    : 'border-[var(--border)] bg-[var(--bg-card)]'
+                }`}
+              >
+                <div className={`flex items-center justify-between border-b px-4 py-2 ${
+                  groupDone
+                    ? 'border-emerald-200 bg-[var(--success-soft)]'
+                    : 'border-[var(--border)] bg-[var(--bg-soft)]'
+                }`}
+                >
+                  <p className={`inline-flex items-center gap-2 text-sm font-semibold ${groupDone ? 'text-[var(--success)]' : ''}`}>
+                    {groupDone ? <Check className="h-4 w-4" /> : null}
+                    {group.area}
+                  </p>
+                  <p className={`text-xs ${groupDone ? 'font-semibold text-[var(--success)]' : 'text-[var(--text-muted)]'}`}>
+                    {groupDone ? 'Completado' : `${doneCount}/${group.tasks.length}`}
                   </p>
                 </div>
                 <ul>
@@ -956,7 +978,9 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                     return (
                       <li
                         key={task.id}
-                        className={`grid gap-2 border-t border-[var(--border)] px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-start ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : doneRowClass(task.estado)}`}
+                        className={`grid gap-2 border-t px-3 py-3 sm:grid-cols-[auto_auto_1fr] sm:items-start ${
+                          groupDone ? 'border-emerald-200/70' : 'border-[var(--border)]'
+                        } ${dropRow === task.id ? 'bg-[var(--bg-soft)]' : groupDone ? '' : doneRowClass(task.estado)}`}
                         onDragOver={(event) => {
                           event.preventDefault();
                           setDropRow(task.id);
@@ -1050,7 +1074,8 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
                   })}
                 </ul>
               </section>
-            ))}
+              );
+            })}
           </div>
           )}
 
