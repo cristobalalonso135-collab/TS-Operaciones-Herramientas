@@ -29,14 +29,14 @@ export const ACCESS_ROLE_LABEL: Record<AccessRole, string> = {
 };
 
 export const ACCESS_ROLE_HINT: Record<AccessRole, string> = {
-  admin: 'Todo, incluida la gente.',
-  ops: 'Todas las herramientas, sin gente.',
-  comercial: 'Solo Tarifas.',
+  admin: 'Todas las herramientas.',
+  ops: 'Todas las herramientas.',
+  comercial: 'Sin herramientas en este hub.',
 };
 
 export const ACCESS_TOOLS = [
   'dashboard', 'budget', 'tracking', 'stock', 'abonos', 'mejoras',
-  'albaranes', 'checklist', 'objetivos', 'estado', 'fraccionar', 'tarifas', 'gente',
+  'albaranes', 'checklist', 'objetivos', 'fraccionar',
 ] as const;
 
 export type AccessTool = (typeof ACCESS_TOOLS)[number];
@@ -50,9 +50,8 @@ export function normalizeEmail(value: string): string {
 }
 
 export function canUseTool(role: AccessRole, tool: string): boolean {
-  if (role === 'admin') return true;
-  if (role === 'ops') return tool !== 'gente';
-  return tool === 'tarifas';
+  if (role === 'admin' || role === 'ops') return true;
+  return false;
 }
 
 export function emptyDirectory(): AccessDirectory {

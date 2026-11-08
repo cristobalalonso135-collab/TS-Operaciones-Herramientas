@@ -16,11 +16,8 @@ import AbonosTool from '@/components/AbonosTool';
 import AlbaranesTool from '@/components/AlbaranesTool';
 import ChecklistTool from '@/components/ChecklistTool';
 import ObjetivosTool from '@/components/ObjetivosTool';
-import EstadoTool from '@/components/EstadoTool';
 import MejorasTool from '@/components/MejorasTool';
 import FraccionarTool from '@/components/FraccionarTool';
-import TarifasTool from '@/components/TarifasTool';
-import UsersTool from '@/components/UsersTool';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import { useAccess } from '@/components/AccessProvider';
 import { canUseTool } from '@/lib/access-model';
@@ -424,7 +421,7 @@ function buildFySheetData(data: MonthData[], kind: 'facturacion' | 'cogs') {
 
 export default function Home() {
   const { user } = useAccess();
-  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos' | 'estado' | 'fraccionar' | 'tarifas' | 'gente'>('tools');
+  const [view, setView] = useState<'tools' | 'dashboard' | 'budget' | 'tracking' | 'stock' | 'abonos' | 'mejoras' | 'albaranes' | 'checklist' | 'objetivos' | 'fraccionar'>('tools');
   useEffect(() => {
     if (view !== 'tools' && user && !canUseTool(user.role, view)) setView('tools');
   }, [view, user]);
@@ -687,20 +684,8 @@ export default function Home() {
     return <ObjetivosTool onBack={() => setView('tools')} />;
   }
 
-  if (view === 'estado') {
-    return <EstadoTool onBack={() => setView('tools')} />;
-  }
-
   if (view === 'fraccionar') {
     return <FraccionarTool onBack={() => setView('tools')} />;
-  }
-
-  if (view === 'tarifas') {
-    return <TarifasTool onBack={() => setView('tools')} />;
-  }
-
-  if (view === 'gente') {
-    return <UsersTool onBack={() => setView('tools')} />;
   }
 
   if (view === 'tools') {
@@ -778,36 +763,12 @@ export default function Home() {
         link: 'text-[#1f4b7a]',
       },
       {
-        id: 'estado' as const,
-        number: '10',
-        title: 'Cuentas',
-        description: 'Ingresos, gastos y el beneficio que te entra. Cupón, coste, cobro duplicado: lo que salga.',
-        tone: 'bg-[#efe8e2] text-[#6b4a32]',
-        link: 'text-[#6b4a32]',
-      },
-      {
         id: 'fraccionar' as const,
-        number: '11',
+        number: '10',
         title: 'Fraccionar',
         description: 'Cruza Data con Albaranes y Colectivos: número de albarán, código, nombre del colectivo y agente.',
         tone: 'bg-[#e7eef6] text-[#2c4a73]',
         link: 'text-[#2c4a73]',
-      },
-      {
-        id: 'tarifas' as const,
-        number: '12',
-        title: 'Tarifas',
-        description: 'Qué puedo ofrecer y a qué precio. Constructor de packs 26/27.',
-        tone: 'bg-[#f3eee6] text-[#6a4a2a]',
-        link: 'text-[#6a4a2a]',
-      },
-      {
-        id: 'gente' as const,
-        number: '13',
-        title: 'Gente',
-        description: 'Quién entra a Tarifas y con qué rol. El código les llega al correo.',
-        tone: 'bg-[#ece7e0] text-[#4a4038]',
-        link: 'text-[#4a4038]',
       },
     ];
     const visibleHubs = hubs.filter((hub) => !user || canUseTool(user.role, hub.id));
