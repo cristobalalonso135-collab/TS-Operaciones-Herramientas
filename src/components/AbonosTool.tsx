@@ -91,7 +91,7 @@ type SortKey =
   | 'receivedTotal'
   | 'pending'
   | 'status'
-  | 'comment'
+  | 'concept'
   | 'attachments';
 
 const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
@@ -107,7 +107,7 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'receivedTotal', label: 'Importe liquidado', width: 118 },
   { key: 'pending', label: 'Importe pendiente', width: 118 },
   { key: 'status', label: 'Estado', width: 140 },
-  { key: 'comment', label: 'Comentario', width: 180 },
+  { key: 'concept', label: 'Concepto', width: 180 },
   { key: 'attachments', label: 'Adjuntos', width: 80 },
   { key: 'responsible', label: 'Responsable', width: 108 },
 ];
@@ -125,13 +125,15 @@ function loadColLayout(): { order: SortKey[]; widths: Record<SortKey, number> } 
   try {
     const raw = window.localStorage.getItem(COL_STORAGE);
     if (!raw) return { order: DEFAULT_ORDER, widths: { ...DEFAULT_WIDTHS } };
-    const parsed = JSON.parse(raw) as { order?: SortKey[]; widths?: Partial<Record<SortKey, number>> };
-    const saved = (parsed.order || []).filter((key): key is SortKey => DEFAULT_ORDER.includes(key as SortKey));
+    const parsed = JSON.parse(raw) as { order?: string[]; widths?: Partial<Record<string, number>> };
+    const saved = (parsed.order || [])
+      .map((key) => (key === 'comment' ? 'concept' : key))
+      .filter((key): key is SortKey => DEFAULT_ORDER.includes(key as SortKey));
     const missing = DEFAULT_ORDER.filter((key) => !saved.includes(key));
     const order = saved.length > 0 ? [...saved, ...missing] : [...DEFAULT_ORDER];
     const widths = { ...DEFAULT_WIDTHS };
     DEFAULT_ORDER.forEach((key) => {
-      const width = parsed.widths?.[key];
+      const width = parsed.widths?.[key] ?? (key === 'concept' ? parsed.widths?.comment : undefined);
       if (typeof width === 'number' && width >= 72) widths[key] = width;
     });
     return { order, widths };
@@ -176,6 +178,25 @@ function matchesAttachmentFilter(selected: string[], count: number): boolean {
   return selected.some((value) => (value === 'Sí' && has) || (value === 'No' && !has));
 }
 
+function ConceptCell({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [title, setTitle] = useState<string | undefined>();
+  const label = text.trim();
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || !label) {
+      setTitle(undefined);
+      return;
+    }
+    setTitle(node.scrollWidth > node.clientWidth + 1 ? label : undefined);
+  }, [label]);
+  return (
+    <span ref={ref} className="block truncate" title={title}>
+      {label || '—'}
+    </span>
+  );
+}
+
 function renderAbonoCell(row: AbonoComputed, key: SortKey) {
   switch (key) {
     case 'responsible':
@@ -200,8 +221,8 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey) {
       return formatMoney(row.pending);
     case 'status':
       return <StatusPill row={row} />;
-    case 'comment':
-      return displayDash(row.comment);
+    case 'concept':
+      return <ConceptCell text={row.concept} />;
     case 'attachments': {
       const count = (row.attachments || []).length;
       return count > 0 ? String(count) : '—';
@@ -295,7 +316,7 @@ function rowMatchesFilters(
   if (except !== 'search') {
     const search = filters.search.trim().toLocaleLowerCase('es');
     if (search) {
-      const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.comment, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible, row.amountModeResolved, row.amountConditionResolved].join(' ').toLocaleLowerCase('es');
+      const blob = [row.registro, row.brand, row.type, row.area, row.teamMotivo, row.concept, row.notes, row.informedBy, row.source, row.tradeTermName, row.addedBy, row.responsible, row.amountModeResolved, row.amountConditionResolved].join(' ').toLocaleLowerCase('es');
       if (!blob.includes(search)) return false;
     }
   }
@@ -337,7 +358,8 @@ const emptyForm = (): Partial<AbonoCase> => ({
   communicatedAmount: null,
   status: 'Pendiente',
   nextReview: '',
-  comment: '',
+  concept: '',
+  notes: '',
   estimated: false,
   amountMode: 'Fijo',
   amountCondition: '',
@@ -956,7 +978,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       communicatedAmount,
       status,
       nextReview: form.nextReview || null,
-      comment: form.comment || '',
+      concept: form.concept || '',
+      notes: form.notes || '',
       estimated,
       amountMode: form.amountMode === 'Variable' || form.amountMode === 'Fijo' ? form.amountMode : '',
       amountCondition: String(form.amountCondition || '').trim(),
@@ -1576,16 +1599,13 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               </thead>
               <tbody>
                 {sorted.map((row) => (
-                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer">
+                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer" title={row.notes.trim() || undefined}>
                     {columnOrder.map((key) => (
                       <td
                         key={key}
                         className={`border-b border-[var(--border)] px-1.5 py-1.5 ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''}`}
                       >
-                        <div
-                          className="abonos-cell"
-                          title={key === 'comment' ? row.comment || undefined : undefined}
-                        >
+                        <div className={`abonos-cell ${key === 'concept' ? 'abonos-cell-clip' : ''}`}>
                           {renderAbonoCell(row, key)}
                         </div>
                       </td>
@@ -2252,12 +2272,21 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               </section>
 
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Concepto</span>
+                <input
+                  value={form.concept || ''}
+                  onChange={(event) => setForm({ ...form, concept: event.target.value })}
+                  placeholder="Texto corto que se ve en la tabla"
+                  className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-[var(--text-secondary)]">Notas</span>
                 <textarea
-                  value={form.comment || ''}
-                  onChange={(event) => setForm({ ...form, comment: event.target.value })}
+                  value={form.notes || ''}
+                  onChange={(event) => setForm({ ...form, notes: event.target.value })}
                   rows={3}
-                  placeholder="Nombre del correo, conversación, nº de pedido…"
+                  placeholder="Detalle que solo se ve en esta ficha"
                   className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
                 />
               </label>

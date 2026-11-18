@@ -51,7 +51,8 @@ export interface AbonoCase {
   communicatedAmount: number | null;
   status: AbonoStatus | '';
   nextReview: string | null;
-  comment: string;
+  concept: string;
+  notes: string;
   estimated: boolean | null;
   attachments: AbonoAttachment[];
 }
@@ -171,9 +172,9 @@ export function caseLabel(row: { brand: string; area: string; teamMotivo: string
   return [row.brand, row.area, row.teamMotivo].map((value) => displayDash(value)).join(' · ');
 }
 
-export function taskName(row: { brand: string; type?: string; area: string; teamMotivo: string; comment?: string }): string {
-  const comment = String(row.comment || '').trim();
-  if (comment) return comment;
+export function taskName(row: { brand: string; type?: string; area: string; teamMotivo: string; concept?: string; comment?: string }): string {
+  const concept = String(row.concept || row.comment || '').trim();
+  if (concept) return concept;
   const team = String(row.teamMotivo || '').trim();
   if (team) return team;
   return caseLabel(row);
@@ -834,6 +835,10 @@ export function namesNeedShortening(state: Pick<AbonosState, 'cases'>): boolean 
 }
 
 export function abonosNeedRewrite(state: Pick<AbonosState, 'cases' | 'receipts'>): boolean {
+  if (state.cases.some((row) => {
+    const item = row as AbonoCase & { comment?: string; concept?: string; notes?: string };
+    return typeof item.concept !== 'string' || typeof item.notes !== 'string';
+  })) return true;
   if (namesNeedShortening(state)) return true;
   if (state.cases.some((row) => {
     const raw = String(row.source || '');

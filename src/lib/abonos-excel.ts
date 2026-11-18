@@ -33,6 +33,7 @@ export interface ImportColumnMap {
   status: number | null;
   nextReview: number | null;
   comment: number | null;
+  notes: number | null;
   origin: number | null;
   source: number | null;
   informedBy: number | null;
@@ -59,6 +60,7 @@ export interface ImportPreviewRow {
   status: string;
   nextReview: string | null;
   comment: string;
+  notes: string;
   origin: string;
   source: string;
   informedBy: string;
@@ -86,6 +88,7 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   status: ['estado'],
   nextReview: ['próxima revisión', 'proxima revisión', 'próxima revision', 'proxima revision'],
   comment: ['comentario', 'comentarios'],
+  notes: ['notas'],
   amountCondition: ['condición', 'condicion'],
   origin: ['origen'],
   source: ['canal', 'vino por', 'llegó por', 'llego por', 'conversación', 'conversacion'],
@@ -158,6 +161,7 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     status: find(HEADER_ALIASES.status),
     nextReview: find(HEADER_ALIASES.nextReview),
     comment: find(HEADER_ALIASES.comment),
+    notes: find(HEADER_ALIASES.notes),
     amountCondition: find(HEADER_ALIASES.amountCondition),
     origin: find(HEADER_ALIASES.origin),
     source: find(HEADER_ALIASES.source),
@@ -225,6 +229,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         status,
         nextReview: cellToIso(pick(row, map.nextReview)),
         comment: cellText(pick(row, map.comment)),
+        notes: cellText(pick(row, map.notes)),
         amountCondition: cellText(pick(row, map.amountCondition)),
         origin: cellText(pick(row, map.origin)),
         source,
@@ -268,7 +273,8 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
         ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
         : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
       nextReview: row.nextReview,
-      comment: row.comment,
+      concept: row.comment,
+      notes: row.notes,
       estimated,
       attachments: [],
     });
@@ -490,7 +496,8 @@ function caseFromImportRow(row: ImportPreviewRow, id: string, registro: number):
       ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
       : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
     nextReview: row.nextReview,
-    comment: row.comment,
+    concept: row.comment,
+    notes: row.notes,
     estimated,
     attachments: [],
   };
@@ -516,7 +523,8 @@ function mergeImportedCase(current: AbonoCase, row: ImportPreviewRow, map: Impor
     communicatedAmount: map.communicatedAmount === null ? current.communicatedAmount : incoming.communicatedAmount,
     status,
     nextReview: map.nextReview === null ? current.nextReview : incoming.nextReview,
-    comment: map.comment === null ? current.comment : incoming.comment,
+    concept: map.comment === null ? current.concept : incoming.concept,
+    notes: map.notes === null ? current.notes : row.notes,
     estimated: keepMode ? current.estimated : incoming.estimated,
     amountMode: keepMode ? current.amountMode : incoming.amountMode,
     attachments: current.attachments,
@@ -549,7 +557,8 @@ export function abonosExportRows(cases: Array<{
   pending: number;
   status: string;
   nextReview: string | null;
-  comment: string;
+  concept: string;
+  notes: string;
   documentos?: string;
 }>) {
   const header = [
@@ -577,6 +586,7 @@ export function abonosExportRows(cases: Array<{
     'Estado',
     'Próxima revisión',
     'Comentario',
+    'Notas',
   ];
   const body = cases.map((row) => [
     row.registro,
@@ -602,7 +612,8 @@ export function abonosExportRows(cases: Array<{
     row.pending,
     row.status,
     row.nextReview || '',
-    row.comment,
+    row.concept,
+    row.notes,
   ]);
   return [header, ...body];
 }
@@ -658,6 +669,7 @@ export const ABONOS_TEMPLATE_HEADERS = [
   'Estado',
   'Próxima revisión',
   'Comentario',
+  'Notas',
 ];
 
 export const ABONOS_TEMPLATE_INSTRUCTIONS = [
@@ -680,7 +692,8 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
   ['Responsable de seguimiento', 'Obligatorio. Cristóbal o Pablo. Si falta, se usa Añadido por.'],
   ['Estado', 'Obligatorio. Pendiente / Pago comunicado / Liquidado parcialmente / Liquidado / Exceso / A cuenta. A cuenta sale solo si el cálculo es Variable y ya ha entrado dinero.'],
   ['Próxima revisión', 'Fecha en la que debe volver a aparecer en el panel. Opcional.'],
-  ['Comentario', 'Notas: nombre del correo, día de la conversación, nº de pedido SAP…'],
+  ['Comentario', 'Concepto corto. Es lo que se ve en la tabla. Los Excel antiguos siguen usando esta columna.'],
+  ['Notas', 'Opcional. Texto largo. En la aplicación solo se ve en la ficha.'],
   ['Capturas', 'Las fotos o pantallazos de confirmación se adjuntan en la ficha, no en el Excel.'],
   ['Filas incompletas', 'Si falta un campo obligatorio, esa fila no se importa.'],
   ['Pagos', 'Los pagos parciales se registran después desde la ficha en la aplicación.'],

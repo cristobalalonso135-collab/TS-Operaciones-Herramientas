@@ -15,6 +15,7 @@ import {
   resolveManualStatus,
   syncAmountEstimate,
   shortPersonName,
+  type AbonoCase,
   type AbonosCatalogs,
   type AbonosState,
   type CatalogKind,
@@ -75,8 +76,10 @@ function seedState(state: AbonosState): AbonosState {
     } else if (status === 'Liquidado' && excessAmount(row.expectedAmount, received) > 0.009) {
       status = 'Exceso';
     }
+    const stored = row as AbonoCase & { comment?: string };
+    const { comment: legacyComment, ...rest } = stored;
     return {
-      ...row,
+      ...rest,
       addedBy: shortPersonName(row.addedBy),
       responsible,
       area: remapLegacyArea(row.area),
@@ -87,6 +90,8 @@ function seedState(state: AbonosState): AbonosState {
       estimated,
       amountMode: synced.amountMode,
       amountCondition: String(row.amountCondition || '').trim(),
+      concept: String(stored.concept || legacyComment || '').trim(),
+      notes: String(stored.notes || '').trim(),
       status,
       communicatedAmount: typeof row.communicatedAmount === 'number' ? row.communicatedAmount : null,
     };
