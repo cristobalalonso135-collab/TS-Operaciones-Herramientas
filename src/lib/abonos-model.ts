@@ -302,6 +302,10 @@ export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: n
     if (receivedTotal > 0.009) return estimated ? 'A cuenta' : 'Liquidado parcialmente';
     return current === 'Pago comunicado' ? current : 'Pendiente';
   }
+  if (estimated && receivedTotal > 0.009 && receivedTotal + 0.009 >= expectedAmount) {
+    if (current === 'Liquidado' || current === 'Exceso') return current;
+    return 'A cuenta';
+  }
   if (receivedTotal > 0 && excessAmount(expectedAmount, receivedTotal) > 0.009) return 'Exceso';
   const pending = pendingAmount(expectedAmount, receivedTotal);
   if (receivedTotal > 0 && pending <= 0.009) return 'Liquidado';

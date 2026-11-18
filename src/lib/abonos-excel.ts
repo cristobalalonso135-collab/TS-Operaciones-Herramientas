@@ -36,6 +36,7 @@ export interface ImportColumnMap {
   origin: number | null;
   source: number | null;
   informedBy: number | null;
+  amountCondition: number | null;
 }
 
 export interface ImportPreviewRow {
@@ -61,6 +62,7 @@ export interface ImportPreviewRow {
   origin: string;
   source: string;
   informedBy: string;
+  amountCondition: string;
   error: string | null;
   existing?: boolean;
 }
@@ -84,6 +86,7 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   status: ['estado'],
   nextReview: ['próxima revisión', 'proxima revisión', 'próxima revision', 'proxima revision'],
   comment: ['comentario', 'comentarios'],
+  amountCondition: ['condición', 'condicion'],
   origin: ['origen'],
   source: ['canal', 'vino por', 'llegó por', 'llego por', 'conversación', 'conversacion'],
   informedBy: ['persona', 'nombre del correo', 'informado por'],
@@ -155,6 +158,7 @@ export function guessColumnMap(header: unknown[]): ImportColumnMap {
     status: find(HEADER_ALIASES.status),
     nextReview: find(HEADER_ALIASES.nextReview),
     comment: find(HEADER_ALIASES.comment),
+    amountCondition: find(HEADER_ALIASES.amountCondition),
     origin: find(HEADER_ALIASES.origin),
     source: find(HEADER_ALIASES.source),
     informedBy: find(HEADER_ALIASES.informedBy),
@@ -221,6 +225,7 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         status,
         nextReview: cellToIso(pick(row, map.nextReview)),
         comment: cellText(pick(row, map.comment)),
+        amountCondition: cellText(pick(row, map.amountCondition)),
         origin: cellText(pick(row, map.origin)),
         source,
         informedBy,
@@ -257,7 +262,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
       informedBy: row.informedBy,
       expectedAmount: row.expectedAmount,
       amountMode: estimated ? 'Variable' : 'Fijo',
-      amountCondition: '',
+      amountCondition: row.amountCondition,
       communicatedAmount: row.communicatedAmount,
       status: importedTotal > 0
         ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
@@ -479,7 +484,7 @@ function caseFromImportRow(row: ImportPreviewRow, id: string, registro: number):
     informedBy: row.informedBy,
     expectedAmount: row.expectedAmount,
     amountMode: estimated ? 'Variable' : 'Fijo',
-    amountCondition: '',
+    amountCondition: row.amountCondition,
     communicatedAmount: row.communicatedAmount,
     status: importedTotal > 0
       ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
@@ -516,7 +521,7 @@ function mergeImportedCase(current: AbonoCase, row: ImportPreviewRow, map: Impor
     amountMode: keepMode ? current.amountMode : incoming.amountMode,
     attachments: current.attachments,
     tradeTermId: current.tradeTermId,
-    amountCondition: current.amountCondition,
+    amountCondition: map.amountCondition === null ? current.amountCondition : row.amountCondition,
     createdAt: current.createdAt,
   };
 }
