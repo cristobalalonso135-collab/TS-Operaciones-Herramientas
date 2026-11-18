@@ -62,6 +62,7 @@ export interface ImportPreviewRow {
   source: string;
   informedBy: string;
   error: string | null;
+  existing?: boolean;
 }
 
 const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
@@ -115,12 +116,26 @@ export function detectAbonosHeaderRow(rows: unknown[][]): number {
   return index >= 0 ? index : 0;
 }
 
+function findColumn(normalized: string[], keys: string[]): number | null {
+  for (const key of keys) {
+    const exact = normalized.findIndex((name) => name === key);
+    if (exact >= 0) return exact;
+  }
+  let bestIndex = -1;
+  let bestLength = 0;
+  normalized.forEach((name, index) => {
+    keys.forEach((key) => {
+      if (key.length < 4 || !name.includes(key) || key.length <= bestLength) return;
+      bestLength = key.length;
+      bestIndex = index;
+    });
+  });
+  return bestIndex >= 0 ? bestIndex : null;
+}
+
 export function guessColumnMap(header: unknown[]): ImportColumnMap {
   const normalized = header.map(normalizeHeader);
-  const find = (keys: string[]) => {
-    const index = normalized.findIndex((name) => keys.some((key) => name === key || name.includes(key)));
-    return index >= 0 ? index : null;
-  };
+  const find = (keys: string[]) => findColumn(normalized, keys);
   return {
     registro: find(HEADER_ALIASES.registro),
     dueDate: find(HEADER_ALIASES.dueDate),
@@ -220,7 +235,7 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
   const receipts: AbonoReceipt[] = [];
 
   rows.forEach((row, index) => {
-    if (row.error) return;
+    if (row.error || row.existing) return;
     const id = crypto.randomUUID();
     const importedTotal = (row.pay1Amount || 0) + (row.pay2Amount || 0);
     const importedStatus = asStatus(row.status);
@@ -272,6 +287,240 @@ export function previewToRecords(rows: ImportPreviewRow[]): { cases: AbonoCase[]
   return { cases, receipts };
 }
 
+function gapOnly(error: string | null): boolean {
+  return Boolean(error && (error.startsWith('Falta ') || error.startsWith('Faltan:')));
+}
+
+export function importRowBlocked(row: ImportPreviewRow): boolean {
+  if (!row.error) return false;
+  return !(row.existing && gapOnly(row.error));
+}
+
+export function applyImportRows(
+  rows: ImportPreviewRow[],
+  current: { cases: AbonoCase[]; receipts: AbonoReceipt[] },
+  map: ImportColumnMap,
+): { cases: AbonoCase[]; receipts: AbonoReceipt[]; updated: number; created: number } {
+  const cases = current.cases.map((row) => ({ ...row, attachments: row.attachments.slice() }));
+  const byRegistro = new Map(cases.map((row) => [row.registro, row]));
+  let nextReg = cases.reduce((max, row) => Math.max(max, row.registro), 0) + 1;
+  const paymentsMapped = map.pay1Amount !== null || map.pay2Amount !== null;
+  const receipts = current.receipts.map((row) => ({ ...row }));
+  const replacedIds = new Set<string>();
+  const caseIdByKey = new Map<string, string>();
+  const updatedIds = new Set<string>();
+  let created = 0;
+
+  rows.forEach((row) => {
+    if (importRowBlocked(row)) return;
+    const registro = row.registro && Number.isFinite(row.registro) ? row.registro : nextReg;
+    const existing = byRegistro.get(registro);
+    if (existing) {
+      const merged = mergeImportedCase(existing, row, map);
+      const index = cases.findIndex((item) => item.id === existing.id);
+      if (index >= 0) cases[index] = merged;
+      byRegistro.set(registro, merged);
+      updatedIds.add(existing.id);
+      caseIdByKey.set(row.key, existing.id);
+      if (paymentsMapped) replacedIds.add(existing.id);
+      return;
+    }
+    const id = crypto.randomUUID();
+    const createdCase = caseFromImportRow(row, id, registro);
+    cases.unshift(createdCase);
+    byRegistro.set(createdCase.registro, createdCase);
+    caseIdByKey.set(row.key, id);
+    if (createdCase.registro >= nextReg) nextReg = createdCase.registro + 1;
+    created += 1;
+    if (paymentsMapped) replacedIds.add(id);
+  });
+
+  const keptReceipts = paymentsMapped
+    ? receipts.filter((item) => !replacedIds.has(item.caseId))
+    : receipts;
+  const addedReceipts: AbonoReceipt[] = [];
+  if (paymentsMapped) {
+    rows.forEach((row) => {
+      if (importRowBlocked(row)) return;
+      const parentId = caseIdByKey.get(row.key);
+      if (!parentId) return;
+      const payments = [
+        { date: row.pay1Date, amount: row.pay1Amount },
+        { date: row.pay2Date, amount: row.pay2Amount },
+      ];
+      payments.forEach((payment) => {
+        if (!payment.amount) return;
+        addedReceipts.push({
+          id: crypto.randomUUID(),
+          caseId: parentId,
+          receivedAt: payment.date || todayIso(),
+          amount: payment.amount,
+          reference: '',
+          comment: '',
+        });
+      });
+    });
+  }
+
+  return { cases, receipts: [...addedReceipts, ...keptReceipts], updated: updatedIds.size, created };
+}
+
+export interface ImportReceiptRow {
+  registro: number;
+  receivedAt: string | null;
+  amount: number;
+  reference: string;
+  comment: string;
+}
+
+/** Lee la hoja Recepciones de una exportación de Abonos. */
+export function parseReceiptsSheet(rows: unknown[][]): ImportReceiptRow[] {
+  const headerIndex = rows.findIndex((row) => {
+    const names = (row || []).map(normalizeHeader);
+    return names.includes('registro') && names.some((name) => name.startsWith('importe'));
+  });
+  if (headerIndex < 0) return [];
+  const header = rows[headerIndex].map(normalizeHeader);
+  const col = (keys: string[]) => findColumn(header, keys);
+  const registroCol = col(['registro']);
+  const dateCol = col(['fecha recepción', 'fecha recepcion', 'fecha']);
+  const amountCol = col(['importe']);
+  const referenceCol = col(['referencia', 'nº abono', 'credit note']);
+  const commentCol = col(['comentario', 'comentarios']);
+  const out: ImportReceiptRow[] = [];
+  rows.slice(headerIndex + 1).forEach((row) => {
+    const registro = Number(pick(row, registroCol));
+    const amount = parseMoney(pick(row, amountCol));
+    if (!Number.isFinite(registro) || registro <= 0 || amount === null || amount === 0) return;
+    out.push({
+      registro,
+      receivedAt: cellToIso(pick(row, dateCol)),
+      amount,
+      reference: cellText(pick(row, referenceCol)),
+      comment: cellText(pick(row, commentCol)),
+    });
+  });
+  return out;
+}
+
+/**
+ * Cruza la hoja Recepciones con los pagos guardados.
+ * Busca el pago por registro + importe (y fecha si coincide). Si lo encuentra, guarda referencia,
+ * comentario y fecha del Excel; si no existe, lo crea. Nunca borra pagos.
+ */
+export function applyReceiptRows(
+  cases: AbonoCase[],
+  receipts: AbonoReceipt[],
+  rows: ImportReceiptRow[],
+): { receipts: AbonoReceipt[]; updated: number; added: number; skipped: number } {
+  const next = receipts.map((item) => ({ ...item }));
+  const caseByRegistro = new Map(cases.map((row) => [row.registro, row]));
+  const used = new Set<string>();
+  let updated = 0;
+  let added = 0;
+  let skipped = 0;
+  const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.01;
+
+  rows.forEach((row) => {
+    const parent = caseByRegistro.get(row.registro);
+    if (!parent) {
+      skipped += 1;
+      return;
+    }
+    const candidates = next.filter((item) => item.caseId === parent.id && !used.has(item.id) && sameAmount(item.amount, row.amount));
+    const match = candidates.find((item) => row.receivedAt && item.receivedAt === row.receivedAt) || candidates[0];
+    if (match) {
+      used.add(match.id);
+      const reference = row.reference || match.reference;
+      const comment = row.comment || match.comment;
+      const receivedAt = row.receivedAt || match.receivedAt;
+      if (reference !== match.reference || comment !== match.comment || receivedAt !== match.receivedAt) {
+        match.reference = reference;
+        match.comment = comment;
+        match.receivedAt = receivedAt;
+        updated += 1;
+      }
+      return;
+    }
+    const createdReceipt: AbonoReceipt = {
+      id: crypto.randomUUID(),
+      caseId: parent.id,
+      receivedAt: row.receivedAt || todayIso(),
+      amount: row.amount,
+      reference: row.reference,
+      comment: row.comment,
+    };
+    used.add(createdReceipt.id);
+    next.unshift(createdReceipt);
+    added += 1;
+  });
+
+  return { receipts: next, updated, added, skipped };
+}
+
+function caseFromImportRow(row: ImportPreviewRow, id: string, registro: number): AbonoCase {
+  const estimated = row.estimated === true;
+  const importedTotal = (row.pay1Amount || 0) + (row.pay2Amount || 0);
+  const importedStatus = asStatus(row.status);
+  return {
+    id,
+    registro,
+    createdAt: '',
+    addedBy: shortPersonName(row.addedBy),
+    responsible: shortPersonName(row.responsible || row.addedBy),
+    dueDate: row.dueDate,
+    brand: row.brand,
+    type: row.type,
+    area: row.area,
+    teamMotivo: row.teamMotivo,
+    origin: asOrigin(row.origin),
+    source: asSource(row.source),
+    tradeTermId: null,
+    informedBy: row.informedBy,
+    expectedAmount: row.expectedAmount,
+    amountMode: estimated ? 'Variable' : 'Fijo',
+    amountCondition: '',
+    communicatedAmount: row.communicatedAmount,
+    status: importedTotal > 0
+      ? statusAfterReceipts(importedStatus, row.expectedAmount, importedTotal, estimated)
+      : (importedStatus || (isPablo(row.responsible || row.addedBy) ? '' : 'Pendiente')),
+    nextReview: row.nextReview,
+    comment: row.comment,
+    estimated,
+    attachments: [],
+  };
+}
+
+function mergeImportedCase(current: AbonoCase, row: ImportPreviewRow, map: ImportColumnMap): AbonoCase {
+  const incoming = caseFromImportRow(row, current.id, current.registro);
+  const keepMode = map.estimated === null || row.estimated === null;
+  const status = map.status === null || !asStatus(row.status) ? current.status : asStatus(row.status);
+  return {
+    ...current,
+    addedBy: map.addedBy === null ? current.addedBy : (incoming.addedBy || current.addedBy),
+    responsible: map.responsible === null ? current.responsible : (incoming.responsible || current.responsible),
+    dueDate: map.dueDate === null ? current.dueDate : incoming.dueDate,
+    brand: map.brand === null ? current.brand : (incoming.brand || current.brand),
+    type: map.type === null ? current.type : (incoming.type || current.type),
+    area: map.area === null ? current.area : (incoming.area || current.area),
+    teamMotivo: map.teamMotivo === null ? current.teamMotivo : (incoming.teamMotivo || current.teamMotivo),
+    origin: map.origin === null ? current.origin : incoming.origin,
+    source: map.source === null ? current.source : incoming.source,
+    informedBy: map.informedBy === null ? current.informedBy : incoming.informedBy,
+    expectedAmount: map.expectedAmount === null ? current.expectedAmount : incoming.expectedAmount,
+    communicatedAmount: map.communicatedAmount === null ? current.communicatedAmount : incoming.communicatedAmount,
+    status,
+    nextReview: map.nextReview === null ? current.nextReview : incoming.nextReview,
+    comment: map.comment === null ? current.comment : incoming.comment,
+    estimated: keepMode ? current.estimated : incoming.estimated,
+    amountMode: keepMode ? current.amountMode : incoming.amountMode,
+    attachments: current.attachments,
+    tradeTermId: current.tradeTermId,
+    amountCondition: current.amountCondition,
+    createdAt: current.createdAt,
+  };
+}
+
 export function abonosExportRows(cases: Array<{
   registro: number;
   createdAt: string;
@@ -296,9 +545,11 @@ export function abonosExportRows(cases: Array<{
   status: string;
   nextReview: string | null;
   comment: string;
+  documentos?: string;
 }>) {
   const header = [
     'Registro',
+    'Documentos',
     'Fecha de alta',
     'Añadido por',
     'Responsable de seguimiento',
@@ -324,6 +575,7 @@ export function abonosExportRows(cases: Array<{
   ];
   const body = cases.map((row) => [
     row.registro,
+    row.documentos || '',
     row.createdAt ? row.createdAt.slice(0, 10) : '',
     row.addedBy,
     row.responsible,
@@ -349,6 +601,22 @@ export function abonosExportRows(cases: Array<{
   ]);
   return [header, ...body];
 }
+
+export function documentsExportRows(files: Array<{ registro: number; fileName: string; path: string; originalName: string }>) {
+  const header = ['Registro', 'Archivo', 'Ruta', 'Nombre original'];
+  const body = files.map((file) => [file.registro, file.fileName, file.path, file.originalName]);
+  return [header, ...body];
+}
+
+export const ABONOS_EXPORT_GUIDE = [
+  ['Cómo leer esta descarga'],
+  [''],
+  ['Abonos.xlsx es el listado. La carpeta documentos contiene las capturas, PDF y Excel de cada abono.'],
+  ['En la hoja Abonos, la columna Documentos indica los archivos de esa fila.'],
+  ['El nombre empieza por el Registro: 12-1.jpg es el primer documento del abono 12; 12-2.pdf es el segundo.'],
+  ['La hoja Documentos repite el cruce: Registro, archivo y el nombre con el que se adjuntó.'],
+  ['Para comprobar si cuadra, compara marca, equipo, importe, estado y comentario de la fila con lo que dicen esos archivos.'],
+];
 
 export function receiptsExportRows(cases: Array<{ registro: number; brand: string; id: string }>, receipts: AbonoReceipt[]) {
   const header = ['Registro', 'Marca', 'Fecha recepción', 'Importe', 'Referencia', 'Comentario'];

@@ -52,16 +52,21 @@ import {
 import {
   abonosExportRows,
   abonosTemplateRows,
+  ABONOS_EXPORT_GUIDE,
   ABONOS_TEMPLATE_INSTRUCTIONS,
+  applyImportRows,
+  applyReceiptRows,
+  parseReceiptsSheet,
   buildImportPreview,
   detectAbonosHeaderRow,
+  documentsExportRows,
   guessColumnMap,
   importPreviewError,
-  previewToRecords,
   receiptsExportRows,
   type ImportColumnMap,
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
+import { documentLabelsByCase, documentsForExport, zipStored } from '@/lib/abonos-export-pack';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
@@ -571,6 +576,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [importHeaders, setImportHeaders] = useState<unknown[]>([]);
   const [importRows, setImportRows] = useState<unknown[][]>([]);
   const [importMap, setImportMap] = useState<ImportColumnMap | null>(null);
+  const [importReceipts, setImportReceipts] = useState<ReturnType<typeof parseReceiptsSheet>>([]);
   const [preview, setPreview] = useState<ImportPreviewRow[]>([]);
   const [headerIndex, setHeaderIndex] = useState(0);
   const [bulkArea, setBulkArea] = useState('Grassroots');
@@ -1112,6 +1118,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     }, backend);
   };
 
+  const markExisting = (rows: ImportPreviewRow[]) => {
+    const registros = new Set(state.cases.map((item) => item.registro));
+    return rows.map((row) => ({
+      ...row,
+      existing: row.registro !== null && registros.has(row.registro),
+    }));
+  };
+
   const handleImportFile = (rows: unknown[][]) => {
     const index = detectAbonosHeaderRow(rows);
     const header = rows[index] || [];
@@ -1120,45 +1134,82 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setImportHeaders(header);
     setImportRows(rows);
     setImportMap(map);
-    setPreview(buildImportPreview(rows, map, index));
+    setPreview(markExisting(buildImportPreview(rows, map, index)));
     setTab('importar');
   };
 
   const applyImport = async () => {
-    const { cases, receipts } = previewToRecords(preview);
-    const used = new Set(state.cases.map((row) => row.registro));
-    let nextReg = nextRegistro(state.cases);
-    const imported = cases.map((row) => {
-      if (!used.has(row.registro)) {
-        used.add(row.registro);
-        return row;
-      }
-      const next = { ...row, registro: nextReg };
-      used.add(nextReg);
-      nextReg += 1;
-      return next;
-    });
+    if (!importMap) return;
+    const result = applyImportRows(preview, state, importMap);
+    const receiptResult = applyReceiptRows(result.cases, result.receipts, importReceipts);
+    const receiptChanges = receiptResult.updated + receiptResult.added;
+    if (result.updated === 0 && result.created === 0 && receiptChanges === 0) {
+      setNote('No hay cambios para importar.');
+      return;
+    }
     await persist({
       ...state,
-      cases: [...imported, ...state.cases],
-      receipts: [...receipts, ...state.receipts],
+      cases: result.cases,
+      receipts: receiptResult.receipts,
     }, backend);
-    setNote(`Importados ${imported.length} abonos.`);
+    const parts = [
+      result.updated ? `${result.updated} actualizados` : '',
+      result.created ? `${result.created} nuevos` : '',
+      receiptResult.updated ? `${receiptResult.updated} pagos con referencia actualizada` : '',
+      receiptResult.added ? `${receiptResult.added} pagos nuevos` : '',
+    ].filter(Boolean);
+    setImportReceipts([]);
+    setNote(`Importación hecha: ${parts.join(' y ')}. Los documentos adjuntos se mantienen.`);
     setPreview([]);
     setTab('seguimiento');
   };
 
   const exportWorkbook = async (rows: AbonoComputed[]) => {
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(abonosExportRows(rows)), 'Abonos');
-    const caseIds = new Set(rows.map((row) => row.id));
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet(receiptsExportRows(rows, state.receipts.filter((item) => caseIds.has(item.caseId)))),
-      'Recepciones',
-    );
-    XLSX.writeFile(workbook, 'Abonos.xlsx');
+    try {
+      setError(null);
+      setNote('Preparando la descarga…');
+      const XLSX = await import('xlsx');
+      const documents = documentsForExport(rows);
+      const labels = documentLabelsByCase(documents);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet(abonosExportRows(rows.map((row) => ({ ...row, documentos: labels.get(row.id) || '' })))),
+        'Abonos',
+      );
+      const caseIds = new Set(rows.map((row) => row.id));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet(receiptsExportRows(rows, state.receipts.filter((item) => caseIds.has(item.caseId)))),
+        'Recepciones',
+      );
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(documentsExportRows(documents)), 'Documentos');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_EXPORT_GUIDE), 'Lectura');
+      const written = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+      const xlsxBytes = written instanceof Uint8Array
+        ? written
+        : new Uint8Array(written as ArrayBuffer);
+      const zip = zipStored([
+        { path: 'Abonos.xlsx', bytes: xlsxBytes },
+        ...documents.map((file) => ({ path: file.path, bytes: file.bytes })),
+      ]);
+      const packed = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+      const blob = new Blob([packed], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Abonos_${todayIso()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setNote(documents.length
+        ? `Descargado: Excel y ${documents.length} documento${documents.length === 1 ? '' : 's'} en la carpeta documentos.`
+        : 'Descargado el Excel. En esta selección no hay documentos adjuntos.');
+    } catch (err) {
+      setNote(null);
+      setError(err instanceof Error ? err.message : 'No he podido preparar la descarga.');
+    }
   };
 
   const downloadTemplate = async () => {
@@ -1691,12 +1742,17 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FileUpload
               inputId="abonos-import"
               label="Importar Excel de abonos"
-              hint="Una sola carga. Área: B2B, Grassroots, Pro Clubs o Teamsports. Las filas incompletas no se importan."
+              hint="Si el registro ya existe, esa fila sustituye los datos del abono. Los documentos adjuntos no se borran."
               onFileLoaded={handleImportFile}
+              onWorkbookLoaded={(sheets) => {
+                const name = Object.keys(sheets).find((sheet) => sheet.trim().toLocaleLowerCase('es') === 'recepciones');
+                setImportReceipts(name ? parseReceiptsSheet(sheets[name]) : []);
+              }}
               keepDropzone
               loaded={Boolean(importMap)}
               onClear={() => {
                 setImportMap(null);
+                setImportReceipts([]);
                 setImportRows([]);
                 setImportHeaders([]);
                 setPreview([]);
@@ -1706,6 +1762,11 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           {importMap && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
               <p className="text-sm font-semibold">Relacionar columnas</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                {importReceipts.length
+                  ? `Hoja Recepciones: ${importReceipts.length} pagos. Se guardan referencia y comentario; si un pago no existe, se crea. No se borra ninguno.`
+                  : 'Sin hoja Recepciones: los pagos guardados no se tocan.'}
+              </p>
               <div className="mt-3 grid gap-2 md:grid-cols-3">
                 {Object.entries(importMap).map(([key, value]) => (
                   <label key={key} className="space-y-1 text-xs">
@@ -1715,7 +1776,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       onChange={(event) => {
                         const next = { ...importMap, [key]: event.target.value === '' ? null : Number(event.target.value) };
                         setImportMap(next);
-                        setPreview(buildImportPreview(importRows, next, headerIndex));
+                        setPreview(markExisting(buildImportPreview(importRows, next, headerIndex)));
                       }}
                       className="h-9 w-full rounded-md border border-[var(--border)] px-2"
                     >
@@ -1815,7 +1876,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           />
                         </td>
                         <td className="px-2 py-1 text-right font-mono">{formatMoney(row.expectedAmount)}</td>
-                        <td className="px-2 py-1 text-[var(--danger)]">{row.error || ''}</td>
+                        <td className={`px-2 py-1 ${row.existing && (!row.error || row.error.startsWith('Falta')) ? 'text-[var(--text-secondary)]' : 'text-[var(--danger)]'}`}>
+                          {row.existing && (!row.error || row.error.startsWith('Falta')) ? 'Se actualiza.' : (row.error || '')}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1827,15 +1890,20 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'exportar' && (
-        <section className="grid gap-3 md:grid-cols-2">
-          <button type="button" onClick={() => exportWorkbook(computed)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
-            <p className="text-sm font-semibold">Exportar todo</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Todos los abonos y una segunda hoja de recepciones.</p>
-          </button>
-          <button type="button" onClick={() => exportWorkbook(sorted)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
-            <p className="text-sm font-semibold">Exportar vista actual</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Respeta los filtros de Abonos.</p>
-          </button>
+        <section className="space-y-3">
+          <p className="max-w-3xl text-sm text-[var(--text-secondary)]">
+            La descarga es un ZIP: el Excel y la carpeta documentos. En la columna Documentos, 12-1.jpg es el primer archivo del abono 12 y 12-2.pdf el segundo. Así se puede cruzar cada fila con su justificante.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <button type="button" onClick={() => exportWorkbook(computed)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
+              <p className="text-sm font-semibold">Exportar todo</p>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">Todos los abonos, las recepciones y sus documentos.</p>
+            </button>
+            <button type="button" onClick={() => exportWorkbook(sorted)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
+              <p className="text-sm font-semibold">Exportar vista actual</p>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">Solo lo que dejan los filtros de Abonos, con sus documentos.</p>
+            </button>
+          </div>
         </section>
       )}
 
