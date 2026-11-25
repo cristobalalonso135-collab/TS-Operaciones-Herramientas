@@ -175,25 +175,6 @@ function matchesAttachmentFilter(selected: string[], count: number): boolean {
   return selected.some((value) => (value === 'Sí' && has) || (value === 'No' && !has));
 }
 
-function ConceptCell({ text }: { text: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [title, setTitle] = useState<string | undefined>();
-  const label = text.trim();
-  useEffect(() => {
-    const node = ref.current;
-    if (!node || !label) {
-      setTitle(undefined);
-      return;
-    }
-    setTitle(node.scrollWidth > node.clientWidth + 1 ? label : undefined);
-  }, [label]);
-  return (
-    <span ref={ref} className="block truncate" title={title}>
-      {label || '—'}
-    </span>
-  );
-}
-
 function renderAbonoCell(row: AbonoComputed, key: SortKey, alert: AbonoAlert | null) {
   switch (key) {
     case 'alert':
@@ -221,7 +202,7 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey, alert: AbonoAlert | n
     case 'status':
       return <StatusPill row={row} />;
     case 'concept':
-      return <ConceptCell text={row.concept} />;
+      return <span className="block whitespace-normal break-words">{row.concept.trim() || '—'}</span>;
     case 'attachments': {
       const count = (row.attachments || []).length;
       return count > 0 ? String(count) : '—';
@@ -1585,7 +1566,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         key={key}
                         className={`border-b border-[var(--border)] px-3 py-3 ${MONEY_COLS.has(key) ? 'abonos-td-money' : ''} ${key === 'pending' && row.pending > 0.009 ? 'font-semibold' : ''}`}
                       >
-                        <div className={`abonos-cell ${key === 'concept' ? 'abonos-cell-clip' : ''}`}>
+                        <div className="abonos-cell">
                           {renderAbonoCell(row, key, null)}
                         </div>
                       </td>
