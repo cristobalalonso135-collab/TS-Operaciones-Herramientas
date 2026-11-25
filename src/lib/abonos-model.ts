@@ -637,17 +637,25 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
   const tasks: WeeklyTask[] = [];
   myOpenQueue(rows, responsible).forEach((row) => {
     if (!stillOpen(row, responsible)) return;
-    const reviewDue = !!row.nextReview && row.nextReview <= today;
-    const noReview = !row.nextReview;
-    const priorClaim = claimsForCase(claims, row.id).some((claim) => claim.kind === 'reclamar' || claim.kind === 'seguir');
+    if (row.overdueDays !== null) {
+      tasks.push({
+        id: `reclamar-${row.id}`,
+        kind: 'reclamar',
+        title: 'Vencido',
+        reason: `Previsto ${formatIsoDate(row.dueDate)} · hace ${row.overdueDays} ${row.overdueDays === 1 ? 'día' : 'días'}`,
+        actionLabel: 'Abrir ficha',
+        row,
+      });
+      return;
+    }
 
-    if (row.estimated === true && (reviewDue || noReview)) {
+    if (row.estimated === true) {
       const pending = row.pending;
       const received = row.receivedTotal;
       tasks.push({
         id: `cuadrar-${row.id}`,
         kind: 'cuadrar',
-        title: pending > 0.009 ? 'Reclamar o recalcular' : 'Recalcular previsto',
+        title: 'Importe por cerrar',
         reason: pending > 0.009
           ? `Cobrados ${formatMoney(received)} de ${formatMoney(row.expectedAmount)}. Quedan ${formatMoney(pending)}.`
           : received > 0.009
@@ -659,30 +667,16 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
       return;
     }
 
-    if (row.status === 'Pago comunicado' && (reviewDue || noReview)) {
+    if (row.status === 'Pago comunicado') {
       const mismatch = row.communicatedAmount !== null && Math.abs(row.communicatedAmount - row.pending) > 0.009;
       tasks.push({
         id: `confirmar-${row.id}`,
         kind: 'confirmar',
-        title: 'Confirmar pago con Finanzas',
+        title: 'Pago comunicado',
         reason: mismatch
           ? `La marca comunica ${formatMoney(row.communicatedAmount)} y quedan ${formatMoney(row.pending)} pendientes.`
           : 'La marca ha comunicado el pago. Falta la confirmación de Finanzas.',
         actionLabel: 'Abrir ficha',
-        row,
-      });
-      return;
-    }
-
-    if (row.dueDate && row.dueDate < today && (reviewDue || noReview)) {
-      tasks.push({
-        id: `${priorClaim ? 'seguir' : 'reclamar'}-${row.id}`,
-        kind: priorClaim ? 'seguir' : 'reclamar',
-        title: priorClaim ? 'Seguir reclamando' : 'Reclamar',
-        reason: reviewDue
-          ? `Toca revisar (próxima revisión ${formatIsoDate(row.nextReview)}).`
-          : `Previsto ${formatIsoDate(row.dueDate)}${row.overdueDays ? ` · ${row.overdueDays} días` : ''}.`,
-        actionLabel: priorClaim ? 'Sigo en ello' : 'He reclamado',
         row,
       });
       return;
@@ -712,7 +706,7 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
     }
   });
 
-  const order: WeeklyTaskKind[] = ['cuadrar', 'confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
+  const order: WeeklyTaskKind[] = WEEKLY_TASK_ORDER;
   return tasks.sort((a, b) => {
     const kindDiff = order.indexOf(a.kind) - order.indexOf(b.kind);
     if (kindDiff !== 0) return kindDiff;
@@ -720,12 +714,12 @@ export function weeklyTasks(rows: AbonoComputed[], today = todayIso(), responsib
   });
 }
 
-export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['cuadrar', 'confirmar', 'reclamar', 'seguir', 'cobro', 'fecha'];
+export const WEEKLY_TASK_ORDER: WeeklyTaskKind[] = ['reclamar', 'confirmar', 'cuadrar', 'cobro', 'fecha', 'seguir'];
 
 export const WEEKLY_TASK_META: Record<WeeklyTaskKind, { title: string; hint: string; bulkLabel: string | null }> = {
-  cuadrar: { title: 'Reclamar o recalcular', hint: 'El importe es estimado. O reclamas el resto o bajas el previsto cuando lo sepas.', bulkLabel: null },
-  confirmar: { title: 'Confirmar con Finanzas', hint: 'La marca ha comunicado el pago y falta validar el ingreso.', bulkLabel: null },
-  reclamar: { title: 'Reclamar', hint: 'La fecha prevista ya pasó y todavía no está reclamado.', bulkLabel: null },
+  cuadrar: { title: 'Importe por cerrar', hint: 'El importe es estimado. Ajústalo en la ficha cuando sepas el real.', bulkLabel: null },
+  confirmar: { title: 'Pago comunicado', hint: 'La marca dice que paga. Mira si ha entrado y regístralo.', bulkLabel: null },
+  reclamar: { title: 'Vencidos', hint: 'La fecha prevista ya pasó y no está cobrado. Siguen aquí hasta que registres el cobro o cambies la fecha.', bulkLabel: null },
   seguir: { title: 'Seguir reclamando', hint: 'Están reclamados y toca revisar.', bulkLabel: null },
   cobro: { title: 'Comprobar cobro', hint: 'Entró una parte. Mira si ha llegado el resto.', bulkLabel: null },
   fecha: { title: 'Poner fecha prevista', hint: 'Sin fecha. Ábrela y ponla si la tienes.', bulkLabel: null },

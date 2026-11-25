@@ -762,13 +762,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const kpis = useMemo(() => {
     const claim = tasks.filter((task) => task.kind === 'reclamar');
-    const review = tasks.filter((task) => task.kind === 'seguir');
+    const review = tasks.filter((task) => task.kind === 'cuadrar');
     return {
       taskCount: tasks.length,
       overdueCount: claim.length,
       overduePending: claim.reduce((sum, task) => sum + task.row.pending, 0),
       reviewCount: review.length,
-      reviewPending: review.reduce((sum, task) => sum + task.row.pending, 0),
+      // Same sum as the "Importe por cerrar" group: what is still owed, or what came in on account.
+      reviewPending: review.reduce((sum, task) => sum + (task.row.pending > 0.009 ? task.row.pending : task.row.receivedTotal), 0),
     };
   }, [tasks]);
 
@@ -1182,9 +1183,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               <p className="abonos-kpi-hint">{kpis.overdueCount} abono{kpis.overdueCount === 1 ? '' : 's'} con la fecha pasada</p>
             </div>
             <div className="abonos-kpi">
-              <p className="abonos-kpi-label">Pendientes de revisión</p>
+              <p className="abonos-kpi-label">Importe por cerrar</p>
               <p className={`abonos-kpi-value ${kpis.reviewCount ? 'text-[#b45309]' : ''}`}>{formatMoney(kpis.reviewPending)}</p>
-              <p className="abonos-kpi-hint">{kpis.reviewCount} abono{kpis.reviewCount === 1 ? '' : 's'}</p>
+              <p className="abonos-kpi-hint">{kpis.reviewCount} estimado{kpis.reviewCount === 1 ? '' : 's'}</p>
             </div>
             <label className="abonos-kpi block">
               <span className="abonos-kpi-label block">Responsable</span>
@@ -1270,15 +1271,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         </p>
                       </button>
                       <div className="flex items-center gap-2">
-                        {(task.kind === 'reclamar' || task.kind === 'seguir') && (
-                          <button
-                            type="button"
-                            onClick={() => applyWeeklyTask(task)}
-                            className="h-8 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
-                          >
-                            {task.actionLabel}
-                          </button>
-                        )}
                         <button
                           type="button"
                           onClick={() => openEdit(task.row)}
