@@ -386,7 +386,7 @@ export default function SeguimientoTrendView({
               <article
                 key={card.label}
                 className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-3.5 shadow-sm"
-                style={card.accent ? { borderColor: `${card.accent}66` } : undefined}
+                style={card.accent ? { borderColor: card.accent.replace(')', '-soft)') } : undefined}
               >
                 <p
                   className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]"

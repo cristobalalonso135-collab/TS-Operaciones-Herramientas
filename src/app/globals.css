@@ -3,15 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #f3f1ec;
-  --bg-secondary: #faf9f6;
-  --bg-card: #fffcf7;
-  --bg-soft: #ebe8e1;
-  --border: #ddd8ce;
-  --border-strong: #c9c2b5;
-  --text-primary: #171612;
-  --text-secondary: #5c584f;
-  --text-muted: #8a857a;
+  --bg-primary: #ffffff;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-soft: #f4f4f5;
+  --border: #e7e7e9;
+  --border-strong: #d0d0d4;
+  --text-primary: #141414;
+  --text-secondary: #5a5a5f;
+  --text-muted: #8a8a90;
   --accent: #1f4b7a;
   --accent-hover: #183a5f;
   --accent-soft: #e8eef5;
@@ -39,11 +39,7 @@
 }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 8% -10%, rgba(31, 75, 122, 0.10), transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, rgba(31, 107, 69, 0.08), transparent 50%),
-    linear-gradient(180deg, #f7f5f0 0%, var(--bg-primary) 45%, #efece5 100%);
-  background-attachment: fixed;
+  background: #ffffff;
   color: var(--text-primary);
   font-family: var(--font-sans);
 }
@@ -52,19 +48,6 @@ body {
   font-family: var(--font-display);
 }
 
-body::before {
-  content: "";
-  pointer-events: none;
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  opacity: 0.35;
-  background-image:
-    linear-gradient(rgba(23, 22, 18, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(23, 22, 18, 0.03) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: linear-gradient(180deg, black 0%, transparent 85%);
-}
 
 main,
 nav {
@@ -89,14 +72,14 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cfc9bd;
+  background: #d4d4d8;
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b7b0a3;
+  background: #b4b4ba;
   border: 2px solid transparent;
   background-clip: content-box;
 }

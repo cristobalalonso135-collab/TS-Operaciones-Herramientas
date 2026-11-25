@@ -1,5 +1,6 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isMissingTableError } from '@/lib/seguimiento-db';
+import { normalizeArchive } from '@/lib/trade-archive';
 import {
   ADIDAS_SEED_TERMS,
   EMPTY_ABONOS_STATE,
@@ -106,7 +107,14 @@ function seedState(state: AbonosState): AbonosState {
   const tradeTerms = state.tradeTerms.length > 0
     ? state.tradeTerms
     : ADIDAS_SEED_TERMS.map((term) => ({ ...term, id: crypto.randomUUID() }));
-  return { ...state, cases, catalogs, tradeTerms, claims: Array.isArray(state.claims) ? state.claims : [] };
+  return {
+    ...state,
+    cases,
+    catalogs,
+    tradeTerms,
+    claims: Array.isArray(state.claims) ? state.claims : [],
+    archive: normalizeArchive(state.archive),
+  };
 }
 
 function readLocal(): AbonosState {
@@ -121,6 +129,7 @@ function readLocal(): AbonosState {
       claims: Array.isArray(parsed.claims) ? parsed.claims : [],
       tradeTerms: Array.isArray(parsed.tradeTerms) ? parsed.tradeTerms : [],
       catalogs: parsed.catalogs || EMPTY_CATALOGS,
+      archive: parsed.archive,
     });
   } catch {
     return seedState(EMPTY_ABONOS_STATE);

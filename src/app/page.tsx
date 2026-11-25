@@ -695,103 +695,91 @@ export default function Home() {
         number: '01',
         title: 'Cuadro de mando',
         description: 'Plan vs LY, facturación, GM, margen, frees, generados y deuda. Pincha un recuadro y saltas a Budget o Seguimiento.',
-        tone: 'bg-[var(--text-primary)] text-[var(--bg-card)]',
-        link: 'text-[var(--text-primary)]',
+        tone: 'bg-[#3466B2] text-white',
+        link: 'text-[#3466B2]',
       },
       {
         id: 'budget' as const,
         number: '02',
         title: 'Budget',
         description: 'Generar el diario, cuadrarlo, validarlo y mirar la curva. Todo en pestañas.',
-        tone: 'bg-[var(--accent-soft)] text-[var(--accent)]',
-        link: 'text-[var(--accent)]',
+        tone: 'bg-[#BD7328] text-white',
+        link: 'text-[#BD7328]',
       },
       {
         id: 'tracking' as const,
         number: '03',
         title: 'Seguimiento',
         description: 'Facturación vs budget, margen, frees, generados y deuda.',
-        tone: 'bg-[var(--success-soft)] text-[var(--success)]',
-        link: 'text-[var(--success)]',
+        tone: 'bg-[#309159] text-white',
+        link: 'text-[#309159]',
       },
       {
         id: 'stock' as const,
         number: '04',
         title: 'Stock',
         description: 'Dinero inmovilizado en Equipaciones. Lo que no se vende y fotos semanales.',
-        tone: 'bg-[var(--kpi-debt-soft)] text-[var(--kpi-debt)]',
-        link: 'text-[var(--kpi-debt)]',
+        tone: 'bg-[#B23473] text-white',
+        link: 'text-[#B23473]',
       },
       {
         id: 'abonos' as const,
         number: '05',
         title: 'Abonos',
         description: 'Lo que Adidas, Nike y el resto nos deben: trade terms, credit notes y seguimiento hasta que entra.',
-        tone: 'bg-[#f6edd0] text-[#8a6d12]',
-        link: 'text-[#8a6d12]',
+        tone: 'bg-[#A58E1D] text-white',
+        link: 'text-[#A58E1D]',
       },
       {
         id: 'mejoras' as const,
         number: '06',
         title: 'Mejoras IT',
         description: 'Lo que hay que implementar en ERP o Web. Canal, contexto y capturas para cuando toque desarrollarlo.',
-        tone: 'bg-[#e7f1f0] text-[#1d5f5a]',
-        link: 'text-[#1d5f5a]',
+        tone: 'bg-[#6647C2] text-white',
+        link: 'text-[#6647C2]',
       },
       {
         id: 'albaranes' as const,
         number: '07',
         title: 'Albaranes',
         description: 'Control diario de albaranes no facturados de Equipaciones: reglas, responsables y Excel para Power Automate.',
-        tone: 'bg-[#ece7f6] text-[#5b3d91]',
-        link: 'text-[#5b3d91]',
+        tone: 'bg-[#1D828B] text-white',
+        link: 'text-[#1D828B]',
       },
         {
         id: 'checklist' as const,
         number: '08',
         title: 'Checklist',
         description: 'Varias checklists. De momento la I Convención Teamsports 27/28; se duplica como plantilla cuando haga falta otra.',
-        tone: 'bg-[#f4e6da] text-[#8a4b2a]',
-        link: 'text-[#8a4b2a]',
+        tone: 'bg-[#C43631] text-white',
+        link: 'text-[#C43631]',
       },
       {
         id: 'objetivos' as const,
         number: '09',
         title: 'Objetivos',
         description: 'FY 26/27: los tuyos vigentes y los de Blanca. Los Target Setting tuyos quedan como anteriores.',
-        tone: 'bg-[#e8eef5] text-[#1f4b7a]',
-        link: 'text-[#1f4b7a]',
+        tone: 'bg-[#5F6B7A] text-white',
+        link: 'text-[#5F6B7A]',
       },
       {
         id: 'fraccionar' as const,
         number: '10',
         title: 'Fraccionar',
         description: 'Cruza Data con Albaranes y Colectivos: número de albarán, código, nombre del colectivo y agente.',
-        tone: 'bg-[#e7eef6] text-[#2c4a73]',
-        link: 'text-[#2c4a73]',
+        tone: 'bg-[#7A5235] text-white',
+        link: 'text-[#7A5235]',
       },
     ];
     const visibleHubs = hubs.filter((hub) => !user || canUseTool(user.role, hub.id));
 
     return (
-      <div className="mx-auto max-w-3xl space-y-8">
-        <section className="tools-rise relative overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-card)]/90 px-6 py-8 shadow-sm sm:px-8">
-          <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[var(--accent-soft)] blur-2xl" />
-          <div className="pointer-events-none absolute -bottom-24 left-10 h-48 w-48 rounded-full bg-[var(--success-soft)] blur-2xl" />
-          <div className="relative max-w-xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
-              TS Operaciones
-            </p>
-            <h2 className="mt-3 font-display text-4xl font-semibold tracking-tight text-[var(--text-primary)] sm:text-5xl">
-              Herramientas
-            </h2>
-            <p className="mt-3 text-base leading-relaxed text-[var(--text-secondary)]">
-              Las que te tocan según el rol. El resto vive en pestañas dentro de cada herramienta.
-            </p>
-          </div>
-        </section>
+      <div className="mx-auto max-w-5xl">
+        <h2 className="tools-rise font-display text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
+          Herramientas
+        </h2>
 
-        <section className="grid gap-3">
+        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {visibleHubs.map((hub) => (
             <button
               key={hub.id}
@@ -801,25 +789,16 @@ export default function Home() {
                 if (hub.id === 'tracking') setTrackingView('ytd');
                 setView(hub.id);
               }}
-              className="tools-rise group flex w-full items-start gap-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:bg-white sm:p-6"
+              className="tools-rise group flex w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-white px-4 py-4 text-left transition duration-150 hover:border-[var(--border-strong)] hover:shadow-sm"
             >
-              <div className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${hub.tone}`}>
-                <span className="font-display text-base font-semibold leading-none">{hub.number}</span>
-              </div>
-              <div className="min-w-0 flex-1">
-                <h4 className="font-display text-lg font-semibold tracking-tight">{hub.title}</h4>
-                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">{hub.description}</p>
-              </div>
-              <span className={`mt-1 hidden shrink-0 text-sm font-medium transition group-hover:translate-x-0.5 sm:inline ${hub.link}`}>
-                Abrir →
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hub.tone}`}>
+                <span className="font-display text-sm font-semibold leading-none">{hub.number}</span>
               </span>
+              <span className="min-w-0 flex-1 font-display text-base font-semibold tracking-tight">{hub.title}</span>
+              <span className="text-[var(--text-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--text-primary)]">→</span>
             </button>
           ))}
         </section>
-
-        <p className="text-center text-xs text-[var(--text-muted)]">
-          El cuadro de mando lee el plan en Budget y el año en Seguimiento. Todavía es maqueta: los recuadros ya saltan a la herramienta.
-        </p>
       </div>
     );
   }

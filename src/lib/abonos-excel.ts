@@ -5,6 +5,8 @@ import {
   asEstimated,
   abonoRequiredGaps,
   cellToIso,
+  formatIsoDate,
+  formatMoney,
   formatRequiredGaps,
   parseMoney,
   shortPersonName,
@@ -702,3 +704,82 @@ export const ABONOS_TEMPLATE_INSTRUCTIONS = [
 export function abonosTemplateRows(): unknown[][] {
   return [ABONOS_TEMPLATE_HEADERS, Array(ABONOS_TEMPLATE_HEADERS.length).fill('')];
 }
+
+export type ImportRowKind = 'error' | 'nuevo' | 'cambia' | 'igual';
+
+export interface ImportRowSummary {
+  kind: ImportRowKind;
+  changes: string[];
+}
+
+const CHANGE_FIELDS: Array<{ key: keyof AbonoCase; label: string; format?: 'money' | 'date' }> = [
+  { key: 'brand', label: 'Marca' },
+  { key: 'type', label: 'Tipo' },
+  { key: 'area', label: 'Área' },
+  { key: 'teamMotivo', label: 'Equipo' },
+  { key: 'dueDate', label: 'Fecha prevista', format: 'date' },
+  { key: 'expectedAmount', label: 'Importe', format: 'money' },
+  { key: 'amountMode', label: 'Cálculo' },
+  { key: 'status', label: 'Estado' },
+  { key: 'responsible', label: 'Responsable' },
+  { key: 'addedBy', label: 'Añadido por' },
+  { key: 'concept', label: 'Concepto' },
+  { key: 'notes', label: 'Notas' },
+  { key: 'amountCondition', label: 'Condición' },
+  { key: 'communicatedAmount', label: 'Importe comunicado', format: 'money' },
+  { key: 'nextReview', label: 'Próxima revisión', format: 'date' },
+  { key: 'source', label: 'Canal' },
+  { key: 'informedBy', label: 'Persona' },
+  { key: 'origin', label: 'Origen' },
+];
+
+function showChangeValue(value: unknown, format?: 'money' | 'date'): string {
+  if (value === null || value === undefined || value === '') return 'vacío';
+  if (format === 'money') return formatMoney(Number(value));
+  if (format === 'date') return formatIsoDate(String(value));
+  const text = String(value);
+  return text.length > 40 ? `${text.slice(0, 38)}…` : text;
+}
+
+/** Dice qué pasará con cada fila al importar y, si actualiza, qué campos cambian. */
+export function summarizeImportRow(row: ImportPreviewRow, existing: AbonoCase | undefined, map: ImportColumnMap): ImportRowSummary {
+  if (importRowBlocked(row)) return { kind: 'error', changes: [] };
+  if (!existing) return { kind: 'nuevo', changes: [] };
+  const merged = mergeImportedCase(existing, row, map);
+  const changes: string[] = [];
+  CHANGE_FIELDS.forEach(({ key, label, format }) => {
+    const before = existing[key];
+    const after = merged[key];
+    const same = format === 'money'
+      ? (before ?? null) === (after ?? null) || (typeof before === 'number' && typeof after === 'number' && Math.abs(before - after) < 0.005)
+      : String(before ?? '') === String(after ?? '');
+    if (!same) changes.push(`${label}: ${showChangeValue(before, format)} → ${showChangeValue(after, format)}`);
+  });
+  return { kind: changes.length ? 'cambia' : 'igual', changes };
+}
+
+export const IMPORT_COLUMN_LABELS: Record<keyof ImportColumnMap, string> = {
+  registro: 'Registro',
+  dueDate: 'Fecha prevista',
+  brand: 'Marca',
+  type: 'Tipo',
+  teamMotivo: 'Equipo',
+  area: 'Área',
+  addedBy: 'Añadido por',
+  responsible: 'Responsable',
+  expectedAmount: 'Importe previsto',
+  estimated: 'Real o estimado',
+  communicatedAmount: 'Importe comunicado',
+  pay1Date: 'Fecha pago 1',
+  pay1Amount: 'Importe pago 1',
+  pay2Date: 'Fecha pago 2',
+  pay2Amount: 'Importe pago 2',
+  status: 'Estado',
+  nextReview: 'Próxima revisión',
+  comment: 'Concepto',
+  notes: 'Notas',
+  origin: 'Origen',
+  source: 'Canal',
+  informedBy: 'Persona',
+  amountCondition: 'Condición',
+};

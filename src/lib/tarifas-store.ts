@@ -1,5 +1,6 @@
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isMissingTableError } from '@/lib/seguimiento-db';
+import { asReservasCatalog, emptyReservasCatalog, type ReservasCatalog } from '@/lib/reservas-model';
 import { asProduct, type TarifaProduct } from '@/lib/tarifas-model';
 
 const LOCAL_KEY = 'ts-tarifas-v1';
@@ -30,27 +31,43 @@ function normalize(products: unknown): TarifaProduct[] {
   return products.map(asProduct).filter((item) => item.name);
 }
 
-function looksLikePayload(value: unknown): value is { products: unknown[] } {
+function looksLikePayload(value: unknown): value is { products: unknown[]; reservas?: unknown } {
   return Boolean(value && typeof value === 'object' && Array.isArray((value as { products?: unknown }).products));
 }
 
-function writeLocal(products: TarifaProduct[]) {
+function reservasOf(value: unknown): ReservasCatalog | undefined {
+  if (!looksLikePayload(value) || value.reservas == null) return undefined;
+  return asReservasCatalog(value.reservas);
+}
+
+function writeLocal(products: TarifaProduct[], reservas?: ReservasCatalog) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(LOCAL_KEY, JSON.stringify({ products }));
+  const prev = readLocalPayload();
+  window.localStorage.setItem(LOCAL_KEY, JSON.stringify({
+    products,
+    reservas: reservas ?? prev.reservas ?? emptyReservasCatalog(),
+  }));
+}
+
+function readLocalPayload(): { products: TarifaProduct[]; reservas?: ReservasCatalog } {
+  if (typeof window === 'undefined') return { products: [] };
+  try {
+    const raw = window.localStorage.getItem(LOCAL_KEY);
+    if (!raw) return { products: [] };
+    const parsed = JSON.parse(raw) as unknown;
+    if (looksLikePayload(parsed)) {
+      return { products: normalize(parsed.products), reservas: reservasOf(parsed) };
+    }
+    if (Array.isArray(parsed)) return { products: normalize(parsed) };
+    return { products: [] };
+  } catch {
+    return { products: [] };
+  }
 }
 
 function readLocal(seed: TarifaProduct[]): TarifaProduct[] {
-  if (typeof window === 'undefined') return seed;
-  try {
-    const raw = window.localStorage.getItem(LOCAL_KEY);
-    if (!raw) return seed;
-    const parsed = JSON.parse(raw) as unknown;
-    if (looksLikePayload(parsed) && parsed.products.length > 0) return normalize(parsed.products);
-    if (Array.isArray(parsed) && parsed.length > 0) return normalize(parsed);
-    return seed;
-  } catch {
-    return seed;
-  }
+  const local = readLocalPayload();
+  return local.products.length > 0 ? local.products : seed;
 }
 
 function requireClient() {
@@ -60,35 +77,58 @@ function requireClient() {
 
 export async function loadTarifasCatalog(seed: TarifaProduct[]): Promise<{
   products: TarifaProduct[];
+  reservas?: ReservasCatalog;
   backend: TarifasBackend;
   setupSql?: string;
 }> {
   const fallback = normalize(seed);
+  const local = readLocalPayload();
   try {
     const client = requireClient();
     const { data, error } = await client.from('tarifas_store').select('payload').eq('id', STORE_ID).maybeSingle();
     if (error) {
-      if (isMissingTableError(error.message)) return { products: readLocal(fallback), backend: 'local', setupSql: TARIFAS_SETUP_SQL };
+      if (isMissingTableError(error.message)) {
+        return {
+          products: local.products.length > 0 ? local.products : fallback,
+          reservas: local.reservas,
+          backend: 'local',
+          setupSql: TARIFAS_SETUP_SQL,
+        };
+      }
       throw new Error(error.message);
     }
     if (looksLikePayload(data?.payload) && data.payload.products.length > 0) {
-      return { products: normalize(data.payload.products), backend: 'supabase' };
+      return {
+        products: normalize(data.payload.products),
+        reservas: reservasOf(data.payload),
+        backend: 'supabase',
+      };
     }
-    return { products: fallback, backend: 'supabase' };
+    return { products: fallback, reservas: reservasOf(data?.payload) || local.reservas, backend: 'supabase' };
   } catch {
-    return { products: readLocal(fallback), backend: 'local', setupSql: TARIFAS_SETUP_SQL };
+    return {
+      products: local.products.length > 0 ? local.products : fallback,
+      reservas: local.reservas,
+      backend: 'local',
+      setupSql: TARIFAS_SETUP_SQL,
+    };
   }
 }
 
-export async function saveTarifasCatalog(products: TarifaProduct[], backend: TarifasBackend): Promise<void> {
+export async function saveTarifasCatalog(
+  products: TarifaProduct[],
+  backend: TarifasBackend,
+  reservas?: ReservasCatalog,
+): Promise<void> {
   const next = normalize(products);
-  writeLocal(next);
+  const nextReservas = asReservasCatalog(reservas ?? readLocalPayload().reservas ?? emptyReservasCatalog());
+  writeLocal(next, nextReservas);
   if (backend === 'local') return;
   const client = requireClient();
   const { error } = await client.from('tarifas_store').upsert({
     id: STORE_ID,
     saved_at: new Date().toISOString(),
-    payload: { products: next },
+    payload: { products: next, reservas: nextReservas },
   }, { onConflict: 'id' });
   if (error) throw new Error(error.message);
 }

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
+import TradeArchiveView from '@/components/TradeArchiveView';
+import { normalizeArchive } from '@/lib/trade-archive';
 import {
   ABONO_ORIGINS,
   ABONO_SOURCES,
@@ -22,7 +24,6 @@ import {
   formatMoneyInput,
   formatRequiredGaps,
   groupWeeklyTasks,
-  linkedCases,
   makeClaim,
   mergeCatalog,
   nextRegistro,
@@ -32,7 +33,6 @@ import {
   shortPersonName,
   statusAfterReceipts,
   taskName,
-  termRollup,
   todayIso,
   upcomingCash,
   weeklyTasks,
@@ -45,7 +45,6 @@ import {
   type AbonoSource,
   type AbonoStatus,
   type AbonosState,
-  type TradeTerm,
   type WeeklyTask,
   type WeeklyTaskKind,
 } from '@/lib/abonos-model';
@@ -62,13 +61,16 @@ import {
   documentsExportRows,
   guessColumnMap,
   importPreviewError,
+  IMPORT_COLUMN_LABELS,
   receiptsExportRows,
+  summarizeImportRow,
+  type ImportRowKind,
   type ImportColumnMap,
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { documentLabelsByCase, documentsForExport, zipStored } from '@/lib/abonos-export-pack';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileSpreadsheet, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -601,8 +603,12 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [importReceipts, setImportReceipts] = useState<ReturnType<typeof parseReceiptsSheet>>([]);
   const [preview, setPreview] = useState<ImportPreviewRow[]>([]);
   const [headerIndex, setHeaderIndex] = useState(0);
+  const [importFileName, setImportFileName] = useState('');
+  const [showMapping, setShowMapping] = useState(false);
+  const [showUnchanged, setShowUnchanged] = useState(false);
+  const [exportScope, setExportScope] = useState<'all' | 'view'>('all');
+  const [exportWithDocs, setExportWithDocs] = useState(false);
   const [bulkArea, setBulkArea] = useState('Grassroots');
-  const [termForm, setTermForm] = useState<Partial<TradeTerm>>({ brand: 'Adidas', name: '', compensation: '', triggerText: '', period: '', active: true, comment: '' });
   const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
   const [claimNote, setClaimNote] = useState('');
   const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
@@ -846,17 +852,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     if (!keepTab) setTab('seguimiento');
   };
 
-  const openNewFromTerm = (term: TradeTerm) => {
-    const hints = hintsFromTradeTerm(term);
-    openNew({
-      brand: term.brand,
-      origin: 'Acuerdo',
-      tradeTermId: term.id,
-      ...hints,
-      estimated: hints.amountMode === 'Variable',
-    }, true);
-  };
-
   const closePanel = () => {
     setEditing(null);
     setForm(emptyForm());
@@ -1095,52 +1090,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm((current) => ({ ...current, status: nextStatus, estimated }));
   };
 
-  const saveTerm = async () => {
-    if (!termForm.brand || !termForm.name) {
-      setError('Marca y nombre del trade term son obligatorios.');
-      return;
-    }
-    const term: TradeTerm = {
-      id: crypto.randomUUID(),
-      brand: termForm.brand,
-      name: termForm.name,
-      compensation: termForm.compensation || '',
-      triggerText: termForm.triggerText || '',
-      period: termForm.period || '',
-      active: termForm.active !== false,
-      comment: termForm.comment || '',
-    };
-    await persist({
-      ...state,
-      tradeTerms: [term, ...state.tradeTerms],
-      catalogs: addCatalogValue(state.catalogs, 'brand', term.brand),
-    }, backend);
-    setTermForm({ brand: term.brand, name: '', compensation: '', triggerText: '', period: '', active: true, comment: '' });
-  };
-
-  const toggleTerm = async (id: string) => {
-    await persist({
-      ...state,
-      tradeTerms: state.tradeTerms.map((term) => term.id === id ? { ...term, active: !term.active } : term),
-    }, backend);
-  };
-
-  const deleteTerm = async (id: string) => {
-    if (!window.confirm('¿Eliminar este trade term?')) return;
-    await persist({
-      ...state,
-      tradeTerms: state.tradeTerms.filter((term) => term.id !== id),
-      cases: state.cases.map((row) => row.tradeTermId === id ? { ...row, tradeTermId: null } : row),
-    }, backend);
-  };
-
-  const unlinkCaseFromTerm = async (caseId: string) => {
-    await persist({
-      ...state,
-      cases: state.cases.map((row) => row.id === caseId ? { ...row, tradeTermId: null } : row),
-    }, backend);
-  };
-
   const markExisting = (rows: ImportPreviewRow[]) => {
     const registros = new Set(state.cases.map((item) => item.registro));
     return rows.map((row) => ({
@@ -1149,7 +1098,19 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     }));
   };
 
-  const handleImportFile = (rows: unknown[][]) => {
+  const clearImport = () => {
+    setImportMap(null);
+    setImportReceipts([]);
+    setImportRows([]);
+    setImportHeaders([]);
+    setPreview([]);
+    setImportFileName('');
+    setShowMapping(false);
+    setShowUnchanged(false);
+  };
+
+  const handleImportFile = (rows: unknown[][], fileName = '') => {
+    setImportFileName(fileName);
     const index = detectAbonosHeaderRow(rows);
     const header = rows[index] || [];
     const map = guessColumnMap(header);
@@ -1176,23 +1137,24 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       receipts: receiptResult.receipts,
     }, backend);
     const parts = [
-      result.updated ? `${result.updated} actualizados` : '',
+      importCounts.cambia ? `${importCounts.cambia} actualizados` : '',
       result.created ? `${result.created} nuevos` : '',
       receiptResult.updated ? `${receiptResult.updated} pagos con referencia actualizada` : '',
       receiptResult.added ? `${receiptResult.added} pagos nuevos` : '',
     ].filter(Boolean);
-    setImportReceipts([]);
-    setNote(`Importación hecha: ${parts.join(' y ')}. Los documentos adjuntos se mantienen.`);
-    setPreview([]);
+    clearImport();
+    setNote(parts.length
+      ? `Importación hecha: ${parts.join(', ')}. Los documentos adjuntos se mantienen.`
+      : 'Importación hecha. Los datos ya estaban al día.');
     setTab('seguimiento');
   };
 
-  const exportWorkbook = async (rows: AbonoComputed[]) => {
+  const exportWorkbook = async (rows: AbonoComputed[], withDocs: boolean) => {
     try {
       setError(null);
       setNote('Preparando la descarga…');
       const XLSX = await import('xlsx');
-      const documents = documentsForExport(rows);
+      const documents = withDocs ? documentsForExport(rows) : [];
       const labels = documentLabelsByCase(documents);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(
@@ -1206,8 +1168,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         XLSX.utils.aoa_to_sheet(receiptsExportRows(rows, state.receipts.filter((item) => caseIds.has(item.caseId)))),
         'Recepciones',
       );
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(documentsExportRows(documents)), 'Documentos');
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_EXPORT_GUIDE), 'Lectura');
+      if (withDocs) {
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(documentsExportRows(documents)), 'Documentos');
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_EXPORT_GUIDE), 'Lectura');
+      }
+      if (!withDocs) {
+        XLSX.writeFile(workbook, `Abonos_${todayIso()}.xlsx`);
+        setNote(`Descargado el Excel con ${rows.length} abono${rows.length === 1 ? '' : 's'}.`);
+        return;
+      }
       const written = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
       const xlsxBytes = written instanceof Uint8Array
         ? written
@@ -1242,6 +1211,27 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_TEMPLATE_INSTRUCTIONS), 'Instrucciones');
     XLSX.writeFile(workbook, 'Plantilla_abonos.xlsx');
   };
+
+  const casesByRegistro = new Map(state.cases.map((item) => [item.registro, item]));
+  const importItems = importMap
+    ? preview.map((row, index) => ({
+      row,
+      index,
+      ...summarizeImportRow(row, row.registro !== null ? casesByRegistro.get(row.registro) : undefined, importMap),
+    }))
+    : [];
+  const importCounts = importItems.reduce(
+    (acc, item) => ({ ...acc, [item.kind]: acc[item.kind] + 1 }),
+    { error: 0, nuevo: 0, cambia: 0, igual: 0 } as Record<ImportRowKind, number>,
+  );
+  const importable = importCounts.nuevo + importCounts.cambia;
+  const errorsWithoutArea = importItems.some((item) => item.kind === 'error' && !item.row.area);
+  const mappedColumns = importMap ? Object.values(importMap).filter((value) => value !== null).length : 0;
+  const totalColumns = importMap ? Object.keys(importMap).length : 0;
+  const exportRows = exportScope === 'all' ? computed : sorted;
+  const exportDocCount = exportRows.reduce((sum, row) => sum + (row.attachments?.length || 0), 0);
+  const viewDocCount = sorted.reduce((sum, row) => sum + (row.attachments?.length || 0), 0);
+  const allDocCount = computed.reduce((sum, row) => sum + (row.attachments?.length || 0), 0);
 
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
   const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
@@ -1634,295 +1624,263 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'terms' && (
-        <section className="space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <p className="text-sm font-semibold">Nuevo trade term</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Aquí viven los acuerdos. Desde cada uno generas el abono ya vinculado. En la ficha se marca si el importe es fijo o variable y, si es variable, la condición.
-            </p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <CatalogField label="Marca" value={termForm.brand || ''} options={state.catalogs.brands} required onChange={(brand) => setTermForm({ ...termForm, brand })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)} />
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Nombre / Condición</span>
-                <input value={termForm.name || ''} onChange={(event) => setTermForm({ ...termForm, name: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Compensación</span>
-                <input value={termForm.compensation || ''} onChange={(event) => setTermForm({ ...termForm, compensation: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-              </label>
-              <label className="space-y-1 md:col-span-2">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Trigger / Condición</span>
-                <input value={termForm.triggerText || ''} onChange={(event) => setTermForm({ ...termForm, triggerText: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha / Periodicidad</span>
-                <input value={termForm.period || ''} onChange={(event) => setTermForm({ ...termForm, period: event.target.value })} placeholder="JUL, DIC, Anual…" className="h-10 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-              </label>
-              <label className="space-y-1 md:col-span-2">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Comentario</span>
-                <input value={termForm.comment || ''} onChange={(event) => setTermForm({ ...termForm, comment: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] px-3 text-sm" />
-              </label>
-            </div>
-            <button type="button" onClick={saveTerm} className="mt-3 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white">Guardar trade term</button>
-          </div>
-          <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="min-w-[1100px] w-full text-sm">
-              <thead className="bg-[var(--bg-soft)] text-left text-xs text-[var(--text-secondary)]">
-                <tr>
-                  <th className="px-3 py-2">Marca</th>
-                  <th className="px-3 py-2">Nombre</th>
-                  <th className="px-3 py-2">Compensación</th>
-                  <th className="px-3 py-2">Trigger</th>
-                  <th className="px-3 py-2">Fecha</th>
-                  <th className="px-3 py-2">Activo</th>
-                  <th className="px-3 py-2">Abonos</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {state.tradeTerms.map((term) => {
-                  const linked = linkedCases(computed, term.id);
-                  const rollup = termRollup(linked);
-                  return (
-                    <tr key={term.id} className="border-t border-[var(--border)] align-top">
-                      <td className="px-3 py-2">{term.brand}</td>
-                      <td className="px-3 py-2 font-medium">{term.name}</td>
-                      <td className="px-3 py-2">{term.compensation}</td>
-                      <td className="px-3 py-2 text-[var(--text-secondary)]">{term.triggerText || '—'}</td>
-                      <td className="px-3 py-2">{term.period || '—'}</td>
-                      <td className="px-3 py-2">
-                        <button type="button" onClick={() => toggleTerm(term.id)} className="text-xs font-semibold">{term.active ? 'Sí' : 'No'}</button>
-                      </td>
-                      <td className="px-3 py-2">
-                        {linked.length === 0 ? (
-                          <p className="text-xs text-[var(--text-muted)]">Sin abono</p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            <p className="text-xs font-medium">
-                              {rollup.status} · {linked.length} · {formatMoney(rollup.pending)}
-                            </p>
-                            {linked.map((row) => (
-                              <div key={row.id} className="flex items-start justify-between gap-2 rounded-md bg-[var(--bg-soft)] px-2 py-1.5">
-                                <button type="button" onClick={() => openEdit(row)} className="min-w-0 text-left">
-                                  <span className="block text-xs font-medium">{taskName(row)}</span>
-                                  <span className="mt-0.5 flex items-center gap-1">
-                                    <StatusPill row={row} />
-                                    <span className="font-mono text-[11px] text-[var(--text-secondary)]">{formatMoney(row.pending)}</span>
-                                  </span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => unlinkCaseFromTerm(row.id)}
-                                  className="shrink-0 text-[var(--text-muted)] hover:text-[var(--danger)]"
-                                  aria-label="Quitar del acuerdo"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openNewFromTerm(term)}
-                          className="mr-3 inline-flex h-8 items-center rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
-                        >
-                          Crear abono
-                        </button>
-                        <button type="button" onClick={() => deleteTerm(term.id)} className="text-xs text-[var(--danger)]">Eliminar</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <TradeArchiveView
+          archive={state.archive ?? normalizeArchive(undefined)}
+          onChange={(archive) => persist({ ...state, archive }, backend)}
+        />
       )}
 
       {tab === 'importar' && (
-        <section className="space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold">Plantilla Excel</p>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">Descárgala, rellena filas y súbela aquí. El número de registro lo pone la herramienta.</p>
-              </div>
+        <section className="mx-auto max-w-4xl space-y-4">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <ol className="flex items-center gap-2 text-sm">
+                {[
+                  { n: 1, label: 'Subir', done: Boolean(importMap) },
+                  { n: 2, label: 'Revisar', done: false, active: Boolean(importMap) },
+                  { n: 3, label: 'Importar', done: false },
+                ].map((step, i) => (
+                  <li key={step.n} className="flex items-center gap-2">
+                    {i > 0 && <ChevronRight className="h-4 w-4 text-[var(--text-muted)]" />}
+                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${step.done ? 'bg-[var(--success-soft)] text-[var(--success)]' : (step.active || (!importMap && step.n === 1)) ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-muted)]'}`}>
+                      {step.done ? <Check className="h-3.5 w-3.5" /> : step.n}
+                    </span>
+                    <span className={(step.active || (!importMap && step.n === 1)) ? 'font-semibold' : 'text-[var(--text-secondary)]'}>{step.label}</span>
+                  </li>
+                ))}
+              </ol>
               <button
                 type="button"
                 onClick={downloadTemplate}
-                className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-semibold hover:bg-[var(--bg-soft)]"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
               >
                 <Download className="h-4 w-4" />
                 Descargar plantilla
               </button>
             </div>
-            <FileUpload
-              inputId="abonos-import"
-              label="Importar Excel de abonos"
-              hint="Si el registro ya existe, esa fila sustituye los datos del abono. Los documentos adjuntos no se borran."
-              onFileLoaded={handleImportFile}
-              onWorkbookLoaded={(sheets) => {
-                const name = Object.keys(sheets).find((sheet) => sheet.trim().toLocaleLowerCase('es') === 'recepciones');
-                setImportReceipts(name ? parseReceiptsSheet(sheets[name]) : []);
-              }}
-              keepDropzone
-              loaded={Boolean(importMap)}
-              onClear={() => {
-                setImportMap(null);
-                setImportReceipts([]);
-                setImportRows([]);
-                setImportHeaders([]);
-                setPreview([]);
-              }}
-            />
-          </div>
-          {importMap && (
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <p className="text-sm font-semibold">Relacionar columnas</p>
-              <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {importReceipts.length
-                  ? `Hoja Recepciones: ${importReceipts.length} pagos. Se guardan referencia y comentario; si un pago no existe, se crea. No se borra ninguno.`
-                  : 'Sin hoja Recepciones: los pagos guardados no se tocan.'}
-              </p>
-              <div className="mt-3 grid gap-2 md:grid-cols-3">
-                {Object.entries(importMap).map(([key, value]) => (
-                  <label key={key} className="space-y-1 text-xs">
-                    <span className="text-[var(--text-secondary)]">{key}</span>
-                    <select
-                      value={value ?? ''}
-                      onChange={(event) => {
-                        const next = { ...importMap, [key]: event.target.value === '' ? null : Number(event.target.value) };
-                        setImportMap(next);
-                        setPreview(markExisting(buildImportPreview(importRows, next, headerIndex)));
-                      }}
-                      className="h-9 w-full rounded-md border border-[var(--border)] px-2"
-                    >
-                      <option value="">No usar</option>
-                      {importHeaders.map((header, index) => (
-                        <option key={`${String(header)}-${index}`} value={index}>{String(header || `Columna ${index + 1}`)}</option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-          {preview.length > 0 && (
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="mb-3 flex flex-wrap items-end gap-2">
-                <p className="text-sm font-semibold">{preview.length} filas · Revisa área, responsable y posibles errores antes de confirmar.</p>
-                <select value={bulkArea} onChange={(event) => setBulkArea(event.target.value)} className="h-9 rounded-md border border-[var(--border)] px-2 text-sm">
-                  {state.catalogs.areas.map((area) => <option key={area} value={area}>{area}</option>)}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setPreview(preview.map((row) => {
-                    const next = row.area ? row : { ...row, area: bulkArea };
-                    return { ...next, error: importPreviewError(next) };
-                  }))}
-                  className="h-9 rounded-md border border-[var(--border)] px-3 text-xs font-medium"
-                >
-                  Rellenar vacías
-                </button>
-                <button type="button" onClick={applyImport} className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white">Confirmar importación</button>
-                <datalist id="abonos-import-people">
-                  {peopleOptions.map((person) => <option key={person} value={person} />)}
-                </datalist>
-              </div>
-              <div className="max-h-[480px] overflow-auto">
-                <table className="min-w-[980px] w-full text-sm">
-                  <thead className="bg-[var(--bg-soft)] text-left text-xs">
-                    <tr>
-                      <th className="px-2 py-2">Reg.</th>
-                      <th className="px-2 py-2">Marca</th>
-                      <th className="px-2 py-2">Tipo</th>
-                      <th className="px-2 py-2">Equipo</th>
-                      <th className="px-2 py-2">Área</th>
-                      <th className="px-2 py-2">Responsable</th>
-                      <th className="px-2 py-2">Añadido por</th>
-                      <th className="px-2 py-2">Previsto</th>
-                      <th className="px-2 py-2">Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.map((row, index) => (
-                      <tr key={row.key} className="border-t border-[var(--border)]">
-                        <td className="px-2 py-1">{row.registro ?? '—'}</td>
-                        <td className="px-2 py-1">{row.brand}</td>
-                        <td className="px-2 py-1">{displayDash(row.type)}</td>
-                        <td className="px-2 py-1">{displayDash(row.teamMotivo)}</td>
-                        <td className="px-2 py-1">
-                          <select
-                            value={row.area}
-                            onChange={(event) => {
-                              const next = [...preview];
-                              const updated = { ...row, area: event.target.value };
-                              next[index] = { ...updated, error: importPreviewError(updated) };
-                              setPreview(next);
-                            }}
-                            className="h-8 rounded border border-[var(--border)] px-1 text-xs"
-                          >
-                            <option value="">Sin área</option>
-                            {mergeCatalog(state.catalogs.areas, [row.area]).map((area) => <option key={area} value={area}>{area}</option>)}
+
+            {!importMap ? (
+              <FileUpload
+                inputId="abonos-import"
+                label="Sube el Excel de abonos"
+                hint="Sirve la plantilla o un Excel exportado desde aquí. Si el registro ya existe, se actualiza; si no, se crea. Los documentos no se tocan."
+                onFileLoaded={(rows, fileName) => handleImportFile(rows, fileName)}
+                onWorkbookLoaded={(sheets) => {
+                  const name = Object.keys(sheets).find((sheet) => sheet.trim().toLocaleLowerCase('es') === 'recepciones');
+                  setImportReceipts(name ? parseReceiptsSheet(sheets[name]) : []);
+                }}
+              />
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 rounded-md border border-[var(--border)] px-3 py-2.5 text-sm">
+                  <FileSpreadsheet className="h-5 w-5 shrink-0 text-[var(--success)]" />
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium">{importFileName || 'Excel'}</span>
+                    <span className="text-[var(--text-secondary)]">
+                      {' · '}{preview.length} fila{preview.length === 1 ? '' : 's'}
+                      {importReceipts.length ? ` · ${importReceipts.length} cobro${importReceipts.length === 1 ? '' : 's'}` : ''}
+                    </span>
+                  </span>
+                  <button type="button" onClick={clearImport} className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                    Cambiar archivo
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-sm">
+                  {importCounts.nuevo > 0 && <span className="rounded-md bg-[var(--success-soft)] px-2.5 py-1 font-medium text-[var(--success)]">{importCounts.nuevo} nuevo{importCounts.nuevo === 1 ? '' : 's'}</span>}
+                  {importCounts.cambia > 0 && <span className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1 font-medium text-[var(--accent)]">{importCounts.cambia} se actualiza{importCounts.cambia === 1 ? '' : 'n'}</span>}
+                  {importCounts.igual > 0 && <span className="rounded-md bg-[var(--bg-soft)] px-2.5 py-1 text-[var(--text-secondary)]">{importCounts.igual} sin cambios</span>}
+                  {importCounts.error > 0 && <span className="rounded-md bg-[var(--danger-soft)] px-2.5 py-1 font-medium text-[var(--danger)]">{importCounts.error} con errores</span>}
+                </div>
+
+                {importCounts.error > 0 && (
+                  <div className="rounded-md border border-red-200">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-200 bg-[var(--danger-soft)] px-3 py-2">
+                      <p className="flex items-center gap-1.5 text-sm font-semibold text-[var(--danger)]">
+                        <AlertTriangle className="h-4 w-4" />
+                        No se importan. Corrígelos en el Excel y vuelve a subirlo.
+                      </p>
+                      {errorsWithoutArea && (
+                        <div className="flex items-center gap-1.5">
+                          <select value={bulkArea} onChange={(event) => setBulkArea(event.target.value)} className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs">
+                            {state.catalogs.areas.map((area) => <option key={area} value={area}>{area}</option>)}
                           </select>
-                        </td>
-                        <td className="px-2 py-1">
-                          <input
-                            value={row.responsible}
-                            onChange={(event) => {
-                              const next = [...preview];
-                              const updated = { ...row, responsible: event.target.value };
-                              next[index] = { ...updated, error: importPreviewError(updated) };
-                              setPreview(next);
-                            }}
-                            list="abonos-import-people"
-                            className="h-8 w-full min-w-[140px] rounded border border-[var(--border)] px-1 text-xs"
-                          />
-                        </td>
-                        <td className="px-2 py-1">
-                          <input
-                            value={row.addedBy}
-                            onChange={(event) => {
-                              const next = [...preview];
-                              const updated = { ...row, addedBy: event.target.value };
-                              next[index] = { ...updated, error: importPreviewError(updated) };
-                              setPreview(next);
-                            }}
-                            list="abonos-import-people"
-                            className="h-8 w-full min-w-[140px] rounded border border-[var(--border)] px-1 text-xs"
-                          />
-                        </td>
-                        <td className="px-2 py-1 text-right font-mono">{formatMoney(row.expectedAmount)}</td>
-                        <td className={`px-2 py-1 ${row.existing && (!row.error || row.error.startsWith('Falta')) ? 'text-[var(--text-secondary)]' : 'text-[var(--danger)]'}`}>
-                          {row.existing && (!row.error || row.error.startsWith('Falta')) ? 'Se actualiza.' : (row.error || '')}
-                        </td>
-                      </tr>
+                          <button
+                            type="button"
+                            onClick={() => setPreview(preview.map((row) => {
+                              const next = row.area ? row : { ...row, area: bulkArea };
+                              return { ...next, error: importPreviewError(next) };
+                            }))}
+                            className="h-8 rounded-md border border-[var(--border)] bg-white px-2.5 text-xs font-medium"
+                          >
+                            Poner área a las que no tienen
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <ul className="divide-y divide-[var(--border)] text-sm">
+                      {importItems.filter((item) => item.kind === 'error').map(({ row }) => (
+                        <li key={row.key} className="flex items-start justify-between gap-3 px-3 py-2">
+                          <span className="min-w-0">
+                            <span className="font-mono text-xs text-[var(--text-muted)]">{row.registro ? `#${row.registro}` : 'Nueva'}</span>{' '}
+                            {[row.brand, row.teamMotivo].filter(Boolean).join(' · ') || 'Sin marca'}
+                            {row.comment ? <span className="text-[var(--text-secondary)]"> · {row.comment}</span> : null}
+                          </span>
+                          <span className="shrink-0 text-right text-[var(--danger)]">{row.error}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {(importCounts.nuevo > 0 || importCounts.cambia > 0) && (
+                  <ul className="max-h-[420px] divide-y divide-[var(--border)] overflow-auto rounded-md border border-[var(--border)] text-sm">
+                    {importItems.filter((item) => item.kind === 'nuevo').map(({ row }) => (
+                      <li key={row.key} className="flex items-start justify-between gap-3 px-3 py-2">
+                        <span className="min-w-0">
+                          <span className="mr-1.5 rounded bg-[var(--success-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--success)]">Nuevo</span>
+                          {[row.brand, row.teamMotivo].filter(Boolean).join(' · ')}
+                          {row.comment ? <span className="text-[var(--text-secondary)]"> · {row.comment}</span> : null}
+                        </span>
+                        <span className="shrink-0 font-mono text-xs">{formatMoney(row.expectedAmount)}</span>
+                      </li>
                     ))}
-                  </tbody>
-                </table>
+                    {importItems.filter((item) => item.kind === 'cambia').map(({ row, changes }) => (
+                      <li key={row.key} className="px-3 py-2">
+                        <p>
+                          <span className="font-mono text-xs text-[var(--text-muted)]">#{row.registro}</span>{' '}
+                          {[row.brand, row.teamMotivo].filter(Boolean).join(' · ')}
+                        </p>
+                        <ul className="mt-0.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
+                          {changes.map((change) => <li key={change}>{change}</li>)}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {importCounts.igual > 0 && (
+                  <div>
+                    <button type="button" onClick={() => setShowUnchanged(!showUnchanged)} className="inline-flex items-center gap-1 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                      {showUnchanged ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      Ver los {importCounts.igual} sin cambios
+                    </button>
+                    {showUnchanged && (
+                      <p className="mt-1 text-xs text-[var(--text-muted)]">
+                        {importItems.filter((item) => item.kind === 'igual').map(({ row }) => `#${row.registro}`).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div>
+                  <button type="button" onClick={() => setShowMapping(!showMapping)} className="inline-flex items-center gap-1 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                    {showMapping ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                    Columnas reconocidas {mappedColumns}/{totalColumns} · Ajustar
+                  </button>
+                  {showMapping && importMap && (
+                    <div className="mt-2 grid gap-2 rounded-md bg-[var(--bg-soft)] p-3 md:grid-cols-3">
+                      {(Object.keys(importMap) as Array<keyof typeof importMap>).map((key) => (
+                        <label key={key} className="space-y-1 text-xs">
+                          <span className="text-[var(--text-secondary)]">{IMPORT_COLUMN_LABELS[key]}</span>
+                          <select
+                            value={importMap[key] ?? ''}
+                            onChange={(event) => {
+                              const next = { ...importMap, [key]: event.target.value === '' ? null : Number(event.target.value) };
+                              setImportMap(next);
+                              setPreview(markExisting(buildImportPreview(importRows, next, headerIndex)));
+                            }}
+                            className="h-8 w-full rounded-md border border-[var(--border)] bg-white px-2"
+                          >
+                            <option value="">No usar</option>
+                            {importHeaders.map((header, index) => (
+                              <option key={`${String(header)}-${index}`} value={index}>{String(header || `Columna ${index + 1}`)}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[var(--border)] pt-4">
+                  <button type="button" onClick={clearImport} className="h-10 rounded-md px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]">
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyImport}
+                    disabled={importable === 0 && importReceipts.length === 0}
+                    className="h-10 rounded-md bg-[var(--text-primary)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {importable > 0
+                      ? `Importar ${importable} abono${importable === 1 ? '' : 's'}`
+                      : importReceipts.length ? 'Importar cobros' : 'Nada que importar'}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       )}
 
       {tab === 'exportar' && (
-        <section className="space-y-3">
-          <p className="max-w-3xl text-sm text-[var(--text-secondary)]">
-            La descarga es un ZIP: el Excel y la carpeta documentos. En la columna Documentos, 12-1.jpg es el primer archivo del abono 12 y 12-2.pdf el segundo. Así se puede cruzar cada fila con su justificante.
-          </p>
-          <div className="grid gap-3 md:grid-cols-2">
-            <button type="button" onClick={() => exportWorkbook(computed)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
-              <p className="text-sm font-semibold">Exportar todo</p>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">Todos los abonos, las recepciones y sus documentos.</p>
-            </button>
-            <button type="button" onClick={() => exportWorkbook(sorted)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 text-left hover:border-[var(--border-strong)]">
-              <p className="text-sm font-semibold">Exportar vista actual</p>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">Solo lo que dejan los filtros de Abonos, con sus documentos.</p>
-            </button>
+        <section className="mx-auto max-w-4xl">
+          <div className="space-y-5 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
+            <div>
+              <p className="mb-2 text-sm font-semibold">Qué quieres descargar</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {([
+                  { id: 'all', title: 'Todos los abonos', detail: `${computed.length} abonos` },
+                  { id: 'view', title: 'Lo que tengo filtrado', detail: `${sorted.length} abonos según los filtros de la pestaña Abonos` },
+                ] as const).map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setExportScope(option.id)}
+                    className={`rounded-lg border p-4 text-left transition ${exportScope === option.id ? 'border-[var(--text-primary)] ring-1 ring-[var(--text-primary)]' : 'border-[var(--border)] hover:border-[var(--border-strong)]'}`}
+                  >
+                    <p className="text-sm font-semibold">{option.title}</p>
+                    <p className="mt-0.5 text-sm text-[var(--text-secondary)]">{option.detail}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-sm font-semibold">Formato</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {([
+                  { id: false, title: 'Solo Excel', detail: 'Abonos y cobros. Se abre directamente.' },
+                  { id: true, title: 'Excel + documentos (ZIP)', detail: `${exportScope === 'all' ? allDocCount : viewDocCount} justificante${(exportScope === 'all' ? allDocCount : viewDocCount) === 1 ? '' : 's'} en una carpeta, numerados por registro` },
+                ] as const).map((option) => (
+                  <button
+                    key={String(option.id)}
+                    type="button"
+                    onClick={() => setExportWithDocs(option.id)}
+                    className={`rounded-lg border p-4 text-left transition ${exportWithDocs === option.id ? 'border-[var(--text-primary)] ring-1 ring-[var(--text-primary)]' : 'border-[var(--border)] hover:border-[var(--border-strong)]'}`}
+                  >
+                    <p className="text-sm font-semibold">{option.title}</p>
+                    <p className="mt-0.5 text-sm text-[var(--text-secondary)]">{option.detail}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
+              <p className="text-sm text-[var(--text-secondary)]">
+                {exportRows.length} abono{exportRows.length === 1 ? '' : 's'}
+                {exportWithDocs ? ` · ${exportDocCount} documento${exportDocCount === 1 ? '' : 's'}` : ''}
+                {' · '}{exportWithDocs ? `Abonos_${todayIso()}.zip` : `Abonos_${todayIso()}.xlsx`}
+              </p>
+              <button
+                type="button"
+                onClick={() => exportWorkbook(exportRows, exportWithDocs)}
+                disabled={exportRows.length === 0}
+                className="inline-flex h-10 items-center gap-2 rounded-md bg-[var(--text-primary)] px-4 text-sm font-semibold text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Download className="h-4 w-4" />
+                Descargar
+              </button>
+            </div>
           </div>
         </section>
       )}

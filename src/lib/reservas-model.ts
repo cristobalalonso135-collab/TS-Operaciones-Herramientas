@@ -134,6 +134,46 @@ export function gridKey(grid: Pick<SizeGrid, 'brand' | 'productType' | 'band'>):
   return familyCurveKey(grid.brand, grid.productType, grid.band);
 }
 
+const BAND_ORDER: ReservaBand[] = ['adult', 'youth', 'onesize'];
+
+export function gridsFromCatalog(
+  products: TarifaProduct[],
+  onesizeTypes: string[],
+  existing: SizeGrid[] = [],
+): SizeGrid[] {
+  const byKey = new Map(existing.map((grid) => [gridKey(grid), grid]));
+  const needed = new Map<string, { brand: string; productType: string; band: ReservaBand }>();
+  products.forEach((item) => {
+    if (!item.brand || !item.productType) return;
+    if (isOnesizeType(item.productType, onesizeTypes)) {
+      const key = familyCurveKey(item.brand, item.productType, 'onesize');
+      needed.set(key, { brand: item.brand, productType: item.productType, band: 'onesize' });
+      return;
+    }
+    if (item.adultRef) {
+      const key = familyCurveKey(item.brand, item.productType, 'adult');
+      needed.set(key, { brand: item.brand, productType: item.productType, band: 'adult' });
+    }
+    if (item.youthRef) {
+      const key = familyCurveKey(item.brand, item.productType, 'youth');
+      needed.set(key, { brand: item.brand, productType: item.productType, band: 'youth' });
+    }
+  });
+  const out: SizeGrid[] = [];
+  needed.forEach((slot, key) => {
+    const prev = byKey.get(key);
+    out.push(prev || { id: newId('grid'), brand: slot.brand, productType: slot.productType, band: slot.band, sizes: [] });
+  });
+  existing.forEach((grid) => {
+    if (!needed.has(gridKey(grid))) out.push(grid);
+  });
+  return out.sort((a, b) => (
+    a.brand.localeCompare(b.brand, 'es')
+    || a.productType.localeCompare(b.productType, 'es')
+    || BAND_ORDER.indexOf(a.band) - BAND_ORDER.indexOf(b.band)
+  ));
+}
+
 function norm(value: string): string {
   return value.trim().toLocaleLowerCase('es');
 }

@@ -23,7 +23,7 @@ export default function StepIndicator({ steps, currentStep }: StepIndicatorProps
               ${step.id === currentStep
                 ? 'bg-[var(--accent)] text-white'
                 : step.completed
-                  ? 'bg-[var(--success)]/10 text-[var(--success)] border border-[var(--success)]/30'
+                  ? 'bg-[var(--success-soft)] text-[var(--success)] border border-[var(--success-soft)]'
                   : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border border-[var(--border)]'
               }`}
           >

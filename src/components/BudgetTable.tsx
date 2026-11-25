@@ -396,7 +396,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                     key={d.fecha}
                     title={noBudgetReason}
                     className={`min-w-[112px] border-b border-[var(--border)] px-3 py-3 text-right font-medium ${
-                      !d.is_working ? 'bg-amber-100 text-amber-900' : ''
+                      !d.is_working ? 'bg-[var(--warning-soft)] text-[var(--warning)]' : ''
                     }`}
                   >
                     <SortButton label={formatDateHeader(d.fecha)} align="right" active={sort.key === daySortKey} direction={sort.direction} onClick={() => toggleSort(daySortKey)}>
@@ -438,7 +438,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                       key={d.fecha}
                       title={noBudgetReason}
                       className={`border-b border-[var(--border)] px-3 py-2.5 text-right font-mono tabular-nums ${
-                        !d.is_working ? 'bg-amber-50 text-amber-900' : ''
+                        !d.is_working ? 'bg-[var(--warning-soft)] text-[var(--warning)]' : ''
                       }`}
                     >
                       {d.importe !== 0 ? (
@@ -470,7 +470,7 @@ export default function BudgetTable({ data, mesFiscal }: BudgetTableProps) {
                     key={d.fecha}
                     title={noBudgetReason}
                     className={`border-t border-[var(--border-strong)] px-3 py-3 text-right font-mono tabular-nums ${
-                      !d.is_working ? 'bg-amber-100 text-amber-900' : ''
+                      !d.is_working ? 'bg-[var(--warning-soft)] text-[var(--warning)]' : ''
                     }`}
                   >
                     {dayTotal !== 0 ? (

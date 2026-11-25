@@ -1,3 +1,5 @@
+import type { TradeArchive } from '@/lib/trade-archive';
+
 export const ABONOS_PEOPLE = ['Cristóbal', 'Pablo'] as const;
 export const DEFAULT_NEW_AUTHOR = 'Cristóbal';
 
@@ -106,6 +108,8 @@ export interface AbonosState {
   claims: AbonoClaim[];
   tradeTerms: TradeTerm[];
   catalogs: AbonosCatalogs;
+  /** Trade terms archive: folders per company and fiscal year. Lives in the same payload. */
+  archive?: TradeArchive;
 }
 
 export interface AbonoComputed extends AbonoCase {
