@@ -236,6 +236,81 @@ export async function saveAbonosState(state: AbonosState, backend: AbonosBackend
   await writeSharedSnapshot(next);
 }
 
+const BACKUP_PREFIX = 'backup-';
+const LOCAL_BACKUPS_KEY = 'ts-abonos-backups-v1';
+
+export interface AbonosBackup {
+  id: string;
+  savedAt: string;
+  count: number;
+  reason: string;
+}
+
+function backupId(state: AbonosState): string {
+  return `${BACKUP_PREFIX}${new Date().toISOString().replace(/[:.]/g, '-')}__${state.cases.length}`;
+}
+
+function parseBackupId(id: string, savedAt: string, reason = ''): AbonosBackup {
+  const count = Number(id.split('__')[1]);
+  return { id, savedAt, count: Number.isFinite(count) ? count : 0, reason };
+}
+
+/** Saves a full copy of the abonos state (cases, cobros, documents, trade terms) before a risky change. */
+export async function createAbonosBackup(state: AbonosState, backend: AbonosBackend, reason: string): Promise<AbonosBackup> {
+  const id = backupId(state);
+  const savedAt = new Date().toISOString();
+  const payload = { ...state, backupReason: reason };
+  if (backend === 'supabase') {
+    const client = requireClient();
+    const { error } = await client.from('abonos_store').insert({ id, saved_at: savedAt, payload });
+    if (error) throw new Error(`No he podido guardar la copia de seguridad: ${error.message}`);
+  } else {
+    const list = readLocalBackups();
+    list.unshift({ id, savedAt, reason, payload });
+    window.localStorage.setItem(LOCAL_BACKUPS_KEY, JSON.stringify(list.slice(0, 5)));
+  }
+  return parseBackupId(id, savedAt, reason);
+}
+
+function readLocalBackups(): Array<{ id: string; savedAt: string; reason: string; payload: AbonosState }> {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LOCAL_BACKUPS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function listAbonosBackups(backend: AbonosBackend): Promise<AbonosBackup[]> {
+  if (backend !== 'supabase') {
+    return readLocalBackups().map((item) => parseBackupId(item.id, item.savedAt, item.reason));
+  }
+  const client = requireClient();
+  const { data, error } = await client
+    .from('abonos_store')
+    .select('id, saved_at')
+    .like('id', `${BACKUP_PREFIX}%`)
+    .order('saved_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return (data || []).map((row) => parseBackupId(String(row.id), String(row.saved_at)));
+}
+
+export async function loadAbonosBackup(id: string, backend: AbonosBackend): Promise<AbonosState> {
+  if (backend !== 'supabase') {
+    const found = readLocalBackups().find((item) => item.id === id);
+    if (!found) throw new Error('No encuentro esa copia.');
+    return seedState(found.payload);
+  }
+  const client = requireClient();
+  const { data, error } = await client.from('abonos_store').select('payload').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!isAbonosPayload(data?.payload)) throw new Error('La copia no tiene datos de abonos.');
+  const { backupReason: _reason, ...rest } = data.payload as AbonosState & { backupReason?: string };
+  return seedState(rest);
+}
+
 export function addCatalogValue(catalogs: AbonosCatalogs, kind: CatalogKind, value: string): AbonosCatalogs {
   const trimmed = value.trim();
   if (!trimmed) return catalogs;

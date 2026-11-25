@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import FileUpload from '@/components/FileUpload';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import TradeArchiveView from '@/components/TradeArchiveView';
+import AbonosImportPanel from '@/components/AbonosImportPanel';
 import { normalizeArchive } from '@/lib/trade-archive';
 import {
   ABONOS_PEOPLE,
@@ -48,26 +48,10 @@ import {
   type WeeklyTask,
   type WeeklyTaskKind,
 } from '@/lib/abonos-model';
-import {
-  abonosTemplateRows,
-  ABONOS_TEMPLATE_INSTRUCTIONS,
-  applyImportRows,
-  applyReceiptRows,
-  parseReceiptsSheet,
-  buildImportPreview,
-  detectAbonosHeaderRow,
-  guessColumnMap,
-  importPreviewError,
-  IMPORT_COLUMN_LABELS,
-  summarizeImportRow,
-  type ImportRowKind,
-  type ImportColumnMap,
-  type ImportPreviewRow,
-} from '@/lib/abonos-excel';
 import { documentLabelsByCase, documentsForExport, zipStored } from '@/lib/abonos-export-pack';
 import { buildAbonosWorkbook } from '@/lib/abonos-export-xlsx';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Check, ChevronDown, Clock, ChevronRight, Download, FileSpreadsheet, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Clock, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -175,6 +159,13 @@ function matchesAttachmentFilter(selected: string[], count: number): boolean {
   return selected.some((value) => (value === 'Sí' && has) || (value === 'No' && !has));
 }
 
+function MoneyCell({ value, tone, strong }: { value: number | null; tone?: 'success'; strong?: boolean }) {
+  if (value === null) return <span className="text-[var(--text-muted)]">—</span>;
+  if (Math.abs(value) < 0.005) return <span className="text-[#c4c4c8]">0,00 €</span>;
+  const color = tone === 'success' ? 'text-[var(--success)]' : '';
+  return <span className={`${color} ${strong ? 'font-semibold' : ''}`}>{formatMoney(value)}</span>;
+}
+
 function renderAbonoCell(row: AbonoComputed, key: SortKey, alert: AbonoAlert | null) {
   switch (key) {
     case 'alert':
@@ -182,23 +173,23 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey, alert: AbonoAlert | n
     case 'responsible':
       return displayDash(row.responsible);
     case 'dueDate':
-      return formatIsoDate(row.dueDate);
+      return <span className="text-[var(--text-secondary)]">{formatIsoDate(row.dueDate)}</span>;
     case 'brand':
-      return displayDash(row.brand);
+      return <span className="font-semibold">{displayDash(row.brand)}</span>;
     case 'type':
-      return displayDash(row.type);
+      return <span className="text-[var(--text-secondary)]">{displayDash(row.type)}</span>;
     case 'area':
       return displayDash(row.area);
     case 'teamMotivo':
       return displayDash(row.teamMotivo);
     case 'expectedAmount':
-      return formatMoney(row.expectedAmount);
+      return <MoneyCell value={row.expectedAmount} />;
     case 'amountMode':
-      return row.amountModeResolved === 'Variable' ? 'Estimado' : row.amountModeResolved;
+      return <span className="text-[var(--text-secondary)]">{row.amountModeResolved === 'Variable' ? 'Estimado' : row.amountModeResolved}</span>;
     case 'receivedTotal':
-      return formatMoney(row.receivedTotal);
+      return <MoneyCell value={row.receivedTotal} tone="success" />;
     case 'pending':
-      return formatMoney(row.pending);
+      return <MoneyCell value={row.pending} strong />;
     case 'status':
       return <StatusPill row={row} />;
     case 'concept':
@@ -600,15 +591,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [expectedAmountText, setExpectedAmountText] = useState('');
   const [communicatedAmountText, setCommunicatedAmountText] = useState('');
   const [receiptDraft, setReceiptDraft] = useState({ receivedAt: todayIso(), amount: '', reference: '', comment: '' });
-  const [importHeaders, setImportHeaders] = useState<unknown[]>([]);
-  const [importRows, setImportRows] = useState<unknown[][]>([]);
-  const [importMap, setImportMap] = useState<ImportColumnMap | null>(null);
-  const [importReceipts, setImportReceipts] = useState<ReturnType<typeof parseReceiptsSheet>>([]);
-  const [preview, setPreview] = useState<ImportPreviewRow[]>([]);
-  const [headerIndex, setHeaderIndex] = useState(0);
-  const [importFileName, setImportFileName] = useState('');
-  const [showMapping, setShowMapping] = useState(false);
-  const [showUnchanged, setShowUnchanged] = useState(false);
   const [exportScope, setExportScope] = useState<'all' | 'view'>('all');
   const [exportWithDocs, setExportWithDocs] = useState(false);
   const [bulkArea, setBulkArea] = useState('Grassroots');
@@ -751,6 +733,9 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     });
     return copy;
   }, [filtered, sort]);
+
+  const activeFilterCount = [filters.brand, filters.type, filters.area, filters.teamMotivo, filters.status, filters.duePeriod, filters.amountMode, filters.attachments, filters.responsible]
+    .filter((list) => list.length > 0).length + (filters.search.trim() ? 1 : 0);
 
   const listTotals = useMemo(() => filtered.reduce((acc, row) => ({
     expected: acc.expected + (row.expectedAmount ?? 0),
@@ -1073,65 +1058,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     setForm((current) => ({ ...current, status: nextStatus, estimated }));
   };
 
-  const markExisting = (rows: ImportPreviewRow[]) => {
-    const registros = new Set(state.cases.map((item) => item.registro));
-    return rows.map((row) => ({
-      ...row,
-      existing: row.registro !== null && registros.has(row.registro),
-    }));
-  };
-
-  const clearImport = () => {
-    setImportMap(null);
-    setImportReceipts([]);
-    setImportRows([]);
-    setImportHeaders([]);
-    setPreview([]);
-    setImportFileName('');
-    setShowMapping(false);
-    setShowUnchanged(false);
-  };
-
-  const handleImportFile = (rows: unknown[][], fileName = '') => {
-    setImportFileName(fileName);
-    const index = detectAbonosHeaderRow(rows);
-    const header = rows[index] || [];
-    const map = guessColumnMap(header);
-    setHeaderIndex(index);
-    setImportHeaders(header);
-    setImportRows(rows);
-    setImportMap(map);
-    setPreview(markExisting(buildImportPreview(rows, map, index)));
-    setTab('importar');
-  };
-
-  const applyImport = async () => {
-    if (!importMap) return;
-    const result = applyImportRows(preview, state, importMap);
-    const receiptResult = applyReceiptRows(result.cases, result.receipts, importReceipts);
-    const receiptChanges = receiptResult.updated + receiptResult.added;
-    if (result.updated === 0 && result.created === 0 && receiptChanges === 0) {
-      setNote('No hay cambios para importar.');
-      return;
-    }
-    await persist({
-      ...state,
-      cases: result.cases,
-      receipts: receiptResult.receipts,
-    }, backend);
-    const parts = [
-      importCounts.cambia ? `${importCounts.cambia} actualizados` : '',
-      result.created ? `${result.created} nuevos` : '',
-      receiptResult.updated ? `${receiptResult.updated} pagos con referencia actualizada` : '',
-      receiptResult.added ? `${receiptResult.added} pagos nuevos` : '',
-    ].filter(Boolean);
-    clearImport();
-    setNote(parts.length
-      ? `Importación hecha: ${parts.join(', ')}. Los documentos adjuntos se mantienen.`
-      : 'Importación hecha. Los datos ya estaban al día.');
-    setTab('seguimiento');
-  };
-
   const exportWorkbook = async (rows: AbonoComputed[], withDocs: boolean) => {
     try {
       setError(null);
@@ -1175,30 +1101,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const downloadTemplate = async () => {
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(abonosTemplateRows()), 'Abonos');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_TEMPLATE_INSTRUCTIONS), 'Instrucciones');
-    XLSX.writeFile(workbook, 'Plantilla_abonos.xlsx');
-  };
-
-  const casesByRegistro = new Map(state.cases.map((item) => [item.registro, item]));
-  const importItems = importMap
-    ? preview.map((row, index) => ({
-      row,
-      index,
-      ...summarizeImportRow(row, row.registro !== null ? casesByRegistro.get(row.registro) : undefined, importMap),
-    }))
-    : [];
-  const importCounts = importItems.reduce(
-    (acc, item) => ({ ...acc, [item.kind]: acc[item.kind] + 1 }),
-    { error: 0, nuevo: 0, cambia: 0, igual: 0 } as Record<ImportRowKind, number>,
-  );
-  const importable = importCounts.nuevo + importCounts.cambia;
-  const errorsWithoutArea = importItems.some((item) => item.kind === 'error' && !item.row.area);
-  const mappedColumns = importMap ? Object.values(importMap).filter((value) => value !== null).length : 0;
-  const totalColumns = importMap ? Object.keys(importMap).length : 0;
   const exportRows = exportScope === 'all' ? computed : sorted;
   const exportDocCount = exportRows.reduce((sum, row) => sum + (row.attachments?.length || 0), 0);
   const viewDocCount = sorted.reduce((sum, row) => sum + (row.attachments?.length || 0), 0);
@@ -1235,9 +1137,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">05 Abonos</p>
           <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Abonos</h2>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Entre semana: altas y cambios de estado. Un día a la semana: las tareas de abajo.
-          </p>
         </div>
         <button
           type="button"
@@ -1458,43 +1357,67 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'seguimiento' && (
-        <section className="space-y-4">
-          <div className="grid gap-2 md:grid-cols-4 xl:grid-cols-6">
-            <label className="relative md:col-span-2">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--text-muted)]" />
-              <input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Buscar" className="h-10 w-full rounded-md border border-[var(--border)] bg-white pl-9 pr-3 text-sm" />
-            </label>
-            <FilterMultiSelect values={filters.brand} options={filterOptions.brands.options} includeBlank={filterOptions.brands.hasBlank} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
-            <FilterMultiSelect values={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
-            <FilterMultiSelect values={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
-            <FilterMultiSelect values={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
-            <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options.map((value) => ({ value, label: statusLabel(value) }))} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
-            <FilterMultiSelect values={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" collapseGroups onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
-            <FilterMultiSelect values={filters.amountMode} options={filterOptions.modes.options} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
-            <FilterMultiSelect values={filters.attachments} options={filterOptions.attachments.options} placeholder="Adjuntos" onChange={(attachments) => setFilters({ ...filters, attachments })} />
-            <FilterMultiSelect values={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
+        <section className="space-y-6">
+          <div className="abonos-panel space-y-4 p-5">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="relative min-w-[240px] flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
+                <input
+                  value={filters.search}
+                  onChange={(event) => setFilters({ ...filters, search: event.target.value })}
+                  placeholder="Buscar por concepto, marca, equipo, notas…"
+                  className="abonos-search h-11 w-full pl-10 pr-3 text-sm"
+                />
+              </label>
+              {activeFilterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilters(emptyFilters)}
+                  className="inline-flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
+                >
+                  <X className="h-4 w-4" />
+                  Limpiar filtros ({activeFilterCount})
+                </button>
+              )}
+            </div>
+            <div className="abonos-filters grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              <FilterMultiSelect values={filters.brand} options={filterOptions.brands.options} includeBlank={filterOptions.brands.hasBlank} placeholder="Marca" onChange={(brand) => setFilters({ ...filters, brand })} />
+              <FilterMultiSelect values={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
+              <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options.map((value) => ({ value, label: statusLabel(value) }))} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
+              <FilterMultiSelect values={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" collapseGroups onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
+              <FilterMultiSelect values={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
+              <FilterMultiSelect values={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
+              <FilterMultiSelect values={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
+              <FilterMultiSelect values={filters.amountMode} options={filterOptions.modes.options.map((value) => ({ value, label: value === 'Variable' ? 'Estimado' : value }))} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
+              <FilterMultiSelect values={filters.attachments} options={filterOptions.attachments.options} placeholder="Adjuntos" onChange={(attachments) => setFilters({ ...filters, attachments })} />
+            </div>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-4">
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
-              <p className="text-[11px] text-[var(--text-secondary)]">Abonos</p>
-              <p className="mt-0.5 text-sm font-semibold">{sorted.length}</p>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="abonos-kpi">
+              <p className="abonos-kpi-label">Abonos</p>
+              <p className="abonos-kpi-value">{sorted.length}</p>
+              <p className="abonos-kpi-hint">{activeFilterCount > 0 ? 'con los filtros aplicados' : 'en total'}</p>
             </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
-              <p className="text-[11px] text-[var(--text-secondary)]">Previsto</p>
-              <p className="mt-0.5 text-sm font-semibold tabular-nums">{formatMoney(listTotals.expected)}</p>
+            <div className="abonos-kpi">
+              <p className="abonos-kpi-label">Previsto</p>
+              <p className="abonos-kpi-value">{formatMoney(listTotals.expected)}</p>
+              <p className="abonos-kpi-hint">importe esperado</p>
             </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
-              <p className="text-[11px] text-[var(--text-secondary)]">Cobrado</p>
-              <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--success)]">{formatMoney(listTotals.received)}</p>
+            <div className="abonos-kpi">
+              <p className="abonos-kpi-label">Cobrado</p>
+              <p className="abonos-kpi-value text-[var(--success)]">{formatMoney(listTotals.received)}</p>
+              <div className="abonos-kpi-bar"><span style={{ width: `${listTotals.expected > 0 ? Math.min(100, Math.round((listTotals.received / listTotals.expected) * 100)) : 0}%` }} /></div>
+              <p className="abonos-kpi-hint">{listTotals.expected > 0 ? `${Math.round((listTotals.received / listTotals.expected) * 100)} % de lo previsto` : '—'}</p>
             </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
-              <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
-              <p className="mt-0.5 text-sm font-semibold tabular-nums">{formatMoney(listTotals.pending)}</p>
+            <div className="abonos-kpi abonos-kpi-accent">
+              <p className="abonos-kpi-label">Pendiente</p>
+              <p className="abonos-kpi-value">{formatMoney(listTotals.pending)}</p>
+              <p className="abonos-kpi-hint">por cobrar</p>
             </div>
           </div>
 
-          <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+          <div className="abonos-panel overflow-auto">
             <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: '100%', minWidth: tableWidth }}>
               <colgroup>
                 {columnOrder.map((key) => (
@@ -1502,7 +1425,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 ))}
                 <col style={{ width: actionColWidth }} />
               </colgroup>
-              <thead className="bg-[var(--bg-card)] text-[var(--text-muted)]">
+              <thead className="abonos-thead text-[var(--text-muted)]">
                 <tr>
                   {columnOrder.map((key) => {
                     const col = COLUMN_BY_KEY[key];
@@ -1578,7 +1501,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           event.stopPropagation();
                           void deleteCase(row.id);
                         }}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                        className="abonos-row-action inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
                         aria-label={`Eliminar abono #${row.registro}`}
                         title="Eliminar"
                       >
@@ -1603,197 +1526,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'importar' && (
-        <section className="mx-auto max-w-4xl space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <ol className="flex items-center gap-2 text-sm">
-                {[
-                  { n: 1, label: 'Subir', done: Boolean(importMap) },
-                  { n: 2, label: 'Revisar', done: false, active: Boolean(importMap) },
-                  { n: 3, label: 'Importar', done: false },
-                ].map((step, i) => (
-                  <li key={step.n} className="flex items-center gap-2">
-                    {i > 0 && <ChevronRight className="h-4 w-4 text-[var(--text-muted)]" />}
-                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${step.done ? 'bg-[var(--success-soft)] text-[var(--success)]' : (step.active || (!importMap && step.n === 1)) ? 'bg-[var(--text-primary)] text-white' : 'bg-[var(--bg-soft)] text-[var(--text-muted)]'}`}>
-                      {step.done ? <Check className="h-3.5 w-3.5" /> : step.n}
-                    </span>
-                    <span className={(step.active || (!importMap && step.n === 1)) ? 'font-semibold' : 'text-[var(--text-secondary)]'}>{step.label}</span>
-                  </li>
-                ))}
-              </ol>
-              <button
-                type="button"
-                onClick={downloadTemplate}
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
-              >
-                <Download className="h-4 w-4" />
-                Descargar plantilla
-              </button>
-            </div>
-
-            {!importMap ? (
-              <FileUpload
-                inputId="abonos-import"
-                label="Sube el Excel de abonos"
-                hint="Sirve la plantilla o un Excel exportado desde aquí. Si el registro ya existe, se actualiza; si no, se crea. Los documentos no se tocan."
-                onFileLoaded={(rows, fileName) => handleImportFile(rows, fileName)}
-                onWorkbookLoaded={(sheets) => {
-                  const name = Object.keys(sheets).find((sheet) => sheet.trim().toLocaleLowerCase('es') === 'recepciones');
-                  setImportReceipts(name ? parseReceiptsSheet(sheets[name]) : []);
-                }}
-              />
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center gap-3 rounded-md border border-[var(--border)] px-3 py-2.5 text-sm">
-                  <FileSpreadsheet className="h-5 w-5 shrink-0 text-[var(--success)]" />
-                  <span className="min-w-0 flex-1 truncate">
-                    <span className="font-medium">{importFileName || 'Excel'}</span>
-                    <span className="text-[var(--text-secondary)]">
-                      {' · '}{preview.length} fila{preview.length === 1 ? '' : 's'}
-                      {importReceipts.length ? ` · ${importReceipts.length} cobro${importReceipts.length === 1 ? '' : 's'}` : ''}
-                    </span>
-                  </span>
-                  <button type="button" onClick={clearImport} className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                    Cambiar archivo
-                  </button>
-                </div>
-
-                <div className="flex flex-wrap gap-2 text-sm">
-                  {importCounts.nuevo > 0 && <span className="rounded-md bg-[var(--success-soft)] px-2.5 py-1 font-medium text-[var(--success)]">{importCounts.nuevo} nuevo{importCounts.nuevo === 1 ? '' : 's'}</span>}
-                  {importCounts.cambia > 0 && <span className="rounded-md bg-[var(--accent-soft)] px-2.5 py-1 font-medium text-[var(--accent)]">{importCounts.cambia} se actualiza{importCounts.cambia === 1 ? '' : 'n'}</span>}
-                  {importCounts.igual > 0 && <span className="rounded-md bg-[var(--bg-soft)] px-2.5 py-1 text-[var(--text-secondary)]">{importCounts.igual} sin cambios</span>}
-                  {importCounts.error > 0 && <span className="rounded-md bg-[var(--danger-soft)] px-2.5 py-1 font-medium text-[var(--danger)]">{importCounts.error} con errores</span>}
-                </div>
-
-                {importCounts.error > 0 && (
-                  <div className="rounded-md border border-red-200">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-200 bg-[var(--danger-soft)] px-3 py-2">
-                      <p className="flex items-center gap-1.5 text-sm font-semibold text-[var(--danger)]">
-                        <AlertTriangle className="h-4 w-4" />
-                        No se importan. Corrígelos en el Excel y vuelve a subirlo.
-                      </p>
-                      {errorsWithoutArea && (
-                        <div className="flex items-center gap-1.5">
-                          <select value={bulkArea} onChange={(event) => setBulkArea(event.target.value)} className="h-8 rounded-md border border-[var(--border)] bg-white px-2 text-xs">
-                            {state.catalogs.areas.map((area) => <option key={area} value={area}>{area}</option>)}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => setPreview(preview.map((row) => {
-                              const next = row.area ? row : { ...row, area: bulkArea };
-                              return { ...next, error: importPreviewError(next) };
-                            }))}
-                            className="h-8 rounded-md border border-[var(--border)] bg-white px-2.5 text-xs font-medium"
-                          >
-                            Poner área a las que no tienen
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <ul className="divide-y divide-[var(--border)] text-sm">
-                      {importItems.filter((item) => item.kind === 'error').map(({ row }) => (
-                        <li key={row.key} className="flex items-start justify-between gap-3 px-3 py-2">
-                          <span className="min-w-0">
-                            <span className="font-mono text-xs text-[var(--text-muted)]">{row.registro ? `#${row.registro}` : 'Nueva'}</span>{' '}
-                            {[row.brand, row.teamMotivo].filter(Boolean).join(' · ') || 'Sin marca'}
-                            {row.comment ? <span className="text-[var(--text-secondary)]"> · {row.comment}</span> : null}
-                          </span>
-                          <span className="shrink-0 text-right text-[var(--danger)]">{row.error}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {(importCounts.nuevo > 0 || importCounts.cambia > 0) && (
-                  <ul className="max-h-[420px] divide-y divide-[var(--border)] overflow-auto rounded-md border border-[var(--border)] text-sm">
-                    {importItems.filter((item) => item.kind === 'nuevo').map(({ row }) => (
-                      <li key={row.key} className="flex items-start justify-between gap-3 px-3 py-2">
-                        <span className="min-w-0">
-                          <span className="mr-1.5 rounded bg-[var(--success-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--success)]">Nuevo</span>
-                          {[row.brand, row.teamMotivo].filter(Boolean).join(' · ')}
-                          {row.comment ? <span className="text-[var(--text-secondary)]"> · {row.comment}</span> : null}
-                        </span>
-                        <span className="shrink-0 font-mono text-xs">{formatMoney(row.expectedAmount)}</span>
-                      </li>
-                    ))}
-                    {importItems.filter((item) => item.kind === 'cambia').map(({ row, changes }) => (
-                      <li key={row.key} className="px-3 py-2">
-                        <p>
-                          <span className="font-mono text-xs text-[var(--text-muted)]">#{row.registro}</span>{' '}
-                          {[row.brand, row.teamMotivo].filter(Boolean).join(' · ')}
-                        </p>
-                        <ul className="mt-0.5 space-y-0.5 text-xs text-[var(--text-secondary)]">
-                          {changes.map((change) => <li key={change}>{change}</li>)}
-                        </ul>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {importCounts.igual > 0 && (
-                  <div>
-                    <button type="button" onClick={() => setShowUnchanged(!showUnchanged)} className="inline-flex items-center gap-1 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                      {showUnchanged ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                      Ver los {importCounts.igual} sin cambios
-                    </button>
-                    {showUnchanged && (
-                      <p className="mt-1 text-xs text-[var(--text-muted)]">
-                        {importItems.filter((item) => item.kind === 'igual').map(({ row }) => `#${row.registro}`).join(', ')}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div>
-                  <button type="button" onClick={() => setShowMapping(!showMapping)} className="inline-flex items-center gap-1 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                    {showMapping ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                    Columnas reconocidas {mappedColumns}/{totalColumns} · Ajustar
-                  </button>
-                  {showMapping && importMap && (
-                    <div className="mt-2 grid gap-2 rounded-md bg-[var(--bg-soft)] p-3 md:grid-cols-3">
-                      {(Object.keys(importMap) as Array<keyof typeof importMap>).map((key) => (
-                        <label key={key} className="space-y-1 text-xs">
-                          <span className="text-[var(--text-secondary)]">{IMPORT_COLUMN_LABELS[key]}</span>
-                          <select
-                            value={importMap[key] ?? ''}
-                            onChange={(event) => {
-                              const next = { ...importMap, [key]: event.target.value === '' ? null : Number(event.target.value) };
-                              setImportMap(next);
-                              setPreview(markExisting(buildImportPreview(importRows, next, headerIndex)));
-                            }}
-                            className="h-8 w-full rounded-md border border-[var(--border)] bg-white px-2"
-                          >
-                            <option value="">No usar</option>
-                            {importHeaders.map((header, index) => (
-                              <option key={`${String(header)}-${index}`} value={index}>{String(header || `Columna ${index + 1}`)}</option>
-                            ))}
-                          </select>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[var(--border)] pt-4">
-                  <button type="button" onClick={clearImport} className="h-10 rounded-md px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]">
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={applyImport}
-                    disabled={importable === 0 && importReceipts.length === 0}
-                    className="h-10 rounded-md bg-[var(--text-primary)] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {importable > 0
-                      ? `Importar ${importable} abono${importable === 1 ? '' : 's'}`
-                      : importReceipts.length ? 'Importar cobros' : 'Nada que importar'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
+        <AbonosImportPanel
+          state={state}
+          backend={backend}
+          people={peopleOptions}
+          onApply={async (next, message) => {
+            await persist(next, backend);
+            setNote(message);
+            setTab('seguimiento');
+          }}
+        />
       )}
 
       {tab === 'exportar' && (
@@ -1867,7 +1609,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             aria-labelledby="abonos-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-3">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-[var(--text-muted)]">
                   {editing ? `Abono #${editing.registro}` : 'Nuevo abono'}
@@ -1878,7 +1620,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 </p>
                 {currentComputed && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <AlertChip alert={abonoAlert(currentComputed)} />
                     <StatusPill row={{ ...currentComputed, status: (form.status || currentComputed.status) as AbonoComputed['status'] }} />
                   </div>
                 )}
@@ -1889,8 +1630,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto">
-              <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-                <section className="space-y-4">
+              <div className="grid gap-5 px-6 py-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                <section className="space-y-3">
                   <label className="block space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Concepto</span>
                     <input
@@ -1957,75 +1698,27 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                         {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
                       </select>
                     </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por</span>
+                      <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                        <option value="">—</option>
+                        {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
+                      </select>
+                    </label>
                   </div>
                   <label className="block space-y-1">
                     <span className="text-xs font-medium text-[var(--text-secondary)]">Notas</span>
                     <textarea
                       value={form.notes || ''}
                       onChange={(event) => setForm({ ...form, notes: event.target.value })}
-                      rows={4}
+                      rows={3}
                       placeholder="Detalle, condición del importe, con quién lo hablaste…"
                       className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
                     />
                   </label>
-                  <div className="space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
-                    <p className="text-[11px] text-[var(--text-muted)]">Imagen, PDF o Excel. Hasta {MAX_EVIDENCE}. Pega una captura con Ctrl+V.</p>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {(form.attachments || []).map((item) => (
-                        <div key={item.id} className="relative">
-                          <button
-                            type="button"
-                            onClick={() => openAttachment(item, setViewerImage)}
-                            className="flex h-20 w-28 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
-                            title={item.name}
-                          >
-                            {isImageAttachment(item) ? (
-                              <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
-                            ) : (
-                              <>
-                                <FileText className="h-5 w-5 text-[var(--text-muted)]" />
-                                <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
-                              </>
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeEvidence(item.id)}
-                            className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
-                            aria-label="Quitar documento"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                      {(form.attachments || []).length < MAX_EVIDENCE && (
-                        <button
-                          type="button"
-                          onClick={() => evidenceInputRef.current?.click()}
-                          className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
-                        >
-                          <ImagePlus className="h-4 w-4" />
-                          <span className="text-[11px] font-medium">Añadir</span>
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      ref={evidenceInputRef}
-                      type="file"
-                      accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
-                      multiple
-                      className="hidden"
-                      onChange={(event) => {
-                        const files = Array.from(event.target.files || []);
-                        event.target.value = '';
-                        void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
-                      }}
-                    />
-                  </div>
                 </section>
 
-                <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--bg-soft)] p-4 lg:self-start">
+                <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--bg-soft)] p-4 lg:self-start">
                   <div className="grid grid-cols-3 gap-2 rounded-lg bg-white p-3">
                     <div>
                       <p className="text-[11px] text-[var(--text-secondary)]">{form.amountMode === 'Variable' ? 'Previsto (est.)' : 'Previsto'}</p>
@@ -2122,6 +1815,61 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   ) : (
                     <p className="border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">Los cobros se registran una vez guardado el abono.</p>
                   )}
+                  <div className="space-y-1 border-t border-[var(--border)] pt-3">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
+                    <p className="text-[11px] text-[var(--text-muted)]">Imagen, PDF o Excel. Pega una captura con Ctrl+V.</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {(form.attachments || []).map((item) => (
+                        <div key={item.id} className="relative">
+                          <button
+                            type="button"
+                            onClick={() => openAttachment(item, setViewerImage)}
+                            className="flex h-16 w-24 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
+                            title={item.name}
+                          >
+                            {isImageAttachment(item) ? (
+                              <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <>
+                                <FileText className="h-5 w-5 text-[var(--text-muted)]" />
+                                <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeEvidence(item.id)}
+                            className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
+                            aria-label="Quitar documento"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {(form.attachments || []).length < MAX_EVIDENCE && (
+                        <button
+                          type="button"
+                          onClick={() => evidenceInputRef.current?.click()}
+                          className="flex h-16 w-24 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
+                        >
+                          <ImagePlus className="h-4 w-4" />
+                          <span className="text-[11px] font-medium">Añadir</span>
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      ref={evidenceInputRef}
+                      type="file"
+                      accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
+                      multiple
+                      className="hidden"
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files || []);
+                        event.target.value = '';
+                        void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
+                      }}
+                    />
+                  </div>
                 </section>
               </div>
             </div>
@@ -2267,7 +2015,7 @@ function FilterMultiSelect({
             setOpenGroups(groups.filter((group) => items.some((item) => item.group === group && selected.has(item.value))));
           }
         }}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-left text-sm"
+        className={`abonos-select flex h-11 w-full items-center justify-between gap-2 px-3.5 text-left text-sm ${values.length ? 'is-set' : ''}`}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -2366,30 +2114,30 @@ const STATUS_TONES: Record<string, string> = {
 };
 
 function StatusPill({ row }: { row: AbonoComputed }) {
-  if (!row.status) return <span className="text-xs text-[var(--text-muted)]">—</span>;
+  if (!row.status) return <span className="text-sm text-[var(--text-muted)]">—</span>;
   const overdue = row.overdueDays !== null && !isClosedStatus(row.status);
-  const extra = row.status === 'Exceso' && row.excessAmount > 0.009
-    ? ` +${formatMoney(row.excessAmount)}`
+  const detail = row.status === 'Exceso' && row.excessAmount > 0.009
+    ? `Exceso de ${formatMoney(row.excessAmount)}`
     : row.status === 'Liquidado parcialmente' && row.pending > 0.009
-      ? ` · faltan ${formatMoney(row.pending)}`
+      ? `Faltan ${formatMoney(row.pending)}`
       : '';
   const mismatch = row.status === 'Pago comunicado'
     && row.communicatedAmount !== null
     && Math.abs(row.communicatedAmount - row.pending) > 0.009;
   if (overdue) {
-    const title = `Vencido hace ${row.overdueDays} días · ${statusLabel(row.status)}${extra}`;
     return (
-      <span className="abonos-chip abonos-chip-overdue" title={title}>
+      <span className="abonos-chip abonos-chip-overdue" title={`Vencido hace ${row.overdueDays} días · ${statusLabel(row.status)}${detail ? ` · ${detail}` : ''}`}>
         <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">Vencido · {statusLabel(row.status)}{extra}</span>
+        Vencido · {row.overdueDays} d
       </span>
     );
   }
+  const label = row.status === 'Exceso' && row.excessAmount > 0.009 ? `Exceso +${formatMoney(row.excessAmount)}` : statusLabel(row.status);
   return (
     <span className="inline-flex max-w-full items-center gap-1.5">
-      <span className={`abonos-chip ${STATUS_TONES[row.status] || 'abonos-chip-neutral'}`} title={`${statusLabel(row.status)}${extra}`}>
+      <span className={`abonos-chip ${STATUS_TONES[row.status] || 'abonos-chip-neutral'}`} title={detail || statusLabel(row.status)}>
         <span className="abonos-chip-dot" />
-        <span className="truncate">{statusLabel(row.status)}{extra}</span>
+        {label}
       </span>
       {mismatch && <span className="abonos-chip abonos-chip-partial" title="El importe comunicado no cuadra con lo pendiente">No cuadra</span>}
     </span>

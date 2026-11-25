@@ -89,7 +89,7 @@ const HEADER_ALIASES: Record<keyof ImportColumnMap, string[]> = {
   pay2Amount: ['importe 2º pago', 'importe 2o pago', 'importe segundo pago'],
   status: ['estado'],
   nextReview: ['próxima revisión', 'proxima revisión', 'próxima revision', 'proxima revision'],
-  comment: ['comentario', 'comentarios'],
+  comment: ['concepto', 'comentario', 'comentarios'],
   notes: ['notas'],
   amountCondition: ['condición', 'condicion'],
   origin: ['origen'],
@@ -203,10 +203,11 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         teamMotivo,
         type,
         expectedAmount,
-        estimated,
+        // Blank Cálculo counts as Fijo and a blank Responsable is filled in when importing.
+        estimated: estimated ?? false,
         dueDate,
         addedBy: shortPersonName(addedBy),
-        responsible: shortPersonName(responsible),
+        responsible: shortPersonName(responsible) || 'Cristóbal',
         source,
         informedBy,
         // A blank Estado keeps the current one on update and becomes Pendiente on a new row.
