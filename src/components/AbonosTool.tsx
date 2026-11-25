@@ -96,23 +96,20 @@ type SortKey =
 
 const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
 
+/** Only what is needed at a glance; the rest lives in the abono form. Concepto takes the spare width. */
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
-  { key: 'dueDate', label: 'Cuándo', width: 104 },
-  { key: 'brand', label: 'Marca', width: 96 },
-  { key: 'concept', label: 'Concepto', width: 220 },
-  { key: 'pending', label: 'Pendiente', width: 118 },
-  { key: 'status', label: 'Estado', width: 150 },
-  { key: 'expectedAmount', label: 'Previsto', width: 118 },
-  { key: 'receivedTotal', label: 'Cobrado', width: 118 },
-  { key: 'type', label: 'Tipo', width: 112 },
-  { key: 'area', label: 'Área', width: 104 },
-  { key: 'teamMotivo', label: 'Equipo', width: 140 },
-  { key: 'amountMode', label: 'Cálculo', width: 108 },
-  { key: 'attachments', label: 'Adjuntos', width: 112 },
-  { key: 'responsible', label: 'Responsable', width: 136 },
+  { key: 'brand', label: 'Marca', width: 110 },
+  { key: 'type', label: 'Tipo', width: 130 },
+  { key: 'concept', label: 'Concepto', width: 280 },
+  { key: 'dueDate', label: 'Fecha prevista', width: 140 },
+  { key: 'amountMode', label: 'Cálculo', width: 110 },
+  { key: 'expectedAmount', label: 'Previsto', width: 140 },
+  { key: 'receivedTotal', label: 'Cobrado', width: 140 },
+  { key: 'pending', label: 'Pendiente', width: 140 },
+  { key: 'status', label: 'Estado', width: 220 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v13';
+const COL_STORAGE = 'ts-abonos-cols-v15';
 const BLANK = '__blank__';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
@@ -216,7 +213,7 @@ function renderAbonoCell(row: AbonoComputed, key: SortKey, alert: AbonoAlert | n
     case 'expectedAmount':
       return formatMoney(row.expectedAmount);
     case 'amountMode':
-      return row.amountModeResolved;
+      return row.amountModeResolved === 'Variable' ? 'Estimado' : row.amountModeResolved;
     case 'receivedTotal':
       return formatMoney(row.receivedTotal);
     case 'pending':
@@ -819,51 +816,27 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const filterOptions = useMemo(() => {
     const today = todayIso();
     const forKey = (except: keyof AbonoFilters) => computed.filter((row) => rowMatchesFilters(row, filters, today, except));
-    const brands = uniquePresent(forKey('brand').map((row) => row.brand));
-    const types = uniquePresent(forKey('type').map((row) => row.type));
-    const areas = uniquePresent(forKey('area').map((row) => row.area));
-    const teams = uniquePresent(forKey('teamMotivo').map((row) => row.teamMotivo));
-    const statuses = uniquePresent(forKey('status').map((row) => row.status));
-    const responsibles = uniquePresent(forKey('responsible').map((row) => shortPersonName(row.responsible)));
-    const modes = uniquePresent(forKey('amountMode').map((row) => row.amountModeResolved));
-    const origins = uniquePresent(forKey('origin').map((row) => row.origin));
-    const attachments = uniquePresent(forKey('attachments').map((row) => ((row.attachments || []).length > 0 ? 'Sí' : 'No')));
-    const dateRows = forKey('duePeriod');
-    const { periods, datesBlank } = duePeriodOptions(dateRows, today);
+    // Options come from the rows the other filters leave, plus whatever is already selected,
+    // so combining filters never drops a selection.
+    const keep = (present: { options: string[]; hasBlank: boolean }, selected: string[]) => ({
+      options: Array.from(new Set([...present.options, ...selected.filter((value) => value !== BLANK)])),
+      hasBlank: present.hasBlank || selected.includes(BLANK),
+    });
+    const brands = keep(uniquePresent(forKey('brand').map((row) => row.brand)), filters.brand);
+    const types = keep(uniquePresent(forKey('type').map((row) => row.type)), filters.type);
+    const areas = keep(uniquePresent(forKey('area').map((row) => row.area)), filters.area);
+    const teams = keep(uniquePresent(forKey('teamMotivo').map((row) => row.teamMotivo)), filters.teamMotivo);
+    const statuses = keep(uniquePresent(forKey('status').map((row) => row.status)), filters.status);
+    const responsibles = keep(uniquePresent(forKey('responsible').map((row) => shortPersonName(row.responsible))), filters.responsible);
+    const modes = keep(uniquePresent(forKey('amountMode').map((row) => row.amountModeResolved)), filters.amountMode);
+    const origins = keep(uniquePresent(forKey('origin').map((row) => row.origin)), filters.origin);
+    const attachments = keep(uniquePresent(forKey('attachments').map((row) => ((row.attachments || []).length > 0 ? 'Sí' : 'No'))), filters.attachments);
+    // Date options come from every abono so a chosen year or month stays listed.
+    const { periods, datesBlank } = duePeriodOptions(computed, today);
     const quickRows = forKey('quick');
     const quickCounts = Object.fromEntries(QUICK_FILTERS.map((item) => [item.id, quickRows.filter((row) => matchesQuick(row, item.id, today)).length])) as Record<Exclude<QuickFilter, ''>, number>;
     return { brands, types, areas, teams, statuses, responsibles, modes, origins, attachments, periods, datesBlank, quickCounts };
   }, [computed, filters]);
-
-  useEffect(() => {
-    setFilters((current) => {
-      const next = { ...current };
-      let changed = false;
-      const prune = (key: Exclude<keyof AbonoFilters, 'search' | 'duePeriod' | 'quick'>, present: { options: string[]; hasBlank?: boolean }) => {
-        const kept = current[key].filter((value) => (value === BLANK ? Boolean(present.hasBlank) : present.options.includes(value)));
-        if (kept.length !== current[key].length) {
-          next[key] = kept;
-          changed = true;
-        }
-      };
-      prune('brand', filterOptions.brands);
-      prune('type', filterOptions.types);
-      prune('area', filterOptions.areas);
-      prune('teamMotivo', filterOptions.teams);
-      prune('responsible', filterOptions.responsibles);
-      prune('status', filterOptions.statuses);
-      prune('amountMode', filterOptions.modes);
-      prune('origin', filterOptions.origins);
-      prune('attachments', { options: filterOptions.attachments.options, hasBlank: false });
-      const dueValues = filterOptions.periods.map((period) => period.value);
-      const duePeriod = current.duePeriod.filter((value) => (value === BLANK ? filterOptions.datesBlank : dueValues.includes(value)));
-      if (duePeriod.length !== current.duePeriod.length) {
-        next.duePeriod = duePeriod;
-        changed = true;
-      }
-      return changed ? next : current;
-    });
-  }, [filterOptions]);
 
   if (!state) {
     return (
@@ -1521,31 +1494,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterMultiSelect values={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {QUICK_FILTERS.map((item) => {
-              const active = filters.quick === item.id;
-              const count = filterOptions.quickCounts[item.id];
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setFilters({ ...filters, quick: active ? '' : item.id })}
-                  className={`abonos-quick abonos-quick-${item.tone} ${active ? 'is-active' : ''}`}
-                  aria-pressed={active}
-                >
-                  <span className="abonos-quick-dot" />
-                  {item.label}
-                  <span className="abonos-quick-count">{count}</span>
-                </button>
-              );
-            })}
-            {filters.quick && (
-              <button type="button" onClick={() => setFilters({ ...filters, quick: '' })} className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                Quitar filtro
-              </button>
-            )}
-          </div>
-
           <div className="grid gap-2 sm:grid-cols-4">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
               <p className="text-[11px] text-[var(--text-secondary)]">Abonos</p>
@@ -1566,10 +1514,10 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
           </div>
 
           <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
-            <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: tableWidth }}>
+            <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: '100%', minWidth: tableWidth }}>
               <colgroup>
                 {columnOrder.map((key) => (
-                  <col key={key} style={{ width: columnWidths[key] }} />
+                  <col key={key} style={key === 'concept' ? undefined : { width: columnWidths[key] }} />
                 ))}
                 <col style={{ width: actionColWidth }} />
               </colgroup>
@@ -2316,7 +2264,7 @@ function FilterMultiSelect({
     if (picked.length === grouped.length) compact.push(group);
     else compact.push(...picked.map((item) => `${item.label} ${group}`));
   });
-  const label = values.length === 0 ? placeholder : allSelected ? 'Todos' : compact.join(', ');
+  const label = values.length === 0 ? placeholder : compact.join(', ') || values.map((value) => (value === BLANK ? '—' : value)).join(', ');
   const toggle = (value: string) => {
     onChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   };
@@ -2438,15 +2386,31 @@ const STATUS_TONES: Record<string, string> = {
 
 function StatusPill({ row }: { row: AbonoComputed }) {
   if (!row.status) return <span className="text-xs text-[var(--text-muted)]">—</span>;
+  const overdue = row.overdueDays !== null && !isClosedStatus(row.status);
   const extra = row.status === 'Exceso' && row.excessAmount > 0.009
     ? ` +${formatMoney(row.excessAmount)}`
     : row.status === 'Liquidado parcialmente' && row.pending > 0.009
       ? ` · faltan ${formatMoney(row.pending)}`
       : '';
+  const mismatch = row.status === 'Pago comunicado'
+    && row.communicatedAmount !== null
+    && Math.abs(row.communicatedAmount - row.pending) > 0.009;
+  if (overdue) {
+    const title = `Vencido hace ${row.overdueDays} días · ${statusLabel(row.status)}${extra}`;
+    return (
+      <span className="abonos-chip abonos-chip-overdue" title={title}>
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">Vencido · {statusLabel(row.status)}{extra}</span>
+      </span>
+    );
+  }
   return (
-    <span className={`abonos-chip ${STATUS_TONES[row.status] || 'abonos-chip-neutral'}`} title={`${statusLabel(row.status)}${extra}`}>
-      <span className="abonos-chip-dot" />
-      <span className="truncate">{statusLabel(row.status)}{extra}</span>
+    <span className="inline-flex max-w-full items-center gap-1.5">
+      <span className={`abonos-chip ${STATUS_TONES[row.status] || 'abonos-chip-neutral'}`} title={`${statusLabel(row.status)}${extra}`}>
+        <span className="abonos-chip-dot" />
+        <span className="truncate">{statusLabel(row.status)}{extra}</span>
+      </span>
+      {mismatch && <span className="abonos-chip abonos-chip-partial" title="El importe comunicado no cuadra con lo pendiente">No cuadra</span>}
     </span>
   );
 }
