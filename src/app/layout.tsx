@@ -18,13 +18,13 @@ const outfit = Outfit({
 export const metadata: Metadata = {
   title: 'TS Operaciones Herramientas',
   description: 'Herramientas operativas de Teamsports',
-  manifest: '/site.webmanifest',
+  manifest: '/site.webmanifest?v=2',
   icons: {
     icon: [
-      { url: '/favicon.ico', sizes: 'any' },
-      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico?v=2', sizes: 'any' },
+      { url: '/favicon.svg?v=2', type: 'image/svg+xml' },
     ],
-    apple: '/favicon-180.png',
+    apple: '/favicon-180.png?v=2',
   },
 };
 

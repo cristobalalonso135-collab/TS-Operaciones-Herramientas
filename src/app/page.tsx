@@ -774,12 +774,12 @@ export default function Home() {
     const visibleHubs = hubs.filter((hub) => !user || canUseTool(user.role, hub.id));
 
     return (
-      <div className="mx-auto max-w-5xl">
-        <h2 className="tools-rise font-display text-3xl font-semibold tracking-tight text-[var(--text-primary)]">
+      <div className="mx-auto max-w-6xl">
+        <h2 className="tools-rise font-display text-4xl font-semibold tracking-tight text-[var(--text-primary)]">
           Herramientas
         </h2>
 
-        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visibleHubs.map((hub) => (
             <button
               key={hub.id}
@@ -789,13 +789,13 @@ export default function Home() {
                 if (hub.id === 'tracking') setTrackingView('ytd');
                 setView(hub.id);
               }}
-              className="tools-rise group flex w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-white px-4 py-4 text-left transition duration-150 hover:border-[var(--border-strong)] hover:shadow-sm"
+              className="tools-rise group flex min-h-[104px] w-full items-center gap-5 rounded-2xl border border-[var(--border)] bg-white py-6 pl-6 pr-10 text-left transition duration-150 hover:border-[var(--border-strong)] hover:shadow-md"
             >
-              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hub.tone}`}>
-                <span className="font-display text-sm font-semibold leading-none">{hub.number}</span>
+              <span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-xl ${hub.tone}`}>
+                <span className="font-display text-lg font-semibold leading-none">{hub.number}</span>
               </span>
-              <span className="min-w-0 flex-1 font-display text-base font-semibold tracking-tight">{hub.title}</span>
-              <span className="text-[var(--text-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--text-primary)]">→</span>
+              <span className="min-w-0 flex-1 font-display text-xl font-semibold tracking-tight">{hub.title}</span>
+              <span className="text-xl text-[var(--text-muted)] transition group-hover:translate-x-1 group-hover:text-[var(--text-primary)]">→</span>
             </button>
           ))}
         </section>

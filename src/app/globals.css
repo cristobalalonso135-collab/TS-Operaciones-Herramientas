@@ -195,19 +195,21 @@ textarea {
 
 .abonos-table th,
 .abonos-table td {
-  text-align: center;
+  text-align: left;
   vertical-align: middle;
   white-space: normal;
   overflow-wrap: anywhere;
-  word-break: break-word;
+  word-break: normal;
 }
 
 .abonos-th-label {
   display: block;
   min-width: 0;
-  text-align: center;
+  text-align: left;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   line-height: 1.2;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -217,7 +219,7 @@ textarea {
 .abonos-cell {
   display: block;
   min-width: 0;
-  text-align: center;
+  text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -233,7 +235,29 @@ textarea {
 }
 
 .abonos-table tbody tr:hover td {
-  background: var(--bg-soft);
+  background: #fafafa;
+}
+
+.abonos-td-money .abonos-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.abonos-th-money .abonos-th-label {
+  text-align: right;
+}
+
+.abonos-th [draggable] {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.abonos-th:hover [draggable] {
+  opacity: 1;
+}
+
+.abonos-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .abonos-col-resizer {
@@ -301,8 +325,6 @@ textarea {
 .abonos-chip-alert-danger { background: #c62828; color: #ffffff; }
 .abonos-chip-alert-warning { background: #ffedd5; color: #9a3412; box-shadow: inset 0 0 0 1px #fdba74; }
 
-.abonos-row-danger td:first-child { box-shadow: inset 4px 0 0 #c62828; }
-.abonos-row-warning td:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
 
 /* Abonos: quick filters */
 .abonos-quick {

@@ -97,7 +97,6 @@ type SortKey =
 const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
-  { key: 'alert', label: 'Aviso', width: 172 },
   { key: 'dueDate', label: 'Cuándo', width: 104 },
   { key: 'brand', label: 'Marca', width: 96 },
   { key: 'concept', label: 'Concepto', width: 220 },
@@ -108,12 +107,12 @@ const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
   { key: 'type', label: 'Tipo', width: 112 },
   { key: 'area', label: 'Área', width: 104 },
   { key: 'teamMotivo', label: 'Equipo', width: 140 },
-  { key: 'amountMode', label: 'Cálculo', width: 90 },
-  { key: 'attachments', label: 'Adjuntos', width: 80 },
-  { key: 'responsible', label: 'Responsable', width: 108 },
+  { key: 'amountMode', label: 'Cálculo', width: 108 },
+  { key: 'attachments', label: 'Adjuntos', width: 112 },
+  { key: 'responsible', label: 'Responsable', width: 136 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v11';
+const COL_STORAGE = 'ts-abonos-cols-v13';
 const BLANK = '__blank__';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
@@ -1554,19 +1553,19 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
               <p className="text-[11px] text-[var(--text-secondary)]">Previsto</p>
-              <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(listTotals.expected)}</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums">{formatMoney(listTotals.expected)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
               <p className="text-[11px] text-[var(--text-secondary)]">Cobrado</p>
-              <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(listTotals.received)}</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--success)]">{formatMoney(listTotals.received)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
               <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
-              <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(listTotals.pending)}</p>
+              <p className="mt-0.5 text-sm font-semibold tabular-nums">{formatMoney(listTotals.pending)}</p>
             </div>
           </div>
 
-          <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+          <div className="overflow-auto rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
             <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: tableWidth }}>
               <colgroup>
                 {columnOrder.map((key) => (
@@ -1574,14 +1573,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 ))}
                 <col style={{ width: actionColWidth }} />
               </colgroup>
-              <thead className="bg-[var(--bg-soft)] text-[var(--text-secondary)]">
+              <thead className="bg-[var(--bg-card)] text-[var(--text-muted)]">
                 <tr>
                   {columnOrder.map((key) => {
                     const col = COLUMN_BY_KEY[key];
                     return (
                       <th
                         key={key}
-                        className="abonos-th border-b border-[var(--border)] px-1.5 py-1.5"
+                        className={`abonos-th border-b border-[var(--border)] px-3 py-2.5 ${MONEY_COLS.has(key) ? 'abonos-th-money' : ''}`}
                         onDragOver={(event) => {
                           event.preventDefault();
                           event.dataTransfer.dropEffect = 'move';
@@ -1593,7 +1592,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                           if (from) moveColumn(from, key);
                         }}
                       >
-                        <div className="flex min-w-0 items-start justify-center gap-0.5 pr-1.5">
+                        <div className={`flex min-w-0 items-center gap-1 pr-1.5 ${MONEY_COLS.has(key) ? 'justify-end' : 'justify-start'}`}>
                           <span
                             draggable
                             onDragStart={(event) => {
@@ -1624,23 +1623,22 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       </th>
                     );
                   })}
-                  <th className="abonos-th border-b border-[var(--border)] px-1 py-1.5">
+                  <th className="abonos-th border-b border-[var(--border)] px-1 py-2.5">
                     <span className="sr-only">Eliminar</span>
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((row) => {
-                  const alert = abonoAlert(row, todayValue);
                   return (
-                  <tr key={row.id} onClick={() => openEdit(row)} className={`cursor-pointer ${alert?.level === 'danger' ? 'abonos-row-danger' : alert?.level === 'warning' ? 'abonos-row-warning' : ''}`} title={row.notes.trim() || undefined}>
+                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer" title={row.notes.trim() || undefined}>
                     {columnOrder.map((key) => (
                       <td
                         key={key}
-                        className={`border-b border-[var(--border)] px-1.5 py-1.5 ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''} ${key === 'pending' && row.pending > 0.009 ? 'font-semibold' : ''}`}
+                        className={`border-b border-[var(--border)] px-3 py-3 ${MONEY_COLS.has(key) ? 'abonos-td-money' : ''} ${key === 'pending' && row.pending > 0.009 ? 'font-semibold' : ''}`}
                       >
                         <div className={`abonos-cell ${key === 'concept' ? 'abonos-cell-clip' : ''}`}>
-                          {renderAbonoCell(row, key, alert)}
+                          {renderAbonoCell(row, key, null)}
                         </div>
                       </td>
                     ))}
@@ -2102,15 +2100,15 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                   <div className="grid grid-cols-3 gap-2 rounded-lg bg-white p-3">
                     <div>
                       <p className="text-[11px] text-[var(--text-secondary)]">{form.amountMode === 'Variable' ? 'Previsto (est.)' : 'Previsto'}</p>
-                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(form.expectedAmount ?? currentComputed?.expectedAmount ?? null)}</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums">{formatMoney(form.expectedAmount ?? currentComputed?.expectedAmount ?? null)}</p>
                     </div>
                     <div>
                       <p className="text-[11px] text-[var(--text-secondary)]">Cobrado</p>
-                      <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
                     </div>
                     <div>
                       <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
-                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
+                      <p className="mt-0.5 text-sm font-semibold tabular-nums">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
                     </div>
                   </div>
 
