@@ -796,25 +796,24 @@ export default function MejorasTool({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="abonos-shell space-y-4">
-      <WorkspaceChrome onBack={onBack} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
-
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">06 Mejoras IT</p>
-          <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Mejoras</h2>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Lo que hay que pedir a IT en ERP o Web. Cada ficha tiene que decir exactamente de qué va.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={openNew}
-          className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-        >
-          <Plus className="h-4 w-4" />
-          Nueva mejora
-        </button>
-      </div>
+      <WorkspaceChrome
+        onBack={onBack}
+        number="06"
+        title="Mejoras IT"
+        tabs={[...TABS]}
+        active={tab}
+        onSelect={(id) => setTab(id as TabId)}
+        actions={(
+          <button
+            type="button"
+            onClick={openNew}
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--text-primary)] px-4 text-sm font-semibold text-white hover:bg-black"
+          >
+            <Plus className="h-4 w-4" />
+            Nueva mejora
+          </button>
+        )}
+      />
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>

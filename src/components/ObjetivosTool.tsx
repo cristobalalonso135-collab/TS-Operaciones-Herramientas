@@ -207,20 +207,15 @@ export default function ObjetivosTool({ onBack }: ObjetivosToolProps) {
     <div className="space-y-5">
       <WorkspaceChrome
         onBack={onBack}
+        number="09"
+        title="Objetivos FY 26/27"
         tabs={TABS}
         active={personaId}
         onSelect={(id) => setPersonaId(id as PersonaId)}
       />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">09 Objetivos</p>
-          <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Objetivos FY 26/27</h2>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
-            Los tuyos vigentes son los del Excel en español. Los de Target Setting son los antiguos.
-            Blanca es tu equipo: los suyos actuales siguen el Target Setting.
-          </p>
-        </div>
+        <div />
         {personaId === 'cristobal' && (
           <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--bg-soft)] p-1">
             <button

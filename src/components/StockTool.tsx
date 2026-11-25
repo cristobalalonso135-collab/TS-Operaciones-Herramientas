@@ -1,6 +1,7 @@
 'use client';
 
-import { ArrowLeft, Camera, FileSpreadsheet, TrendingUp } from 'lucide-react';
+import { ToolTitle } from '@/components/WorkspaceChrome';
+import { Camera, FileSpreadsheet, TrendingUp } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import FileUpload from '@/components/FileUpload';
 import {
@@ -287,14 +288,7 @@ export default function StockTool({ onBack }: StockToolProps) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Herramientas
-        </button>
+        <ToolTitle onBack={onBack} number="04" title="Stock Equipaciones" />
         {lines.length > 0 && (
           <div className="flex rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-1">
             {([
@@ -318,9 +312,7 @@ export default function StockTool({ onBack }: StockToolProps) {
       </div>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Almacén</p>
-        <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Stock Equipaciones</h2>
-        <p className="mt-1 max-w-2xl text-sm text-[var(--text-secondary)]">
+        <p className="max-w-2xl text-sm text-[var(--text-secondary)]">
           Foto semanal: coste y cobertura. Stock.csv y, si puedes, Ventas.csv para ver días de stock al ritmo de venta.
         </p>
       </section>

@@ -714,9 +714,20 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
       <div className="space-y-4">
         <WorkspaceChrome
           onBack={onBack}
+          number="08"
+          title="Checklists"
           tabs={[{ id: 'listas', label: 'Listas' }]}
           active="listas"
           onSelect={() => undefined}
+          actions={(
+            <button
+              type="button"
+              onClick={createBoard}
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--text-primary)] px-4 text-sm font-semibold text-white hover:bg-black"
+            >
+              <Plus className="h-4 w-4" /> Nueva checklist
+            </button>
+          )}
         />
         {setupSql && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -730,24 +741,6 @@ export default function ChecklistTool({ onBack }: { onBack: () => void }) {
             {ack}
           </div>
         )}
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">08 Checklist</p>
-          <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h2 className="font-display text-2xl font-semibold tracking-tight">Checklists</h2>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                Cada una es independiente. Duplica una para usarla de plantilla en la siguiente.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={createBoard}
-              className="inline-flex h-9 items-center gap-2 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white"
-            >
-              <Plus className="h-3.5 w-3.5" /> Nueva checklist
-            </button>
-          </div>
-        </section>
         <div className="grid gap-3">
           {library.lists.map((board) => {
             const kpis = checklistKpis(board.tasks, today);

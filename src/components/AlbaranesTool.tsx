@@ -736,7 +736,7 @@ export default function AlbaranesTool({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="space-y-4">
-      <WorkspaceChrome onBack={onBack} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
+      <WorkspaceChrome onBack={onBack} number="07" title="Albaranes" tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
 
       {setupSql && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

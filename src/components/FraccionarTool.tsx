@@ -192,7 +192,7 @@ export default function FraccionarTool({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="space-y-4">
-      <WorkspaceChrome onBack={onBack} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
+      <WorkspaceChrome onBack={onBack} number="10" title="Fraccionar" tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
       {tab === 'carga' && (
       <>
       <p className="text-sm text-[var(--text-secondary)]">

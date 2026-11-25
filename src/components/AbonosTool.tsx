@@ -51,7 +51,7 @@ import {
 import { documentLabelsByCase, documentsForExport, zipStored } from '@/lib/abonos-export-pack';
 import { buildAbonosWorkbook } from '@/lib/abonos-export-xlsx';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, Clock, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Clock, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -1133,24 +1133,14 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="abonos-shell space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            title="Volver a Herramientas"
-            aria-label="Volver a Herramientas"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-white text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">05 Abonos</p>
-            <h2 className="font-display text-2xl font-semibold leading-tight tracking-tight">Abonos</h2>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <WorkspaceChrome onBack={onBack} showBack={false} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
+      <WorkspaceChrome
+        onBack={onBack}
+        number="05"
+        title="Abonos"
+        tabs={[...TABS]}
+        active={tab}
+        onSelect={(id) => setTab(id as TabId)}
+        actions={(
           <button
             type="button"
             onClick={() => openNew()}
@@ -1159,8 +1149,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <Plus className="h-4 w-4" />
             Nuevo abono
           </button>
-        </div>
-      </div>
+        )}
+      />
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ArrowRight, Banknote, Calculator, CreditCard, Gift, Globe, LayoutDashboard, Percent, Target, Wallet } from 'lucide-react';
+import { ToolTitle } from '@/components/WorkspaceChrome';
+import { ArrowRight, Banknote, Calculator, CreditCard, Gift, Globe, LayoutDashboard, Percent, Target, Wallet } from 'lucide-react';
 import type { TrackingViewMode } from '@/components/TrackingTool';
 import { abonosHubKpis, computeAll, formatMoney } from '@/lib/abonos-model';
 import { loadAbonosState } from '@/lib/abonos-store';
@@ -255,14 +256,7 @@ export default function OperationsDashboard({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Herramientas
-        </button>
+        <ToolTitle onBack={onBack} number="01" title="Cuadro de mando" />
         <span className="rounded-md border border-dashed border-[var(--border)] bg-[var(--bg-soft)]/80 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
           Maqueta · sin datos
         </span>
@@ -276,7 +270,6 @@ export default function OperationsDashboard({
             <LayoutDashboard className="h-3.5 w-3.5" />
             Operaciones · FY 26/27
           </p>
-          <h2 className="mt-2 font-display text-4xl font-semibold tracking-tight sm:text-5xl">Cuadro de mando</h2>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-[var(--text-secondary)]">
             El 01 mide el plan contra el año pasado. Del 02 al 07 miden el año contra el plan. Abonos es caja real: lo que todavía no ha entrado.
           </p>

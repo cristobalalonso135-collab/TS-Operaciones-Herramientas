@@ -807,6 +807,8 @@ export default function Home() {
   const budgetChrome = (
     <WorkspaceChrome
       onBack={goHome}
+      number="02"
+      title="Budget"
       tabs={[...BUDGET_TABS]}
       active={budgetTab}
       onSelect={(id) => setBudgetTab(id as BudgetTabId)}

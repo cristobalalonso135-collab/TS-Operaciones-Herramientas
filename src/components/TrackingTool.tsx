@@ -31,7 +31,8 @@ import {
   type SnapshotBranch,
   type TrackingSnapshot,
 } from '@/lib/seguimiento-snapshots';
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet, X } from 'lucide-react';
+import { ToolTitle } from '@/components/WorkspaceChrome';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Download, FileSpreadsheet, X } from 'lucide-react';
 
 export type TrackingViewMode = 'ytd' | 'monthly' | 'frees' | 'generados' | 'deuda' | 'tendencia';
 
@@ -1953,22 +1954,13 @@ export default function TrackingTool({ onBack, initialView = 'ytd' }: TrackingTo
   return (
     <div className="mx-auto max-w-[1400px] space-y-4">
       <div className="flex items-center justify-between gap-4">
-        <button
-          type="button"
-          onClick={onBack}
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-[var(--bg-soft)] hover:text-[var(--text-primary)]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Herramientas
-        </button>
+        <ToolTitle onBack={onBack} number="03" title="Seguimiento facturación" />
       </div>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Control</p>
-            <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Seguimiento facturación</h2>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            <p className="text-sm text-[var(--text-secondary)]">
               Facturación y budget usan Desde y Hasta. Si Hasta es marzo, el budget es el año (63,2 M). Si es julio, solo abril–julio. El 25/26 del CSV sirve para el vs LY.
             </p>
             <div className="mt-3 flex flex-wrap items-end gap-3">
