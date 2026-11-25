@@ -51,7 +51,7 @@ import {
 import { documentLabelsByCase, documentsForExport, zipStored } from '@/lib/abonos-export-pack';
 import { buildAbonosWorkbook } from '@/lib/abonos-export-xlsx';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Check, ChevronDown, Clock, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, Clock, ChevronRight, Download, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -595,6 +595,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [exportWithDocs, setExportWithDocs] = useState(false);
   const [bulkArea, setBulkArea] = useState('Grassroots');
   const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
+  const [openCashWeek, setOpenCashWeek] = useState<string | null>(null);
   const [claimNote, setClaimNote] = useState('');
   const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
 
@@ -1130,22 +1131,34 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="abonos-shell space-y-4">
-      <WorkspaceChrome onBack={onBack} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
-
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">05 Abonos</p>
-          <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight">Abonos</h2>
+    <div className="abonos-shell space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            title="Volver a Herramientas"
+            aria-label="Volver a Herramientas"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-white text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">05 Abonos</p>
+            <h2 className="font-display text-2xl font-semibold leading-tight tracking-tight">Abonos</h2>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => openNew()}
-          className="inline-flex items-center gap-2 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-        >
-          <Plus className="h-4 w-4" />
-          Nuevo abono
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <WorkspaceChrome onBack={onBack} showBack={false} tabs={[...TABS]} active={tab} onSelect={(id) => setTab(id as TabId)} />
+          <button
+            type="button"
+            onClick={() => openNew()}
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-[var(--text-primary)] px-4 text-sm font-semibold text-white hover:bg-black"
+          >
+            <Plus className="h-4 w-4" />
+            Nuevo abono
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -1156,14 +1169,29 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       )}
 
       {tab === 'dashboard' && (
-        <section className="space-y-4">
-          <div className="flex justify-end">
-            <label className="w-full sm:w-64">
-              <span className="mb-1 block text-xs font-medium text-[var(--text-secondary)]">Responsable</span>
+        <section className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="abonos-kpi">
+              <p className="abonos-kpi-label">Tareas esta semana</p>
+              <p className="abonos-kpi-value">{kpis.taskCount}</p>
+              <p className="abonos-kpi-hint">por revisar</p>
+            </div>
+            <div className="abonos-kpi">
+              <p className="abonos-kpi-label">Vencidos</p>
+              <p className={`abonos-kpi-value ${kpis.overdueCount ? 'text-[var(--danger)]' : ''}`}>{formatMoney(kpis.overduePending)}</p>
+              <p className="abonos-kpi-hint">{kpis.overdueCount} abono{kpis.overdueCount === 1 ? '' : 's'} con la fecha pasada</p>
+            </div>
+            <div className="abonos-kpi">
+              <p className="abonos-kpi-label">Pendientes de revisión</p>
+              <p className={`abonos-kpi-value ${kpis.reviewCount ? 'text-[#b45309]' : ''}`}>{formatMoney(kpis.reviewPending)}</p>
+              <p className="abonos-kpi-hint">{kpis.reviewCount} abono{kpis.reviewCount === 1 ? '' : 's'}</p>
+            </div>
+            <label className="abonos-kpi block">
+              <span className="abonos-kpi-label block">Responsable</span>
               <select
                 value={reviewResponsible}
                 onChange={(event) => setReviewResponsible(event.target.value)}
-                className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                className="abonos-select mt-2 h-11 w-full px-3 text-sm font-medium"
               >
                 <option value="">Todos</option>
                 {peopleOptions.map((responsible) => (
@@ -1173,185 +1201,158 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             </label>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Kpi label="Tareas esta semana" value={String(kpis.taskCount)} />
-            <Kpi label="Vencidos" value={`${kpis.overdueCount} · ${formatMoney(kpis.overduePending)}`} tone={kpis.overdueCount ? 'danger' : undefined} />
-            <Kpi label="Pendientes de revisión" value={`${kpis.reviewCount} · ${formatMoney(kpis.reviewPending)}`} tone={kpis.reviewCount ? 'warning' : undefined} />
-          </div>
+          <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="abonos-panel p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="font-display text-lg font-semibold tracking-tight">Tareas de la revisión</h3>
+                <span className="text-sm text-[var(--text-muted)]">{tasks.length} tarea{tasks.length === 1 ? '' : 's'}</span>
+              </div>
+              {tasks.length === 0 ? (
+                <p className="mt-4 text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
+              ) : (
+                <div className="mt-4 divide-y divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)]">
+                  {taskGroups.map((group) => {
+                    const open = openTaskKind === group.kind;
+                    return (
+                      <button
+                        key={group.kind}
+                        type="button"
+                        onClick={() => setOpenTaskKind(open ? null : group.kind)}
+                        className={`flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition ${open ? 'bg-[#fafafa]' : 'bg-white hover:bg-[#fafafa]'}`}
+                      >
+                        <span>
+                          <span className="block text-sm font-semibold">{group.title}</span>
+                          <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{group.tasks.length} abono{group.tasks.length === 1 ? '' : 's'}</span>
+                        </span>
+                        <span className="flex items-center gap-3">
+                          <span className="text-sm font-semibold tabular-nums">{formatMoney(group.pending)}</span>
+                          <ChevronRight className={`h-4 w-4 shrink-0 text-[var(--text-muted)] transition ${open ? 'rotate-90' : ''}`} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <p className="text-sm font-semibold">Tareas de la revisión</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              {reviewResponsible
-                ? `Solo aparecen los compromisos asignados a ${reviewResponsible}.`
-                : 'Aparecen los compromisos de todos los responsables.'}{' '}
-              Abre una tarea para registrar la gestión y elegir cuándo revisarla.
-            </p>
-            {tasks.length === 0 ? (
-              <p className="mt-3 text-sm text-[var(--text-secondary)]">Esta semana no tienes tareas.</p>
-            ) : (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {taskGroups.map((group) => {
-                  const open = openTaskKind === group.kind;
-                  return (
-                    <button
-                      key={group.kind}
-                      type="button"
-                      onClick={() => setOpenTaskKind(open ? null : group.kind)}
-                      className={`rounded-md border px-3 py-3 text-left transition ${open ? 'border-[var(--text-primary)] bg-white' : 'border-[var(--border)] bg-white hover:border-[var(--border-strong)]'}`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold">{group.title}</p>
-                          <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{group.tasks.length} · {formatMoney(group.pending)}</p>
-                        </div>
-                        <ChevronRight className={`mt-0.5 h-4 w-4 shrink-0 text-[var(--text-muted)] transition ${open ? 'rotate-90' : ''}`} />
+              {openTaskGroup && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-xs text-[var(--text-secondary)]">{openTaskGroup.hint}</p>
+                    {openTaskGroup.bulkLabel && (
+                      <div className="flex min-w-[240px] flex-1 flex-col gap-2 sm:max-w-sm sm:flex-row">
+                        {openTaskGroup.kind !== 'fecha' && (
+                          <input
+                            value={claimNote}
+                            onChange={(event) => setClaimNote(event.target.value)}
+                            placeholder="Nota (opcional)"
+                            className="abonos-search h-9 w-full px-3 text-sm"
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => applyWeeklyTasks(openTaskGroup.tasks)}
+                          className="h-9 shrink-0 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                        >
+                          {openTaskGroup.bulkLabel}
+                        </button>
                       </div>
-                    </button>
+                    )}
+                  </div>
+                  {openTaskGroup.tasks.map((task) => (
+                    <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-white px-4 py-3">
+                      <button type="button" onClick={() => openEdit(task.row)} className="min-w-0 flex-1 text-left">
+                        <p className="text-sm font-medium">{taskName(task.row)}</p>
+                        <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                          {[task.row.brand, task.reason].filter(Boolean).join(' · ')}
+                          {task.kind === 'cuadrar' && task.row.pending <= 0.009
+                            ? ` · cobrado ${formatMoney(task.row.receivedTotal)}`
+                            : ` · ${formatMoney(task.row.pending)}`}
+                        </p>
+                      </button>
+                      <div className="flex items-center gap-2">
+                        {(task.kind === 'reclamar' || task.kind === 'seguir') && (
+                          <button
+                            type="button"
+                            onClick={() => applyWeeklyTask(task)}
+                            className="h-8 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
+                          >
+                            {task.actionLabel}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openEdit(task.row)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] hover:bg-[var(--bg-soft)]"
+                          aria-label="Editar"
+                          title="Editar"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="abonos-panel p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="font-display text-lg font-semibold tracking-tight">Cobros próximas 4 semanas</h3>
+                <span className="text-sm font-semibold tabular-nums">{formatMoney(cash.pending)}</span>
+              </div>
+              <div className="mt-4 divide-y divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)]">
+                {cash.weeks.map((week) => {
+                  const open = openCashWeek === week.id && week.rows.length > 0;
+                  return (
+                    <div key={week.id}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenCashWeek(open ? null : week.id)}
+                        disabled={week.rows.length === 0}
+                        className={`flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition ${open ? 'bg-[#fafafa]' : 'bg-white'} ${week.rows.length ? 'hover:bg-[#fafafa]' : 'cursor-default'}`}
+                      >
+                        <span>
+                          <span className="block text-sm font-semibold">{week.label.charAt(0) + week.label.slice(1).toLocaleLowerCase('es')}</span>
+                          <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{formatIsoDate(week.start)} – {formatIsoDate(week.end)} · {week.rows.length} abono{week.rows.length === 1 ? '' : 's'}</span>
+                        </span>
+                        <span className="flex items-center gap-3">
+                          <span className={`text-sm font-semibold tabular-nums ${week.pending > 0.009 ? '' : 'text-[#c4c4c8]'}`}>{formatMoney(week.pending)}</span>
+                          <ChevronRight className={`h-4 w-4 shrink-0 transition ${week.rows.length ? 'text-[var(--text-muted)]' : 'text-transparent'} ${open ? 'rotate-90' : ''}`} />
+                        </span>
+                      </button>
+                      {open && (
+                        <div className="divide-y divide-[var(--border)] bg-[#fafafa] px-4 pb-2">
+                          {week.rows.map((row) => (
+                            <button
+                              key={row.id}
+                              type="button"
+                              onClick={() => openEdit(row)}
+                              className="flex w-full items-center justify-between gap-3 py-2 text-left text-sm hover:text-[var(--text-primary)]"
+                            >
+                              <span className="min-w-0 truncate">{row.brand} · {row.concept || caseLabel(row)}</span>
+                              <span className="shrink-0 tabular-nums">{formatMoney(row.pending)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
-            )}
-
-            {openTaskGroup && (
-              <div className="mt-4 space-y-3 border-t border-[var(--border)] pt-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold">{openTaskGroup.title}</p>
-                    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">{openTaskGroup.hint}</p>
-                  </div>
-                  {openTaskGroup.bulkLabel && (
-                    <div className="flex min-w-[240px] flex-1 flex-col gap-2 sm:max-w-sm sm:flex-row">
-                      {openTaskGroup.kind !== 'fecha' && (
-                        <input
-                          value={claimNote}
-                          onChange={(event) => setClaimNote(event.target.value)}
-                          placeholder="Nota (opcional)"
-                          className="h-9 w-full rounded-md border border-[var(--border)] px-3 text-sm"
-                        />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => applyWeeklyTasks(openTaskGroup.tasks)}
-                        className="h-9 shrink-0 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
-                      >
-                        {openTaskGroup.bulkLabel}
-                      </button>
-                    </div>
-                  )}
+              {cash.brands.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {cash.brands.map((brand) => (
+                    <span key={brand.brand} className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] px-3 py-1 text-xs">
+                      <span className="font-semibold">{brand.brand}</span>
+                      <span className="tabular-nums text-[var(--text-secondary)]">{formatMoney(brand.pending)}</span>
+                    </span>
+                  ))}
                 </div>
-                {openTaskGroup.tasks.map((task) => (
-                  <div key={task.id} className="space-y-3 rounded-md border border-[var(--border)] bg-white px-3 py-3">
-                    <button type="button" onClick={() => openEdit(task.row)} className="block w-full min-w-0 text-left hover:text-[var(--text-primary)]">
-                      <p className="text-sm font-medium">{taskName(task.row)}</p>
-                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                        {[task.row.brand, task.row.area].filter(Boolean).join(' · ')} · {task.reason}
-                        {task.kind === 'cuadrar' && task.row.pending <= 0.009
-                          ? ` · cobrado ${formatMoney(task.row.receivedTotal)}`
-                          : ` · ${formatMoney(task.row.pending)}`}
-                      </p>
-                    </button>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {(task.kind === 'reclamar' || task.kind === 'seguir') && (
-                        <button
-                          type="button"
-                          onClick={() => applyWeeklyTask(task)}
-                          className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-xs font-semibold text-white hover:bg-black"
-                        >
-                          {task.actionLabel}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => openEdit(task.row)}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--border)] px-3 text-xs font-semibold hover:bg-[var(--bg-soft)]"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteCase(task.row.id)}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[var(--danger-soft)] px-3 text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Borrar
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-4">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <div>
-                <p className="text-sm font-semibold">Cobros próximas 4 semanas</p>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">Semanas de lunes a domingo. Solo lo que todavía está pendiente.</p>
-              </div>
-              <p className="text-sm font-semibold">{cash.count} · {formatMoney(cash.pending)}</p>
+              )}
+              {cash.count === 0 && (
+                <p className="mt-3 text-sm text-[var(--text-secondary)]">En las próximas 4 semanas no hay fechas previstas con pendiente.</p>
+              )}
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-4">
-              {cash.weeks.map((week) => (
-                <div key={week.id} className="rounded-md border border-[var(--border)] bg-white px-3 py-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{week.label}</p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">{formatIsoDate(week.start)} – {formatIsoDate(week.end)}</p>
-                  <p className="mt-1 font-mono text-sm font-semibold">{formatMoney(week.pending)}</p>
-                  <p className="text-[11px] text-[var(--text-secondary)]">{week.rows.length} abonos</p>
-                </div>
-              ))}
-            </div>
-            {cash.brands.length > 0 && (
-              <div className="mt-4 overflow-auto">
-                <table className="w-full min-w-[520px] border-collapse text-sm">
-                  <thead className="text-left text-xs text-[var(--text-secondary)]">
-                    <tr>
-                      <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Marca</th>
-                      <th className="border-b border-[var(--border)] px-2 py-2 font-medium">Abonos</th>
-                      <th className="border-b border-[var(--border)] px-2 py-2 text-right font-medium">Pendiente</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cash.brands.map((brand) => (
-                      <tr key={brand.brand}>
-                        <td className="border-b border-[var(--border)] px-2 py-2 font-medium">{brand.brand}</td>
-                        <td className="border-b border-[var(--border)] px-2 py-2 text-[var(--text-secondary)]">{brand.count}</td>
-                        <td className="border-b border-[var(--border)] px-2 py-2 text-right font-mono">{formatMoney(brand.pending)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {cash.count === 0 && (
-              <p className="mt-3 text-sm text-[var(--text-secondary)]">En las próximas 4 semanas no hay fechas previstas con pendiente.</p>
-            )}
-            {cash.weeks.some((week) => week.rows.length > 0) && (
-              <div className="mt-4 space-y-3">
-                {cash.weeks.filter((week) => week.rows.length > 0).map((week) => (
-                  <div key={`${week.id}-rows`}>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">{week.label}</p>
-                    <div className="mt-2 divide-y divide-[var(--border)] rounded-md border border-[var(--border)] bg-white">
-                      {week.rows.map((row) => (
-                        <button
-                          key={row.id}
-                          type="button"
-                          onClick={() => openEdit(row)}
-                          className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left hover:bg-[var(--bg-soft)]"
-                        >
-                          <span className="min-w-0">
-                            <span className="text-sm font-medium">{caseLabel(row)}</span>
-                            <span className="mt-0.5 block text-xs text-[var(--text-secondary)]">{formatIsoDate(row.dueDate)}</span>
-                          </span>
-                          <span className="shrink-0 font-mono text-sm">{formatMoney(row.pending)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </section>
       )}

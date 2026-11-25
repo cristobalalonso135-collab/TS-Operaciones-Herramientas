@@ -433,13 +433,7 @@ textarea {
   border-radius: 999px;
   background: var(--success);
 }
-.abonos-kpi-accent {
-  background: #141414;
-  border-color: #141414;
-  color: #ffffff;
-}
-.abonos-kpi-accent .abonos-kpi-label,
-.abonos-kpi-accent .abonos-kpi-hint { color: rgba(255, 255, 255, 0.6); }
+.abonos-kpi-accent .abonos-kpi-value { color: #b45309; }
 .abonos-thead th {
   background: #fafafa;
 }

@@ -10,18 +10,22 @@ interface WorkspaceTab {
 export default function WorkspaceChrome({
   onBack,
   backLabel = 'Herramientas',
+  showBack = true,
   tabs,
   active,
   onSelect,
 }: {
   onBack: () => void;
   backLabel?: string;
+  /** False when the page shows its own back button next to the title. */
+  showBack?: boolean;
   tabs: WorkspaceTab[];
   active: string;
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+    <div className={`flex min-w-0 flex-wrap items-center gap-3 ${showBack ? 'justify-between' : 'justify-end'}`}>
+      {showBack && (
       <button
         type="button"
         onClick={onBack}
@@ -30,6 +34,7 @@ export default function WorkspaceChrome({
         <ArrowLeft className="h-4 w-4" />
         {backLabel}
       </button>
+      )}
       <div className="flex max-w-full overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-1">
         {tabs.map((tab) => (
           <button
