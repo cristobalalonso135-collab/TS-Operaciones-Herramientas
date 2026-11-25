@@ -6,19 +6,19 @@ import WorkspaceChrome from '@/components/WorkspaceChrome';
 import TradeArchiveView from '@/components/TradeArchiveView';
 import { normalizeArchive } from '@/lib/trade-archive';
 import {
-  ABONO_ORIGINS,
-  ABONO_SOURCES,
-  ABONO_STATUSES,
-  ABONO_AMOUNT_MODES,
   ABONOS_PEOPLE,
   addDaysIso,
+  abonoAlert,
   abonoRequiredGaps,
+  isClosedStatus,
+  MANUAL_STATUSES,
+  statusLabel,
+  type AbonoAlert,
   caseLabel,
   computeAll,
   DEFAULT_NEW_AUTHOR,
   displayDash,
   formatIsoDate,
-  hintsFromTradeTerm,
   resolveAmountDetails,
   formatMoney,
   formatMoneyInput,
@@ -49,28 +49,25 @@ import {
   type WeeklyTaskKind,
 } from '@/lib/abonos-model';
 import {
-  abonosExportRows,
   abonosTemplateRows,
-  ABONOS_EXPORT_GUIDE,
   ABONOS_TEMPLATE_INSTRUCTIONS,
   applyImportRows,
   applyReceiptRows,
   parseReceiptsSheet,
   buildImportPreview,
   detectAbonosHeaderRow,
-  documentsExportRows,
   guessColumnMap,
   importPreviewError,
   IMPORT_COLUMN_LABELS,
-  receiptsExportRows,
   summarizeImportRow,
   type ImportRowKind,
   type ImportColumnMap,
   type ImportPreviewRow,
 } from '@/lib/abonos-excel';
 import { documentLabelsByCase, documentsForExport, zipStored } from '@/lib/abonos-export-pack';
+import { buildAbonosWorkbook } from '@/lib/abonos-export-xlsx';
 import { addCatalogValue, loadAbonosState, saveAbonosState, type AbonosBackend } from '@/lib/abonos-store';
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Download, FileSpreadsheet, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Clock, ChevronRight, Download, FileSpreadsheet, FileText, GripVertical, ImagePlus, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 const TABS = [
   { id: 'dashboard', label: 'Revisión' },
@@ -82,6 +79,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 type SortKey =
+  | 'alert'
   | 'responsible'
   | 'dueDate'
   | 'brand'
@@ -99,22 +97,23 @@ type SortKey =
 const MONEY_COLS = new Set<SortKey>(['expectedAmount', 'receivedTotal', 'pending']);
 
 const COLUMN_DEFS: Array<{ key: SortKey; label: string; width: number }> = [
-  { key: 'dueDate', label: 'Cuándo', width: 120 },
-  { key: 'brand', label: 'Marca', width: 108 },
-  { key: 'type', label: 'Tipo', width: 120 },
-  { key: 'area', label: 'Área', width: 108 },
-  { key: 'teamMotivo', label: 'Equipo', width: 150 },
-  { key: 'expectedAmount', label: 'Importe previsto', width: 118 },
-  { key: 'amountMode', label: 'Cálculo', width: 96 },
-  { key: 'receivedTotal', label: 'Importe liquidado', width: 118 },
-  { key: 'pending', label: 'Importe pendiente', width: 118 },
-  { key: 'status', label: 'Estado', width: 140 },
-  { key: 'concept', label: 'Concepto', width: 180 },
+  { key: 'alert', label: 'Aviso', width: 172 },
+  { key: 'dueDate', label: 'Cuándo', width: 104 },
+  { key: 'brand', label: 'Marca', width: 96 },
+  { key: 'concept', label: 'Concepto', width: 220 },
+  { key: 'pending', label: 'Pendiente', width: 118 },
+  { key: 'status', label: 'Estado', width: 150 },
+  { key: 'expectedAmount', label: 'Previsto', width: 118 },
+  { key: 'receivedTotal', label: 'Cobrado', width: 118 },
+  { key: 'type', label: 'Tipo', width: 112 },
+  { key: 'area', label: 'Área', width: 104 },
+  { key: 'teamMotivo', label: 'Equipo', width: 140 },
+  { key: 'amountMode', label: 'Cálculo', width: 90 },
   { key: 'attachments', label: 'Adjuntos', width: 80 },
   { key: 'responsible', label: 'Responsable', width: 108 },
 ];
 
-const COL_STORAGE = 'ts-abonos-cols-v9';
+const COL_STORAGE = 'ts-abonos-cols-v11';
 const BLANK = '__blank__';
 const MAX_EVIDENCE = 10;
 const MAX_DOC_BYTES = 1_200_000;
@@ -199,8 +198,10 @@ function ConceptCell({ text }: { text: string }) {
   );
 }
 
-function renderAbonoCell(row: AbonoComputed, key: SortKey) {
+function renderAbonoCell(row: AbonoComputed, key: SortKey, alert: AbonoAlert | null) {
   switch (key) {
+    case 'alert':
+      return <AlertChip alert={alert} />;
     case 'responsible':
       return displayDash(row.responsible);
     case 'dueDate':
@@ -254,7 +255,30 @@ type AbonoFilters = {
   origin: string[];
   responsible: string[];
   search: string;
+  quick: QuickFilter;
 };
+
+type QuickFilter = '' | 'vencido' | 'revisar' | 'abiertos' | 'comunicado' | 'acuenta' | 'cobrado';
+
+const QUICK_FILTERS: Array<{ id: Exclude<QuickFilter, ''>; label: string; tone: string }> = [
+  { id: 'vencido', label: 'Vencidos', tone: 'danger' },
+  { id: 'revisar', label: 'Revisar', tone: 'warning' },
+  { id: 'abiertos', label: 'Pendientes de cobro', tone: 'neutral' },
+  { id: 'comunicado', label: 'Pago comunicado', tone: 'violet' },
+  { id: 'acuenta', label: 'A cuenta', tone: 'account' },
+  { id: 'cobrado', label: 'Cobrados', tone: 'success' },
+];
+
+function matchesQuick(row: AbonoComputed, quick: QuickFilter, today: string): boolean {
+  if (!quick) return true;
+  const alert = abonoAlert(row, today);
+  if (quick === 'vencido') return alert?.level === 'danger';
+  if (quick === 'revisar') return alert?.level === 'warning';
+  if (quick === 'abiertos') return Boolean(row.status) && !isClosedStatus(row.status) && (row.pending > 0.009 || row.status === 'A cuenta');
+  if (quick === 'comunicado') return row.status === 'Pago comunicado';
+  if (quick === 'acuenta') return row.status === 'A cuenta';
+  return isClosedStatus(row.status);
+}
 
 const emptyFilters: AbonoFilters = {
   brand: [],
@@ -268,6 +292,7 @@ const emptyFilters: AbonoFilters = {
   origin: [],
   responsible: [],
   search: '',
+  quick: '',
 };
 
 const MONTHS_SHORT_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -315,6 +340,7 @@ function rowMatchesFilters(
   if (except !== 'amountMode' && !matchesAnyFilter(filters.amountMode, row.amountModeResolved)) return false;
   if (except !== 'origin' && !matchesAnyFilter(filters.origin, row.origin)) return false;
   if (except !== 'attachments' && !matchesAttachmentFilter(filters.attachments, (row.attachments || []).length)) return false;
+  if (except !== 'quick' && !matchesQuick(row, filters.quick, today)) return false;
   if (except !== 'search') {
     const search = filters.search.trim().toLocaleLowerCase('es');
     if (search) {
@@ -719,12 +745,18 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   }, [computed, filters]);
 
   const sorted = useMemo(() => {
+    const today = todayIso();
     const copy = [...filtered];
     copy.sort((a, b) => {
       if (sort.key === 'dueDate') {
         const leftUnknown = !a.dueDate;
         const rightUnknown = !b.dueDate;
         if (leftUnknown !== rightUnknown) return sort.dir === 'asc' ? (leftUnknown ? 1 : -1) : (leftUnknown ? -1 : 1);
+      }
+      if (sort.key === 'alert') {
+        const left = abonoAlert(a, today)?.rank ?? 0;
+        const right = abonoAlert(b, today)?.rank ?? 0;
+        return sort.dir === 'asc' ? right - left : left - right;
       }
       if (sort.key === 'amountMode') {
         const result = a.amountModeResolved.localeCompare(b.amountModeResolved, 'es');
@@ -799,14 +831,16 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     const attachments = uniquePresent(forKey('attachments').map((row) => ((row.attachments || []).length > 0 ? 'Sí' : 'No')));
     const dateRows = forKey('duePeriod');
     const { periods, datesBlank } = duePeriodOptions(dateRows, today);
-    return { brands, types, areas, teams, statuses, responsibles, modes, origins, attachments, periods, datesBlank };
+    const quickRows = forKey('quick');
+    const quickCounts = Object.fromEntries(QUICK_FILTERS.map((item) => [item.id, quickRows.filter((row) => matchesQuick(row, item.id, today)).length])) as Record<Exclude<QuickFilter, ''>, number>;
+    return { brands, types, areas, teams, statuses, responsibles, modes, origins, attachments, periods, datesBlank, quickCounts };
   }, [computed, filters]);
 
   useEffect(() => {
     setFilters((current) => {
       const next = { ...current };
       let changed = false;
-      const prune = (key: Exclude<keyof AbonoFilters, 'search' | 'duePeriod'>, present: { options: string[]; hasBlank?: boolean }) => {
+      const prune = (key: Exclude<keyof AbonoFilters, 'search' | 'duePeriod' | 'quick'>, present: { options: string[]; hasBlank?: boolean }) => {
         const kept = current[key].filter((value) => (value === BLANK ? Boolean(present.hasBlank) : present.options.includes(value)));
         if (kept.length !== current[key].length) {
           next[key] = kept;
@@ -939,10 +973,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       setError(formatRequiredGaps(gaps));
       return;
     }
-    if (form.amountMode === 'Variable' && !String(form.amountCondition || '').trim()) {
-      setError('Si el importe es variable, indica la condición.');
-      return;
-    }
     setError(null);
     const estimated = form.amountMode === 'Variable';
     const received = editing
@@ -958,7 +988,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
       id: editing?.id || crypto.randomUUID(),
       registro: editing?.registro || nextRegistro(state.cases),
       createdAt: editing ? (editing.createdAt || '') : new Date().toISOString(),
-      addedBy: shortPersonName(form.addedBy || ''),
+      addedBy: shortPersonName(form.addedBy || DEFAULT_NEW_AUTHOR),
       responsible: shortPersonName(form.responsible || form.addedBy || ''),
       dueDate: form.dueDate || null,
       brand: form.brand || '',
@@ -1153,34 +1183,22 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
     try {
       setError(null);
       setNote('Preparando la descarga…');
-      const XLSX = await import('xlsx');
       const documents = withDocs ? documentsForExport(rows) : [];
       const labels = documentLabelsByCase(documents);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.aoa_to_sheet(abonosExportRows(rows.map((row) => ({ ...row, documentos: labels.get(row.id) || '' })))),
-        'Abonos',
-      );
-      const caseIds = new Set(rows.map((row) => row.id));
-      XLSX.utils.book_append_sheet(
-        workbook,
-        XLSX.utils.aoa_to_sheet(receiptsExportRows(rows, state.receipts.filter((item) => caseIds.has(item.caseId)))),
-        'Recepciones',
-      );
-      if (withDocs) {
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(documentsExportRows(documents)), 'Documentos');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(ABONOS_EXPORT_GUIDE), 'Lectura');
-      }
+      const xlsxBytes = await buildAbonosWorkbook(rows, state.receipts, labels, withDocs ? documents : null);
       if (!withDocs) {
-        XLSX.writeFile(workbook, `Abonos_${todayIso()}.xlsx`);
+        const blob = new Blob([xlsxBytes.buffer.slice(xlsxBytes.byteOffset, xlsxBytes.byteOffset + xlsxBytes.byteLength) as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `Abonos_${todayIso()}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1500);
         setNote(`Descargado el Excel con ${rows.length} abono${rows.length === 1 ? '' : 's'}.`);
         return;
       }
-      const written = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
-      const xlsxBytes = written instanceof Uint8Array
-        ? written
-        : new Uint8Array(written as ArrayBuffer);
       const zip = zipStored([
         { path: 'Abonos.xlsx', bytes: xlsxBytes },
         ...documents.map((file) => ({ path: file.path, bytes: file.bytes })),
@@ -1235,8 +1253,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
 
   const currentComputed = editing ? computed.find((row) => row.id === editing.id) : null;
   const caseReceipts = editing ? receiptsForCase(state.receipts, editing.id) : [];
-  const brandTerms = state.tradeTerms.filter((term) => term.brand === form.brand && (term.active !== false || term.id === form.tradeTermId));
   const actionColWidth = 44;
+  const todayValue = todayIso();
   const tableWidth = columnOrder.reduce((sum, key) => sum + columnWidths[key], 0) + actionColWidth;
 
   const toggleSort = (key: SortKey) => {
@@ -1497,12 +1515,36 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             <FilterMultiSelect values={filters.type} options={filterOptions.types.options} includeBlank={filterOptions.types.hasBlank} placeholder="Tipo" onChange={(type) => setFilters({ ...filters, type })} />
             <FilterMultiSelect values={filters.area} options={filterOptions.areas.options} includeBlank={filterOptions.areas.hasBlank} placeholder="Área" onChange={(area) => setFilters({ ...filters, area })} />
             <FilterMultiSelect values={filters.teamMotivo} options={filterOptions.teams.options} includeBlank={filterOptions.teams.hasBlank} placeholder="Equipo" onChange={(teamMotivo) => setFilters({ ...filters, teamMotivo })} />
-            <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
+            <FilterMultiSelect values={filters.status} options={filterOptions.statuses.options.map((value) => ({ value, label: statusLabel(value) }))} includeBlank={filterOptions.statuses.hasBlank} placeholder="Estado" onChange={(status) => setFilters({ ...filters, status })} />
             <FilterMultiSelect values={filters.duePeriod} options={filterOptions.periods} includeBlank={filterOptions.datesBlank} placeholder="Fecha prevista" collapseGroups onChange={(duePeriod) => setFilters({ ...filters, duePeriod })} />
             <FilterMultiSelect values={filters.amountMode} options={filterOptions.modes.options} includeBlank={filterOptions.modes.hasBlank} placeholder="Cálculo" onChange={(amountMode) => setFilters({ ...filters, amountMode })} />
             <FilterMultiSelect values={filters.attachments} options={filterOptions.attachments.options} placeholder="Adjuntos" onChange={(attachments) => setFilters({ ...filters, attachments })} />
-            <FilterMultiSelect values={filters.origin} options={filterOptions.origins.options} includeBlank={filterOptions.origins.hasBlank} placeholder="Origen" onChange={(origin) => setFilters({ ...filters, origin })} />
             <FilterMultiSelect values={filters.responsible} options={filterOptions.responsibles.options} includeBlank={filterOptions.responsibles.hasBlank} placeholder="Responsable" onChange={(responsible) => setFilters({ ...filters, responsible })} />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {QUICK_FILTERS.map((item) => {
+              const active = filters.quick === item.id;
+              const count = filterOptions.quickCounts[item.id];
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setFilters({ ...filters, quick: active ? '' : item.id })}
+                  className={`abonos-quick abonos-quick-${item.tone} ${active ? 'is-active' : ''}`}
+                  aria-pressed={active}
+                >
+                  <span className="abonos-quick-dot" />
+                  {item.label}
+                  <span className="abonos-quick-count">{count}</span>
+                </button>
+              );
+            })}
+            {filters.quick && (
+              <button type="button" onClick={() => setFilters({ ...filters, quick: '' })} className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+                Quitar filtro
+              </button>
+            )}
           </div>
 
           <div className="grid gap-2 sm:grid-cols-4">
@@ -1515,7 +1557,7 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
               <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(listTotals.expected)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
-              <p className="text-[11px] text-[var(--text-secondary)]">Liquidado</p>
+              <p className="text-[11px] text-[var(--text-secondary)]">Cobrado</p>
               <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(listTotals.received)}</p>
             </div>
             <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] px-3 py-2">
@@ -1588,15 +1630,17 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((row) => (
-                  <tr key={row.id} onClick={() => openEdit(row)} className="cursor-pointer" title={row.notes.trim() || undefined}>
+                {sorted.map((row) => {
+                  const alert = abonoAlert(row, todayValue);
+                  return (
+                  <tr key={row.id} onClick={() => openEdit(row)} className={`cursor-pointer ${alert?.level === 'danger' ? 'abonos-row-danger' : alert?.level === 'warning' ? 'abonos-row-warning' : ''}`} title={row.notes.trim() || undefined}>
                     {columnOrder.map((key) => (
                       <td
                         key={key}
-                        className={`border-b border-[var(--border)] px-1.5 py-1.5 ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''}`}
+                        className={`border-b border-[var(--border)] px-1.5 py-1.5 ${MONEY_COLS.has(key) ? 'font-mono tabular-nums' : ''} ${key === 'pending' && row.pending > 0.009 ? 'font-semibold' : ''}`}
                       >
                         <div className={`abonos-cell ${key === 'concept' ? 'abonos-cell-clip' : ''}`}>
-                          {renderAbonoCell(row, key)}
+                          {renderAbonoCell(row, key, alert)}
                         </div>
                       </td>
                     ))}
@@ -1615,7 +1659,8 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {sorted.length === 0 && <p className="p-4 text-sm text-[var(--text-secondary)]">No hay abonos con estos filtros.</p>}
@@ -1889,388 +1934,289 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
         <div className="abonos-modal-backdrop" onClick={closePanel}>
           <div
             className="abonos-modal flex max-h-[calc(100vh-48px)] flex-col"
-            style={{ width: 'min(560px, 100%)' }}
+            style={{ width: 'min(1080px, 100%)' }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="abonos-modal-title"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-4">
               <div className="min-w-0">
-                <p id="abonos-modal-title" className="font-display text-lg font-semibold tracking-tight">
-                  {editing ? caseLabel({ brand: form.brand || editing.brand, area: form.area || editing.area, teamMotivo: form.teamMotivo || editing.teamMotivo }) : 'Nuevo abono'}
+                <p className="text-xs font-medium text-[var(--text-muted)]">
+                  {editing ? `Abono #${editing.registro}` : 'Nuevo abono'}
                 </p>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                  {formatIsoDate(form.dueDate || null)} · {formatMoney(form.expectedAmount ?? null)}
-                  {editing ? ` · #${editing.registro}` : ''}
+                <p id="abonos-modal-title" className="mt-0.5 truncate font-display text-xl font-semibold tracking-tight">
+                  {form.concept?.trim()
+                    || (editing ? caseLabel({ brand: form.brand || editing.brand, area: form.area || editing.area, teamMotivo: form.teamMotivo || editing.teamMotivo }) : 'Sin concepto todavía')}
                 </p>
                 {currentComputed && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <StatusPill row={{
-                      ...currentComputed,
-                      estimated: form.estimated === true,
-                      status: (form.status || currentComputed.status) as AbonoComputed['status'],
-                    }} />
-                    {currentComputed.overdueDays !== null && form.estimated !== true && (
-                      <span className="text-xs font-medium text-[var(--danger)]">Vencido hace {currentComputed.overdueDays} días</span>
-                    )}
+                    <AlertChip alert={abonoAlert(currentComputed)} />
+                    <StatusPill row={{ ...currentComputed, status: (form.status || currentComputed.status) as AbonoComputed['status'] }} />
                   </div>
                 )}
               </div>
-              <button type="button" onClick={closePanel} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
+              <button type="button" onClick={closePanel} className="rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-soft)]" aria-label="Cerrar">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-6 overflow-auto p-5">
-              <section className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Datos</p>
-                <CatalogField
-                  label="Marca"
-                  value={form.brand || ''}
-                  options={state.catalogs.brands}
-                  required
-                  onChange={(brand) => {
-                    const linked = state.tradeTerms.find((term) => term.id === form.tradeTermId);
-                    setForm({
-                      ...form,
-                      brand,
-                      tradeTermId: linked && linked.brand === brand ? form.tradeTermId : null,
-                    });
-                  }}
-                  onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)}
-                />
-                <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
-                <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree required onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
-                <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto *</span>
-                  <input
-                    inputMode="decimal"
-                    placeholder="300,44"
-                    value={expectedAmountText}
-                    onChange={(event) => {
-                      const text = event.target.value;
-                      setExpectedAmountText(text);
-                      setForm({ ...form, expectedAmount: parseMoney(text) });
-                    }}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Cálculo del importe *</span>
-                  <select
-                    value={form.amountMode || ''}
-                    onChange={(event) => {
-                      const amountMode = event.target.value as AbonoAmountMode | '';
-                      const estimated = amountMode === 'Variable';
-                      const received = currentComputed?.receivedTotal ?? 0;
-                      setForm({
-                        ...form,
-                        amountMode,
-                        estimated,
-                        status: amountMode
-                          ? statusAfterReceipts(form.status || '', form.expectedAmount ?? null, received, estimated)
-                          : form.status,
-                      });
-                    }}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  >
-                    <option value="">—</option>
-                    {ABONO_AMOUNT_MODES.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-                  </select>
-                  <p className="text-[11px] text-[var(--text-muted)]">
-                    Variable mientras el importe puede moverse (un %, escalado…). Cuando te confirman el euro, actualiza el previsto y pásalo a Fijo. La condición se queda.
-                  </p>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">
-                    Condición{form.amountMode === 'Variable' ? ' *' : ''}
-                  </span>
-                  <input
-                    value={form.amountCondition || ''}
-                    onChange={(event) => setForm({ ...form, amountCondition: event.target.value })}
-                    placeholder="4% NS, Market Share >40%, Data Sharing H1…"
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  />
-                  {form.amountMode === 'Fijo' && (
-                    <p className="text-[11px] text-[var(--text-muted)]">Si venía de un %, déjala aunque el importe ya sea fijo.</p>
-                  )}
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
-                  <input
-                    type="date"
-                    value={form.dueDate || ''}
-                    onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Origen</span>
-                  <select
-                    value={form.origin || ''}
-                    onChange={(event) => {
-                      const origin = event.target.value as AbonoOrigin | '';
-                      setForm({
-                        ...form,
-                        origin,
-                        tradeTermId: origin === 'Acuerdo' ? form.tradeTermId : null,
-                        amountMode: origin === 'Puntual' ? 'Fijo' : form.amountMode,
-                        estimated: origin === 'Puntual' ? false : form.estimated,
-                      });
-                    }}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  >
-                    <option value="">—</option>
-                    {ABONO_ORIGINS.map((origin) => <option key={origin} value={origin}>{origin}</option>)}
-                  </select>
-                </label>
-                {form.origin === 'Acuerdo' && (
+            <div className="min-h-0 flex-1 overflow-auto">
+              <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                <section className="space-y-4">
                   <label className="block space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Trade Term *</span>
-                    <select
-                      value={form.tradeTermId || ''}
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Concepto</span>
+                    <input
+                      value={form.concept || ''}
+                      onChange={(event) => setForm({ ...form, concept: event.target.value })}
+                      placeholder="Texto corto que se ve en la tabla"
+                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                    />
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <CatalogField
+                      label="Marca"
+                      value={form.brand || ''}
+                      options={state.catalogs.brands}
+                      required
+                      onChange={(brand) => setForm({ ...form, brand })}
+                      onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'brand', value) }, backend)}
+                    />
+                    <CatalogField label="Tipo" value={form.type || ''} options={state.catalogs.types} required onChange={(type) => setForm({ ...form, type })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'type', value) }, backend)} />
+                    <CatalogField label="Área" value={form.area || ''} options={state.catalogs.areas} required onChange={(area) => setForm({ ...form, area })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'area', value) }, backend)} />
+                    <CatalogField label="Equipo" value={form.teamMotivo || ''} options={state.catalogs.teams} allowFree required onChange={(teamMotivo) => setForm({ ...form, teamMotivo })} onAdd={(value) => persist({ ...state, catalogs: addCatalogValue(state.catalogs, 'team', value) }, backend)} />
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Importe previsto *</span>
+                      <input
+                        inputMode="decimal"
+                        placeholder="300,44"
+                        value={expectedAmountText}
+                        onChange={(event) => {
+                          const text = event.target.value;
+                          setExpectedAmountText(text);
+                          setForm({ ...form, expectedAmount: parseMoney(text) });
+                        }}
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Importe *</span>
+                      <select
+                        value={form.amountMode || ''}
+                        onChange={(event) => {
+                          const amountMode = event.target.value as AbonoAmountMode | '';
+                          setForm({ ...form, amountMode, estimated: amountMode === 'Variable' });
+                        }}
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                      >
+                        <option value="">—</option>
+                        <option value="Fijo">Fijo</option>
+                        <option value="Variable">Estimado (puede moverse)</option>
+                      </select>
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Fecha prevista *</span>
+                      <input
+                        type="date"
+                        value={form.dueDate || ''}
+                        onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable *</span>
+                      <select value={form.responsible || ''} onChange={(event) => setForm({ ...form, responsible: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
+                        <option value="">—</option>
+                        {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Notas</span>
+                    <textarea
+                      value={form.notes || ''}
+                      onChange={(event) => setForm({ ...form, notes: event.target.value })}
+                      rows={4}
+                      placeholder="Detalle, condición del importe, con quién lo hablaste…"
+                      className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <div className="space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
+                    <p className="text-[11px] text-[var(--text-muted)]">Imagen, PDF o Excel. Hasta {MAX_EVIDENCE}. Pega una captura con Ctrl+V.</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {(form.attachments || []).map((item) => (
+                        <div key={item.id} className="relative">
+                          <button
+                            type="button"
+                            onClick={() => openAttachment(item, setViewerImage)}
+                            className="flex h-20 w-28 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
+                            title={item.name}
+                          >
+                            {isImageAttachment(item) ? (
+                              <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <>
+                                <FileText className="h-5 w-5 text-[var(--text-muted)]" />
+                                <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeEvidence(item.id)}
+                            className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
+                            aria-label="Quitar documento"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {(form.attachments || []).length < MAX_EVIDENCE && (
+                        <button
+                          type="button"
+                          onClick={() => evidenceInputRef.current?.click()}
+                          className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
+                        >
+                          <ImagePlus className="h-4 w-4" />
+                          <span className="text-[11px] font-medium">Añadir</span>
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      ref={evidenceInputRef}
+                      type="file"
+                      accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
+                      multiple
+                      className="hidden"
                       onChange={(event) => {
-                        const tradeTermId = event.target.value || null;
-                        const term = brandTerms.find((item) => item.id === tradeTermId);
-                        const hints = term ? hintsFromTradeTerm(term) : { amountMode: form.amountMode, amountCondition: form.amountCondition };
-                        setForm({
-                          ...form,
-                          tradeTermId,
-                          amountMode: hints.amountMode,
-                          amountCondition: hints.amountCondition,
-                          estimated: hints.amountMode === 'Variable',
-                        });
+                        const files = Array.from(event.target.files || []);
+                        event.target.value = '';
+                        void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
+                      }}
+                    />
+                  </div>
+                </section>
+
+                <section className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--bg-soft)] p-4 lg:self-start">
+                  <div className="grid grid-cols-3 gap-2 rounded-lg bg-white p-3">
+                    <div>
+                      <p className="text-[11px] text-[var(--text-secondary)]">{form.amountMode === 'Variable' ? 'Previsto (est.)' : 'Previsto'}</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(form.expectedAmount ?? currentComputed?.expectedAmount ?? null)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Cobrado</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
+                      <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
+                    </div>
+                  </div>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
+                    <select
+                      value={form.status || ''}
+                      onChange={(event) => {
+                        const status = event.target.value as AbonoStatus | '';
+                        const estimated = status === 'A cuenta' ? true : form.amountMode === 'Variable';
+                        const amountMode = status === 'A cuenta' ? 'Variable' : form.amountMode;
+                        setForm({ ...form, status, estimated, amountMode });
+                        if (!editing || !state) return;
+                        const received = receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0);
+                        const nextStatus = resolveManualStatus(
+                          status,
+                          parseMoney(expectedAmountText) ?? editing.expectedAmount,
+                          received,
+                          estimated === true,
+                        );
+                        const cases = state.cases.map((row) => (
+                          row.id === editing.id ? { ...row, status: nextStatus, estimated: estimated === true, amountMode: amountMode || row.amountMode } : row
+                        ));
+                        setEditing({ ...editing, status: nextStatus, estimated: estimated === true, amountMode: amountMode || editing.amountMode });
+                        setForm((current) => ({ ...current, status: nextStatus }));
+                        setPanelNote(nextStatus !== status ? `Estado guardado como ${statusLabel(nextStatus)} por los cobros registrados.` : 'Estado guardado.');
+                        void persist({ ...state, cases }, backend);
                       }}
                       className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
                     >
-                      <option value="">Selecciona</option>
-                      {brandTerms.map((term) => <option key={term.id} value={term.id}>{term.name} · {term.compensation}</option>)}
+                      <option value="">—</option>
+                      {MANUAL_STATUSES.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
+                      {form.status && !MANUAL_STATUSES.includes(form.status as AbonoStatus) && (
+                        <option value={form.status} disabled>{statusLabel(form.status)} (sale de los cobros)</option>
+                      )}
                     </select>
+                    <p className="text-[11px] text-[var(--text-muted)]">Parcial y Exceso salen solos al registrar los cobros. A cuenta lo pones tú cuando está pagado pero falta cerrar el importe.</p>
                   </label>
-                )}
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Añadido por *</span>
-                  <select value={form.addedBy || ''} onChange={(event) => setForm({ ...form, addedBy: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                    <option value="">—</option>
-                    {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Responsable de seguimiento *</span>
-                  <select value={form.responsible || ''} onChange={(event) => setForm({ ...form, responsible: event.target.value })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                    <option value="">—</option>
-                    {peopleOptions.map((person) => <option key={person} value={person}>{person}</option>)}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Canal *</span>
-                  <select value={form.source || ''} onChange={(event) => setForm({ ...form, source: event.target.value as AbonoSource | '' })} className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm">
-                    <option value="">—</option>
-                    {ABONO_SOURCES.map((source) => <option key={source} value={source}>{source}</option>)}
-                  </select>
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Persona *</span>
-                  <input
-                    value={form.informedBy || ''}
-                    onChange={(event) => setForm({ ...form, informedBy: event.target.value })}
-                    placeholder="Quién te lo dijo o de la marca"
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  />
-                </label>
-              </section>
 
-              <section className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg-soft)] p-4">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Pago</p>
-                  <p className="mt-1 text-xs text-[var(--text-secondary)]">Adjunta el documento y cambia el estado.</p>
-                </div>
-                <div className="grid grid-cols-3 gap-2 rounded-md bg-white px-3 py-2">
-                  <div>
-                    <p className="text-[11px] text-[var(--text-secondary)]">{form.estimated === true ? 'Previsto (est.)' : 'Previsto'}</p>
-                    <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.expectedAmount ?? form.expectedAmount ?? null)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-[var(--text-secondary)]">Liquidado</p>
-                    <p className="mt-0.5 font-mono text-sm font-semibold text-[var(--success)]">{formatMoney(currentComputed?.receivedTotal ?? 0)}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-[var(--text-secondary)]">Pendiente</p>
-                    <p className="mt-0.5 font-mono text-sm font-semibold">{formatMoney(currentComputed?.pending ?? Math.max(0, (form.expectedAmount ?? 0)))}</p>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Documentos</span>
-                  <p className="text-[11px] text-[var(--text-secondary)]">Imagen, PDF o Excel. Hasta {MAX_EVIDENCE}. Pega una captura con Ctrl+V.</p>
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {(form.attachments || []).map((item) => (
-                      <div key={item.id} className="relative">
-                        <button
-                          type="button"
-                          onClick={() => openAttachment(item, setViewerImage)}
-                          className="flex h-20 w-28 flex-col items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-white px-1 text-center"
-                          title={item.name}
-                        >
-                          {isImageAttachment(item) ? (
-                            <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
-                          ) : (
-                            <>
-                              <FileText className="h-5 w-5 text-[var(--text-muted)]" />
-                              <span className="mt-1 w-full truncate text-[10px] text-[var(--text-secondary)]">{item.name}</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeEvidence(item.id)}
-                          className="absolute -right-1.5 -top-1.5 rounded-full bg-white p-0.5 text-[var(--text-muted)] shadow-sm ring-1 ring-[var(--border)] hover:text-[var(--danger)]"
-                          aria-label="Quitar documento"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    {(form.attachments || []).length < MAX_EVIDENCE && (
-                      <button
-                        type="button"
-                        onClick={() => evidenceInputRef.current?.click()}
-                        className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[var(--border-strong)] bg-white text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]"
-                      >
-                        <ImagePlus className="h-4 w-4" />
-                        <span className="text-[11px] font-medium">Añadir</span>
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    ref={evidenceInputRef}
-                    type="file"
-                    accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx"
-                    multiple
-                    className="hidden"
-                    onChange={(event) => {
-                      const files = Array.from(event.target.files || []);
-                      event.target.value = '';
-                      void addEvidenceBlobs(files.map((file) => ({ blob: file, name: file.name })));
-                    }}
-                  />
-                </div>
-                <label className="block space-y-1">
-                  <span className="text-xs font-medium text-[var(--text-secondary)]">Estado *</span>
-                  <select
-                    value={form.status || ''}
-                    onChange={(event) => {
-                      const status = event.target.value as AbonoStatus | '';
-                      const estimated = status === 'A cuenta' ? true : form.amountMode === 'Variable';
-                      const amountMode = status === 'A cuenta' ? 'Variable' : form.amountMode;
-                      setForm({ ...form, status, estimated, amountMode });
-                      if (!editing || !state) return;
-                      const received = receiptsForCase(state.receipts, editing.id).reduce((sum, item) => sum + item.amount, 0);
-                      const nextStatus = resolveManualStatus(
-                        status,
-                        parseMoney(expectedAmountText) ?? editing.expectedAmount,
-                        received,
-                        estimated === true,
-                      );
-                      const cases = state.cases.map((row) => (
-                        row.id === editing.id ? { ...row, status: nextStatus, estimated: estimated === true, amountMode: amountMode || row.amountMode } : row
-                      ));
-                      setEditing({ ...editing, status: nextStatus, estimated: estimated === true, amountMode: amountMode || editing.amountMode });
-                      setPanelNote('Estado guardado.');
-                      void persist({ ...state, cases }, backend);
-                    }}
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                  >
-                    <option value="">—</option>
-                    {ABONO_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
-                  </select>
-                </label>
-                {form.status === 'Pago comunicado' && (
-                  <label className="block space-y-1">
-                    <span className="text-xs font-medium text-[var(--text-secondary)]">Importe comunicado por la marca</span>
-                    <input
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={communicatedAmountText}
-                      onChange={(event) => {
-                        const text = event.target.value;
-                        setCommunicatedAmountText(text);
-                        setForm({ ...form, communicatedAmount: parseMoney(text) });
-                      }}
-                      className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
-                    />
-                    {form.communicatedAmount !== null && form.communicatedAmount !== undefined
-                      && Math.abs(form.communicatedAmount - (currentComputed?.pending ?? Math.max(0, form.expectedAmount ?? 0))) > 0.009 && (
-                      <span className="block text-xs font-medium text-[var(--warning)]">No coincide con el importe pendiente.</span>
-                    )}
-                  </label>
-                )}
-                {editing && (
-                  <div className="space-y-2 border-t border-[var(--border)] pt-3">
-                    <p className="text-xs font-medium text-[var(--text-secondary)]">Si ha entrado el dinero, regístralo</p>
-                    {caseReceipts.map((receipt, index) => (
-                      <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm">
-                        <div>
-                          <p className="font-medium">{paymentLabel(index)} · {formatIsoDate(receipt.receivedAt)} · {formatMoney(receipt.amount)}</p>
-                          <p className="text-xs text-[var(--text-secondary)]">{receipt.reference || receipt.comment || '—'}</p>
+                  {form.status === 'Pago comunicado' && (
+                    <label className="block space-y-1">
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">Importe comunicado por la marca</span>
+                      <input
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        value={communicatedAmountText}
+                        onChange={(event) => {
+                          const text = event.target.value;
+                          setCommunicatedAmountText(text);
+                          setForm({ ...form, communicatedAmount: parseMoney(text) });
+                        }}
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm"
+                      />
+                      {form.communicatedAmount !== null && form.communicatedAmount !== undefined
+                        && Math.abs(form.communicatedAmount - (currentComputed?.pending ?? Math.max(0, form.expectedAmount ?? 0))) > 0.009 && (
+                        <span className="block text-xs font-medium text-[var(--warning)]">No coincide con el importe pendiente.</span>
+                      )}
+                    </label>
+                  )}
+
+                  {editing ? (
+                    <div className="space-y-2 border-t border-[var(--border)] pt-3">
+                      <p className="text-xs font-medium text-[var(--text-secondary)]">Cobros</p>
+                      {caseReceipts.length === 0 && <p className="text-xs text-[var(--text-muted)]">Todavía no ha entrado nada.</p>}
+                      {caseReceipts.map((receipt, index) => (
+                        <div key={receipt.id} className="flex items-start justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm">
+                          <div>
+                            <p className="font-medium">{paymentLabel(index)} · {formatIsoDate(receipt.receivedAt)} · {formatMoney(receipt.amount)}</p>
+                            {(receipt.reference || receipt.comment) && <p className="text-xs text-[var(--text-secondary)]">{receipt.reference || receipt.comment}</p>}
+                          </div>
+                          <button type="button" onClick={() => deleteReceipt(receipt.id)} className="text-[var(--text-muted)] hover:text-[var(--danger)]" aria-label="Eliminar pago">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
                         </div>
-                        <button type="button" onClick={() => deleteReceipt(receipt.id)} className="text-[var(--danger)]" aria-label="Eliminar pago">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                      ))}
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
+                        <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 min-w-0 rounded-md border border-[var(--border)] bg-white px-2 text-sm" aria-label="Fecha del cobro" />
+                        <input inputMode="decimal" value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 min-w-0 rounded-md border border-[var(--border)] bg-white px-2 text-right font-mono text-sm" aria-label="Importe del cobro" />
+                        <button type="button" onClick={addReceipt} className="h-9 rounded-md bg-[var(--text-primary)] px-3 text-sm font-semibold text-white hover:bg-black">Registrar</button>
                       </div>
-                    ))}
-                    <div className="grid gap-2">
-                      <input type="date" value={receiptDraft.receivedAt} onChange={(event) => setReceiptDraft({ ...receiptDraft, receivedAt: event.target.value })} className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-sm" />
-                      <input inputMode="decimal" value={receiptDraft.amount} onChange={(event) => setReceiptDraft({ ...receiptDraft, amount: event.target.value })} placeholder="Importe" className="h-9 rounded-md border border-[var(--border)] bg-white px-3 text-right font-mono text-sm" />
-                      <button type="button" onClick={addReceipt} className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-[var(--accent)] ring-1 ring-[var(--border)] hover:bg-[var(--accent-soft)]">Registrar pago</button>
                     </div>
-                  </div>
-                )}
-              </section>
-
-              <label className="block space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Concepto</span>
-                <input
-                  value={form.concept || ''}
-                  onChange={(event) => setForm({ ...form, concept: event.target.value })}
-                  placeholder="Texto corto que se ve en la tabla"
-                  className="h-10 w-full rounded-md border border-[var(--border)] bg-white px-3 text-sm"
-                />
-              </label>
-              <label className="block space-y-1">
-                <span className="text-xs font-medium text-[var(--text-secondary)]">Notas</span>
-                <textarea
-                  value={form.notes || ''}
-                  onChange={(event) => setForm({ ...form, notes: event.target.value })}
-                  rows={3}
-                  placeholder="Detalle que solo se ve en esta ficha"
-                  className="w-full rounded-md border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                />
-              </label>
-
-              {panelNote && (
-                <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-[var(--success-soft)] px-3 py-2.5 text-sm font-medium text-[var(--success)]" role="status">
-                  <Check className="h-4 w-4 shrink-0" />
-                  {panelNote}
-                </div>
-              )}
-              {error && (
-                <div className="rounded-lg border border-red-200 bg-[var(--danger-soft)] px-3 py-2.5 text-sm text-[var(--danger)]">{error}</div>
-              )}
+                  ) : (
+                    <p className="border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">Los cobros se registran una vez guardado el abono.</p>
+                  )}
+                </section>
+              </div>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--border)] px-5 py-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-[var(--border)] px-6 py-3">
               <button
                 type="button"
                 onClick={saveForm}
-                className="inline-flex items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                className="inline-flex items-center gap-1.5 rounded-md bg-[var(--text-primary)] px-5 py-2 text-sm font-semibold text-white hover:bg-black"
               >
                 Guardar
               </button>
               {editing && (
-                <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-4 py-2 text-sm text-[var(--danger)]">Eliminar</button>
+                <button type="button" onClick={() => deleteCase(editing.id)} className="rounded-md px-3 py-2 text-sm text-[var(--danger)]">Eliminar</button>
               )}
+              {panelNote && (
+                <span className="flex items-center gap-1.5 text-sm font-medium text-[var(--success)]" role="status">
+                  <Check className="h-4 w-4 shrink-0" />
+                  {panelNote}
+                </span>
+              )}
+              {error && <span className="text-sm text-[var(--danger)]">{error}</span>}
             </div>
           </div>
         </div>
@@ -2483,56 +2429,37 @@ function FilterMultiSelect({
   );
 }
 
+const STATUS_TONES: Record<string, string> = {
+  Pendiente: 'abonos-chip-neutral',
+  'Pago comunicado': 'abonos-chip-violet',
+  'A cuenta': 'abonos-chip-account',
+  Liquidado: 'abonos-chip-success',
+  'Liquidado parcialmente': 'abonos-chip-partial',
+  Exceso: 'abonos-chip-excess',
+};
+
 function StatusPill({ row }: { row: AbonoComputed }) {
-  const pill = 'inline-block max-w-full rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-tight';
-  if (!row.status) {
-    return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-muted)]`}>—</span>;
-  }
-  if (row.status === 'Liquidado') {
-    return <span className={`${pill} bg-[var(--success-soft)] text-[var(--success)]`}>{row.status}</span>;
-  }
-  if (row.status === 'Exceso') {
-    return (
-      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
-        <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>Exceso</span>
-        {row.excessAmount > 0.009 && (
-          <span className={`${pill} bg-[var(--excess-soft)] text-[var(--excess)]`}>+{formatMoney(row.excessAmount)}</span>
-        )}
-      </span>
-    );
-  }
-  if (row.status === 'A cuenta' || (row.estimated === true && row.pending > 0.009 && row.receivedTotal > 0.009)) {
-    return (
-      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
-        <span className={`${pill} bg-[var(--account-soft)] text-[var(--account)]`}>A cuenta</span>
-        {row.pending > 0.009 && (
-          <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>
-            {row.overdueDays !== null ? 'Vencido · ' : ''}Quedan {formatMoney(row.pending)}
-          </span>
-        )}
-      </span>
-    );
-  }
-  if (row.estimated === true && row.receivedTotal <= 0.009) {
-    return <span className={`${pill} bg-[var(--account-soft)] text-[var(--account)]`}>Estimado</span>;
-  }
-  if (row.status === 'Liquidado parcialmente') {
-    return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>{row.overdueDays !== null ? 'Vencido · ' : ''}{row.status}</span>;
-  }
-  if (row.status === 'Pago comunicado') {
-    const mismatch = row.communicatedAmount !== null && Math.abs(row.communicatedAmount - row.pending) > 0.009;
-    return (
-      <span className="inline-flex max-w-full flex-wrap items-center gap-1">
-        <span className={`${pill} bg-violet-100 text-violet-700`}>Pago comunicado</span>
-        {mismatch && <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Importe no cuadra</span>}
-      </span>
-    );
-  }
-  if (row.overdueDays !== null) {
-    return <span className={`${pill} bg-[var(--danger-soft)] text-[var(--danger)]`}><AlertTriangle className="mr-0.5 inline h-3 w-3 align-text-bottom" /> Vencido · {row.status}</span>;
-  }
-  if (row.reviewOverdue) {
-    return <span className={`${pill} bg-[#f8eee4] text-[var(--warning)]`}>Revisar · {row.status}</span>;
-  }
-  return <span className={`${pill} bg-[var(--bg-soft)] text-[var(--text-secondary)]`}>{row.status}</span>;
+  if (!row.status) return <span className="text-xs text-[var(--text-muted)]">—</span>;
+  const extra = row.status === 'Exceso' && row.excessAmount > 0.009
+    ? ` +${formatMoney(row.excessAmount)}`
+    : row.status === 'Liquidado parcialmente' && row.pending > 0.009
+      ? ` · faltan ${formatMoney(row.pending)}`
+      : '';
+  return (
+    <span className={`abonos-chip ${STATUS_TONES[row.status] || 'abonos-chip-neutral'}`} title={`${statusLabel(row.status)}${extra}`}>
+      <span className="abonos-chip-dot" />
+      <span className="truncate">{statusLabel(row.status)}{extra}</span>
+    </span>
+  );
+}
+
+function AlertChip({ alert }: { alert: AbonoAlert | null }) {
+  if (!alert) return null;
+  const Icon = alert.level === 'danger' ? AlertTriangle : Clock;
+  return (
+    <span className={`abonos-chip ${alert.level === 'danger' ? 'abonos-chip-alert-danger' : 'abonos-chip-alert-warning'}`} title={alert.reasons.join('\n')}>
+      <Icon className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{alert.label}</span>
+    </span>
+  );
 }

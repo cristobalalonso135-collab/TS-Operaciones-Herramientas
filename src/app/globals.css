@@ -189,7 +189,7 @@ textarea {
 }
 
 .abonos-table {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.25;
 }
 
@@ -206,7 +206,7 @@ textarea {
   display: block;
   min-width: 0;
   text-align: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1.2;
   white-space: normal;
@@ -271,3 +271,71 @@ textarea {
   background: var(--bg-card);
   box-shadow: 0 24px 80px rgba(28, 25, 20, 0.22);
 }
+
+/* Abonos: status and alert chips */
+.abonos-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.abonos-chip-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: currentColor;
+}
+.abonos-chip-neutral { background: #f1f1f3; color: #4a4a50; }
+.abonos-chip-violet { background: #ede9fe; color: #5b21b6; }
+.abonos-chip-account { background: #e0e7ff; color: #3730a3; }
+.abonos-chip-success { background: #e3f4ea; color: #17633d; }
+.abonos-chip-partial { background: #fdf0d5; color: #8a5300; }
+.abonos-chip-excess { background: #dff3f7; color: #0b6476; }
+.abonos-chip-alert-danger { background: #c62828; color: #ffffff; }
+.abonos-chip-alert-warning { background: #ffedd5; color: #9a3412; box-shadow: inset 0 0 0 1px #fdba74; }
+
+.abonos-row-danger td:first-child { box-shadow: inset 4px 0 0 #c62828; }
+.abonos-row-warning td:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
+
+/* Abonos: quick filters */
+.abonos-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: border-color 120ms, background 120ms;
+}
+.abonos-quick:hover { border-color: var(--border-strong); }
+.abonos-quick-dot { width: 8px; height: 8px; border-radius: 999px; background: #a1a1aa; }
+.abonos-quick-count {
+  min-width: 22px;
+  border-radius: 999px;
+  background: #f1f1f3;
+  padding: 2px 7px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.abonos-quick-danger .abonos-quick-dot { background: #c62828; }
+.abonos-quick-warning .abonos-quick-dot { background: #f59e0b; }
+.abonos-quick-violet .abonos-quick-dot { background: #7c3aed; }
+.abonos-quick-account .abonos-quick-dot { background: #4f46e5; }
+.abonos-quick-success .abonos-quick-dot { background: #16a34a; }
+.abonos-quick-danger .abonos-quick-count { background: #fde8e8; color: #b71c1c; }
+.abonos-quick-warning .abonos-quick-count { background: #ffedd5; color: #9a3412; }
+.abonos-quick.is-active { border-color: var(--text-primary); background: var(--text-primary); color: #ffffff; }
+.abonos-quick.is-active .abonos-quick-count { background: rgba(255, 255, 255, 0.18); color: #ffffff; }

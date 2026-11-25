@@ -209,7 +209,8 @@ export function buildImportPreview(rows: unknown[][], map: ImportColumnMap, head
         responsible: shortPersonName(responsible),
         source,
         informedBy,
-        status,
+        // A blank Estado keeps the current one on update and becomes Pendiente on a new row.
+        status: status || 'Pendiente',
       });
       return {
         key: `import-${index}`,

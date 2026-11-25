@@ -302,23 +302,40 @@ export function isClosedStatus(status: string): boolean {
   return status === 'Liquidado' || status === 'Exceso';
 }
 
-export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number, estimated = false): AbonoStatus | '' {
+/** Statuses chosen by hand. Parcial and Exceso come from the receipts. */
+export const MANUAL_STATUSES: AbonoStatus[] = ['Pendiente', 'Pago comunicado', 'A cuenta', 'Liquidado'];
+
+export const STATUS_LABELS: Record<string, string> = {
+  Pendiente: 'Pendiente',
+  'Pago comunicado': 'Pago comunicado',
+  'A cuenta': 'A cuenta',
+  Liquidado: 'Cobrado',
+  'Liquidado parcialmente': 'Parcial',
+  Exceso: 'Exceso',
+};
+
+export function statusLabel(status: string): string {
+  return STATUS_LABELS[status] || status || '—';
+}
+
+/**
+ * Status after counting receipts. A cuenta is set by hand and stays until someone changes it
+ * (for example a tiered deal paid at its minimum while the final amount is still to review).
+ */
+export function statusAfterReceipts(current: AbonoStatus | '', expectedAmount: number | null, receivedTotal: number, _estimated = false): AbonoStatus | '' {
+  if (current === 'A cuenta') return current;
   if (expectedAmount === null) {
-    if (receivedTotal > 0.009) return estimated ? 'A cuenta' : 'Liquidado parcialmente';
+    if (receivedTotal > 0.009) return 'Liquidado parcialmente';
     return current === 'Pago comunicado' ? current : 'Pendiente';
-  }
-  if (estimated && receivedTotal > 0.009 && receivedTotal + 0.009 >= expectedAmount) {
-    if (current === 'Liquidado' || current === 'Exceso') return current;
-    return 'A cuenta';
   }
   if (receivedTotal > 0 && excessAmount(expectedAmount, receivedTotal) > 0.009) return 'Exceso';
   const pending = pendingAmount(expectedAmount, receivedTotal);
   if (receivedTotal > 0 && pending <= 0.009) return 'Liquidado';
-  if (receivedTotal > 0 && pending > 0) return estimated ? 'A cuenta' : 'Liquidado parcialmente';
+  if (receivedTotal > 0 && pending > 0) return 'Liquidado parcialmente';
   return current === 'Pago comunicado' ? current : 'Pendiente';
 }
 
-/** Keep the status chosen in the modal unless receipts prove Liquidado / Exceso / A cuenta, or a leftover Exceso no longer holds. */
+/** Keep the status chosen in the modal unless receipts prove Liquidado / Exceso, or a leftover Exceso no longer holds. */
 export function resolveManualStatus(
   selected: AbonoStatus | '',
   expectedAmount: number | null,
@@ -327,7 +344,8 @@ export function resolveManualStatus(
 ): AbonoStatus | '' {
   const derived = statusAfterReceipts(selected, expectedAmount, receivedTotal, estimated);
   if (derived === 'Liquidado' || derived === 'Exceso' || derived === 'A cuenta') return derived;
-  if (selected === 'Exceso') return derived;
+  if (selected === 'Exceso' || selected === 'Liquidado parcialmente') return derived;
+  if (derived === 'Liquidado parcialmente' && selected !== 'Liquidado') return derived;
   return selected || derived;
 }
 
@@ -415,8 +433,8 @@ export function formatSourceLabel(row: { source?: string | null; informedBy?: st
 }
 
 export function asStatus(value: string): AbonoStatus | '' {
-  if (value === 'Recibido') return 'Liquidado';
-  if (value === 'Recibido parcialmente') return 'Liquidado parcialmente';
+  if (value === 'Recibido' || value === 'Cobrado') return 'Liquidado';
+  if (value === 'Recibido parcialmente' || value === 'Parcial' || value === 'Cobrado parcial') return 'Liquidado parcialmente';
   if (value === 'Reclamado') return 'Pendiente';
   if (value === 'Pendiente' || value === 'Pago comunicado' || value === 'Liquidado parcialmente' || value === 'Liquidado' || value === 'Exceso' || value === 'A cuenta') return value;
   return '';
@@ -518,13 +536,51 @@ export function abonoRequiredGaps(row: {
   if (row.expectedAmount === null || row.expectedAmount === undefined || !Number.isFinite(row.expectedAmount)) gaps.push('Importe previsto');
   if (!declaredAmountMode({ amountMode: row.amountMode, estimated: row.estimated, status: row.status })) gaps.push('Cálculo');
   if (!String(row.dueDate || '').trim()) gaps.push('Fecha prevista');
-  if (!String(row.addedBy || '').trim()) gaps.push('Añadido por');
   if (!String(row.responsible || '').trim()) gaps.push('Responsable');
-  if (!asSource(String(row.source || ''))) gaps.push('Canal');
-  if (!String(row.informedBy || '').trim()) gaps.push('Persona');
   if (!asStatus(String(row.status || ''))) gaps.push('Estado');
-  if (row.origin === 'Acuerdo' && !String(row.tradeTermId || '').trim()) gaps.push('Trade Term');
   return gaps;
+}
+
+export type AbonoAlertLevel = 'danger' | 'warning';
+
+export interface AbonoAlert {
+  level: AbonoAlertLevel;
+  label: string;
+  reasons: string[];
+  /** Higher means more urgent; used to sort the table. */
+  rank: number;
+}
+
+/** One answer to "do I have to do something with this abono?": red when overdue, orange when it needs a look. */
+export function abonoAlert(row: AbonoComputed, today = todayIso()): AbonoAlert | null {
+  // Old abonos from before the Estado field existed show a dash and never raise an alert.
+  if (!row.status) return null;
+  if (isClosedStatus(row.status)) return null;
+  const open = row.pending > 0.009 || row.status === 'A cuenta';
+  if (!open) return null;
+  if (row.overdueDays !== null) {
+    return {
+      level: 'danger',
+      label: `Vencido · ${row.overdueDays} d`,
+      reasons: [`Fecha prevista ${formatIsoDate(row.dueDate)} y quedan ${formatMoney(row.pending)}`],
+      rank: 100000 + row.overdueDays,
+    };
+  }
+  const reasons: string[] = [];
+  if (!row.dueDate) {
+    reasons.push('Sin fecha prevista');
+  } else {
+    const days = daysBetween(today, row.dueDate);
+    if (days < 0) reasons.push(`Fecha prevista pasada (${formatIsoDate(row.dueDate)})`);
+    else if (days <= 7) reasons.push(days === 0 ? 'Vence hoy' : `Vence en ${days} ${days === 1 ? 'día' : 'días'}`);
+  }
+  if (row.status === 'Pago comunicado' && row.communicatedAmount !== null && Math.abs(row.communicatedAmount - row.pending) > 0.009) {
+    reasons.push(`La marca comunicó ${formatMoney(row.communicatedAmount)} y quedan ${formatMoney(row.pending)}`);
+  }
+  if (row.status === 'A cuenta') reasons.push('A cuenta: falta cerrar el importe final');
+  if (row.reviewOverdue) reasons.push('Reclamado hace más de 7 días sin respuesta');
+  if (reasons.length === 0) return null;
+  return { level: 'warning', label: 'Revisar', reasons, rank: 1000 + reasons.length };
 }
 
 export function formatRequiredGaps(gaps: string[]): string | null {
