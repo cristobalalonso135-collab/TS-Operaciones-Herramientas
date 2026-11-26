@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS holidays (
   UNIQUE(date, city)
 );
 
+ALTER TABLE holidays ENABLE ROW LEVEL SECURITY;
+
 -- Insertar festivos Zaragoza 2026
 INSERT INTO holidays (date, name, city) VALUES
   ('2026-01-01', 'Año Nuevo', 'zaragoza'),
@@ -43,6 +45,8 @@ CREATE TABLE IF NOT EXISTS budget_uploads (
   notes TEXT
 );
 
+ALTER TABLE budget_uploads ENABLE ROW LEVEL SECURITY;
+
 -- Líneas de budget procesadas
 CREATE TABLE IF NOT EXISTS budget_lines (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -57,6 +61,8 @@ CREATE TABLE IF NOT EXISTS budget_lines (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE budget_lines ENABLE ROW LEVEL SECURITY;
+
 -- Importes diarios por línea
 CREATE TABLE IF NOT EXISTS budget_daily (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -67,28 +73,16 @@ CREATE TABLE IF NOT EXISTS budget_daily (
   step TEXT NOT NULL DEFAULT 'step0'
 );
 
+ALTER TABLE budget_daily ENABLE ROW LEVEL SECURITY;
+
 -- Índices para queries frecuentes
 CREATE INDEX IF NOT EXISTS idx_budget_lines_upload ON budget_lines(upload_id);
 CREATE INDEX IF NOT EXISTS idx_budget_daily_line ON budget_daily(line_id);
 CREATE INDEX IF NOT EXISTS idx_budget_daily_fecha ON budget_daily(fecha);
 CREATE INDEX IF NOT EXISTS idx_holidays_year ON holidays(year);
 
--- Vista resumen por upload
-CREATE OR REPLACE VIEW budget_summary AS
-SELECT
-  u.id AS upload_id,
-  u.file_name,
-  u.year,
-  u.month,
-  u.step,
-  u.working_days,
-  u.created_at,
-  COUNT(DISTINCT bl.id) AS num_lines,
-  SUM(bl.importe_mensual) AS total_mensual,
-  SUM(bl.importe_diario) AS total_diario_avg
-FROM budget_uploads u
-LEFT JOIN budget_lines bl ON bl.upload_id = u.id
-GROUP BY u.id;
+-- Vista antigua: la app no la usa y saltaba el aviso de RLS.
+DROP VIEW IF EXISTS budget_summary;
 
 -- Fotos semanales del cuadro de mando de Seguimiento
 CREATE TABLE IF NOT EXISTS seguimiento_snapshots (
