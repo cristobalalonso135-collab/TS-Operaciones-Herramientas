@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorkspaceChrome from '@/components/WorkspaceChrome';
 import TradeArchiveView from '@/components/TradeArchiveView';
 import AbonosImportPanel from '@/components/AbonosImportPanel';
-import AbonosMonthlyView from '@/components/AbonosMonthlyView';
 import { normalizeArchive } from '@/lib/trade-archive';
 import {
   ABONOS_PEOPLE,
@@ -597,7 +596,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
   const [bulkArea, setBulkArea] = useState('Grassroots');
   const [openTaskKind, setOpenTaskKind] = useState<WeeklyTaskKind | null>(null);
   const [openCashWeek, setOpenCashWeek] = useState<string | null>(null);
-  const [listMode, setListMode] = useState<'lista' | 'mensual'>('lista');
   const [claimNote, setClaimNote] = useState('');
   const [reviewResponsible, setReviewResponsible] = useState(DEFAULT_NEW_AUTHOR);
 
@@ -1410,36 +1408,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             </div>
           </div>
 
-          <div className="flex justify-end">
-            <div className="flex rounded-lg border border-[var(--border)] bg-white p-1">
-              {([['lista', 'Lista'], ['mensual', 'Mensual']] as const).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setListMode(id)}
-                  className={`rounded-md px-4 py-1.5 text-xs font-semibold transition ${listMode === id ? 'bg-[var(--text-primary)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-soft)]'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {listMode === 'mensual' ? (
-            <AbonosMonthlyView
-              rows={filtered}
-              receipts={state.receipts}
-              onOpenCell={({ brand, type, month }) => {
-                setFilters({
-                  ...filters,
-                  brand: [brand === '—' ? BLANK : brand],
-                  type: [type === '—' ? BLANK : type],
-                  duePeriod: [month ? `month:${month}` : BLANK],
-                });
-                setListMode('lista');
-              }}
-            />
-          ) : (
           <div className="abonos-panel overflow-auto">
             <table className="abonos-table border-collapse" style={{ tableLayout: 'fixed', width: '100%', minWidth: tableWidth }}>
               <colgroup>
@@ -1538,7 +1506,6 @@ export default function AbonosTool({ onBack }: { onBack: () => void }) {
             </table>
             {sorted.length === 0 && <p className="p-4 text-sm text-[var(--text-secondary)]">No hay abonos con estos filtros.</p>}
           </div>
-          )}
         </section>
       )}
 

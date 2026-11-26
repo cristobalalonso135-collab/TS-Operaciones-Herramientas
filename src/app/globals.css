@@ -440,37 +440,3 @@ textarea {
 .abonos-row-action { opacity: 0; transition: opacity 120ms; }
 .abonos-table tbody tr:hover .abonos-row-action { opacity: 1; }
 
-/* Abonos: monthly view */
-.abonos-monthly th,
-.abonos-monthly td {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-  text-align: right;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  background: #ffffff;
-}
-.abonos-monthly th {
-  background: #fafafa;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.abonos-monthly th.is-current { color: var(--text-primary); }
-.abonos-monthly .is-total { border-left: 1px solid var(--border); font-weight: 600; }
-.abonos-monthly .is-year { color: var(--text-secondary); }
-.abonos-monthly th.is-year.is-selected { color: var(--text-primary); }
-.abonos-monthly tr.is-group td {
-  background: #fafafa;
-  font-weight: 600;
-}
-.abonos-monthly tr.is-grand td {
-  border-top: 2px solid var(--text-primary);
-  border-bottom: 0;
-  font-weight: 700;
-}
-.abonos-monthly tbody tr:not(.is-group):not(.is-grand):hover td { background: #fcfcfc; }
-.abonos-monthly th.text-left,
-.abonos-monthly td.text-left { text-align: left; }
