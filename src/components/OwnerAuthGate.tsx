@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { OWNER_EMAIL, PRODUCTION_APP_URL, isOwnerEmail } from '@/lib/owner-auth';
+import { OWNER_EMAIL, isOwnerEmail } from '@/lib/owner-auth';
 import { supabase } from '@/lib/supabase';
 
 type AuthState = 'loading' | 'signed-out' | 'authorized';
@@ -120,7 +120,6 @@ export default function OwnerAuthGate({ children }: { children: ReactNode }) {
       email: OWNER_EMAIL,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: `${PRODUCTION_APP_URL}/`,
       },
     });
     markCodeSent();
@@ -172,7 +171,7 @@ export default function OwnerAuthGate({ children }: { children: ReactNode }) {
       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">TS Operaciones</p>
       <h2 className="mt-3 font-display text-4xl font-semibold tracking-tight">Entra con tu correo</h2>
       <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
-        Te llega un correo de Supabase: Your sign-in link. Abre Sign in. Si viene un número de 6 cifras, escríbelo aquí.
+        Te mandamos un código de 6 cifras a tu correo. Escríbelo aquí.
       </p>
       <div className="mt-8 space-y-3">
         <button
