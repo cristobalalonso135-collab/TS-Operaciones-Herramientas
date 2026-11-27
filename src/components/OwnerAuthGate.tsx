@@ -172,7 +172,7 @@ export default function OwnerAuthGate({ children }: { children: ReactNode }) {
       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">TS Operaciones</p>
       <h2 className="mt-3 font-display text-4xl font-semibold tracking-tight">Entra con tu correo</h2>
       <p className="mt-3 text-sm leading-relaxed text-[var(--text-secondary)]">
-        Te mandamos un código. Sin él no se ve nada de la web.
+        Te llega un correo de Supabase: Your sign-in link. Abre Sign in. Si viene un número de 6 cifras, escríbelo aquí.
       </p>
       <div className="mt-8 space-y-3">
         <button
